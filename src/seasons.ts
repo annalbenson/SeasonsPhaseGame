@@ -9,6 +9,8 @@ export interface SeasonTheme {
     bgColor:    number;   // scene background
     uiAccent:   number;   // HUD text + fairy glow tint
     textColor:  number;   // text on top of season-colored tiles (calendar)
+    keyColor:   number;   // collectible key diamond
+    gateColor:  number;   // blocking gate bar
 }
 
 export interface MonthConfig {
@@ -31,6 +33,8 @@ const WINTER: SeasonTheme = {
     bgColor:    0x080e18,
     uiAccent:   0xc8e4f4,
     textColor:  0x0e1c28,
+    keyColor:   0xffee88,   // warm gold — pops against icy blue tiles
+    gateColor:  0xff8833,   // amber-orange — warm vs cool contrast
 };
 
 const SPRING: SeasonTheme = {
@@ -42,17 +46,21 @@ const SPRING: SeasonTheme = {
     bgColor:    0x1a0810,
     uiAccent:   0xffccdd,
     textColor:  0x5a1828,
+    keyColor:   0xffee22,   // bright yellow — pops against blush pink
+    gateColor:  0x6633cc,   // violet-purple — complements pink
 };
 
 const SUMMER: SeasonTheme = {
     name:       'Summer',
-    floorLight: 0x68d468,   // bright lime-green
-    floorDark:  0x3ea83e,   // vivid green
+    floorLight: 0x7ab87a,   // muted sage-green
+    floorDark:  0x4e8a4e,   // medium forest green
     wallColor:  0x0a2a0a,   // forest black-green
     goalColor:  0xf5e040,   // sunshine yellow
     bgColor:    0x041408,
     uiAccent:   0xaaffaa,
     textColor:  0x0a2a0a,
+    keyColor:   0xffffff,   // white/silver — crisp against green
+    gateColor:  0xcc2200,   // deep red — classic complementary to green
 };
 
 const FALL: SeasonTheme = {
@@ -64,6 +72,8 @@ const FALL: SeasonTheme = {
     bgColor:    0x120602,
     uiAccent:   0xffcc88,
     textColor:  0x200a02,
+    keyColor:   0x66ddff,   // cool cyan — complementary to orange
+    gateColor:  0x2255bb,   // deep blue — classic complement to amber
 };
 
 // ── 12 months ────────────────────────────────────────────────────────────────

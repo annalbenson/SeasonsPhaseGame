@@ -36,9 +36,10 @@ export class Hazard {
     private timer!:  Phaser.Time.TimerEvent;
     private onCatch: () => void;
 
-    private fairyCol    = 0;
-    private fairyRow    = 0;
-    private fairyHiding = false;
+    private fairyCol     = 0;
+    private fairyRow     = 0;
+    private fairyHiding  = false;
+    private retreatMoves = 5;  // first N wander moves go away from (0,0)
 
     constructor(
         scene:      Phaser.Scene,
@@ -74,11 +75,6 @@ export class Hazard {
 
         if (next !== this.state) {
             this.state = next;
-            this.scene.tweens.add({
-                targets:  this.danger,
-                alpha:    next === 'hunting' ? 0.38 : 0,
-                duration: 350,
-            });
         }
     }
 
@@ -125,7 +121,15 @@ export class Hazard {
     private move() {
         if (this.dead || this.moving) { this.scheduleMove(); return; }
 
-        const dir = this.state === 'hunting' ? this.huntDir() : this.randomDir();
+        let dir;
+        if (this.state === 'hunting') {
+            dir = this.huntDir();
+        } else if (this.retreatMoves > 0) {
+            dir = this.retreatDir();
+            this.retreatMoves--;
+        } else {
+            dir = this.randomDir();
+        }
         if (!dir) { this.scheduleMove(); return; }
 
         this.gridX += dir.dc;
@@ -149,6 +153,18 @@ export class Hazard {
                 this.scheduleMove();
             },
         });
+    }
+
+    private retreatDir() {
+        // Move away from player spawn (0,0) — pick the direction that maximises distance
+        const walls = this.cells[this.gridY][this.gridX];
+        const valid = DIRS.filter(d => !(walls & d.wall));
+        if (valid.length === 0) return null;
+        return valid.sort((a, b) => {
+            const da = (this.gridX + a.dc) + (this.gridY + a.dr);
+            const db = (this.gridX + b.dc) + (this.gridY + b.dr);
+            return db - da; // higher Manhattan-from-origin = farther away
+        })[0];
     }
 
     private huntDir() {

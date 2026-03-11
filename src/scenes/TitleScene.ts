@@ -95,7 +95,7 @@ export default class TitleScene extends Phaser.Scene {
 
         // ── Music + persistent HUD ────────────────────────────────────────────
         if (!this.sound.get('bgm')?.isPlaying) {
-            this.sound.play('bgm', { loop: true, volume: 0.45 });
+            this.sound.play('bgm', { loop: true, volume: 0.07 });
         }
         if (!this.scene.isActive('UIScene')) {
             this.scene.launch('UIScene');

@@ -94,6 +94,10 @@ export default class GameScene extends Phaser.Scene {
     private objDone      = false;
     private goalLock:      Phaser.GameObjects.Arc | null = null;
 
+    private fogTiles: Phaser.GameObjects.Image[][] = [];
+    private revealed = new Set<string>();
+    private lit      = new Set<string>();
+
     constructor() { super('GameScene'); }
 
     init(data: { algorithm?: AlgorithmKey; month?: number; from?: string }) {
@@ -112,6 +116,9 @@ export default class GameScene extends Phaser.Scene {
         this.objDone      = false;
         this.goalLock     = null;
         this.objText      = null;
+        this.fogTiles     = [];
+        this.revealed     = new Set();
+        this.lit          = new Set();
     }
 
     create() {
@@ -180,7 +187,7 @@ export default class GameScene extends Phaser.Scene {
         this.placeBushes(widenedCells, season);
 
         // Keys + gates (also added to mazeLayer inside placePuzzleItems)
-        this.placePuzzleItems();
+        this.placePuzzleItems(season);
 
         // Season objectives — placed after puzzle items so we can avoid their cells
         this.placeObjectives(season);
@@ -198,7 +205,7 @@ export default class GameScene extends Phaser.Scene {
         this.player = this.createPlayerSprite(startX, startY, season);
         this.player.setDepth(2);
 
-        this.spawnHazard(season.name);
+        this.spawnHazard(season);
 
         const trailTints: Record<string, number[]> = {
             Spring: [0xffdd00, 0xffffff, 0xffaa00, 0xffee88],
@@ -264,6 +271,10 @@ export default class GameScene extends Phaser.Scene {
             fontSize: '11px', color: '#ffffff33',
             backgroundColor: '#00000033', padding: { x: 6, y: 3 },
         }).setDepth(3).setOrigin(1, 1);
+
+        // ── Fog of war ────────────────────────────────────────────────────────
+        this.buildFogLayer(season);
+        this.revealAround(0, 0);
 
         // ── Fade in ───────────────────────────────────────────────────────────
         this.cameras.main.fadeIn(900, 0, 0, 0);
@@ -454,7 +465,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     // ── Puzzle item placement ─────────────────────────────────────────────────
-    private placePuzzleItems() {
+    private placePuzzleItems(season: SeasonTheme) {
         const path = solvePath(this.cells, COLS, ROWS);
         const n    = path.length;
         if (n < 8) return;
@@ -465,7 +476,7 @@ export default class GameScene extends Phaser.Scene {
         for (const idx of keyIndices) {
             const { col, row } = path[idx];
             const rect = this.add
-                .rectangle(col * TILE + TILE / 2, row * TILE + TILE / 2, 16, 16, 0xffe066)
+                .rectangle(col * TILE + TILE / 2, row * TILE + TILE / 2, 18, 18, season.keyColor)
                 .setRotation(Math.PI / 4);
             this.mazeLayer.add(rect);
             this.keyItems.set(`${col},${row}`, rect);
@@ -485,7 +496,7 @@ export default class GameScene extends Phaser.Scene {
             else if (dr ===  1) { gx = from.col * TILE + TILE / 2; gy = from.row * TILE + TILE;     gw = TILE - 10; gh = 10; }
             else                { gx = from.col * TILE + TILE / 2; gy = from.row * TILE;            gw = TILE - 10; gh = 10; }
 
-            const graphic = this.add.rectangle(gx, gy, gw, gh, 0xcc4444);
+            const graphic = this.add.rectangle(gx, gy, gw, gh, season.gateColor);
             this.mazeLayer.add(graphic);
             this.gates.push({ fromCol: from.col, fromRow: from.row, toCol: to.col, toRow: to.row, graphic, open: false });
         }
@@ -562,6 +573,7 @@ export default class GameScene extends Phaser.Scene {
             ease:     'Power2',
             onComplete: () => {
                 this.moving = false;
+                this.revealAround(this.gridX, this.gridY);
                 this.collectKey();
                 this.checkObjective();
                 this.checkGoal();
@@ -655,6 +667,66 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
+    // ── Bush drawing (shared by placeBushes and guaranteeBushNear) ───────────
+    private drawBushAt(col: number, row: number, season: MonthConfig['season']) {
+        const cx = col * TILE + TILE / 2;
+        const cy = row * TILE + TILE / 2;
+
+        if (season.name === 'Fall') {
+            const leafColors = [0xd04010, 0xe86820, 0xffaa00, 0xf0d020, 0xc06010, 0xa03008, 0xd4a010];
+            const leaves = [
+                { x: -10, y:  -4, w: 10, h: 16, a: -35 },
+                { x:   4, y:  -8, w:  9, h: 15, a:  20 },
+                { x:  10, y:   5, w: 11, h: 15, a: -55 },
+                { x:  -5, y:   8, w: 10, h: 14, a:  40 },
+                { x:  -1, y:  -1, w:  9, h: 14, a:  10 },
+                { x:   8, y:  -3, w:  8, h: 13, a: -20 },
+                { x:  -8, y:   3, w:  7, h: 12, a:  60 },
+            ];
+            for (const l of leaves) {
+                const c = leafColors[Math.floor(Math.random() * leafColors.length)];
+                this.mazeLayer.add(this.add.ellipse(cx + l.x, cy + l.y, l.w, l.h, c, 0.88).setAngle(l.a));
+            }
+        } else if (season.name === 'Winter') {
+            this.mazeLayer.add([
+                this.add.circle(cx - 10, cy + 6, 10, 0xddeeff, 0.90),
+                this.add.circle(cx +  9, cy + 7,  9, 0xe8f4ff, 0.85),
+                this.add.circle(cx -  2, cy - 2, 13, 0xffffff, 0.95),
+                this.add.circle(cx +  5, cy - 5,  8, 0xf0f8ff, 0.80),
+                this.add.ellipse(cx, cy + 6, 30, 8, 0x8aaabb, 0.18),
+            ]);
+        } else if (season.name === 'Spring') {
+            const blades = [
+                { x: -9,  h: 22, a: -12 },
+                { x: -4,  h: 26, a:   5 },
+                { x:  1,  h: 24, a:  -6 },
+                { x:  6,  h: 20, a:  14 },
+                { x: 11,  h: 23, a:  -3 },
+                { x: -6,  h: 18, a:  20 },
+                { x:  4,  h: 19, a: -18 },
+            ];
+            for (const b of blades) {
+                const green = Math.random() < 0.5 ? 0x66bb33 : 0x88cc44;
+                this.mazeLayer.add(
+                    this.add.ellipse(cx + b.x, cy + 2, 5, b.h, green, 0.92).setAngle(b.a)
+                );
+                this.mazeLayer.add(
+                    this.add.circle(
+                        cx + b.x + Math.sin((b.a * Math.PI) / 180) * (b.h / 2 - 2),
+                        cy + 2   - Math.cos((b.a * Math.PI) / 180) * (b.h / 2 - 2),
+                        2.5, 0x558822, 0.85
+                    )
+                );
+            }
+        } else {
+            this.mazeLayer.add([
+                this.add.circle(cx - 9, cy + 5, 11, 0x228844, 0.85),
+                this.add.circle(cx + 9, cy + 5, 11, 0x228844, 0.85),
+                this.add.circle(cx,     cy - 3, 13, 0x228844, 0.90),
+            ]);
+        }
+    }
+
     // ── Bush placement ────────────────────────────────────────────────────────
     private placeBushes(widenedCells: Set<string>, season: MonthConfig['season']) {
         for (const key of widenedCells) {
@@ -662,76 +734,36 @@ export default class GameScene extends Phaser.Scene {
             if (col === 0 && row === 0)               continue;
             if (col === COLS - 1 && row === ROWS - 1) continue;
             if (Math.random() > 0.5)                  continue;
-
             this.bushCells.add(key);
-            const cx = col * TILE + TILE / 2;
-            const cy = row * TILE + TILE / 2;
-
-            if (season.name === 'Fall') {
-                // Leaf pile — scattered autumn leaves
-                const leafColors = [0xd04010, 0xe86820, 0xffaa00, 0xf0d020, 0xc06010, 0xa03008, 0xd4a010];
-                const leaves = [
-                    { x: -10, y:  -4, w: 10, h: 16, a: -35 },
-                    { x:   4, y:  -8, w:  9, h: 15, a:  20 },
-                    { x:  10, y:   5, w: 11, h: 15, a: -55 },
-                    { x:  -5, y:   8, w: 10, h: 14, a:  40 },
-                    { x:  -1, y:  -1, w:  9, h: 14, a:  10 },
-                    { x:   8, y:  -3, w:  8, h: 13, a: -20 },
-                    { x:  -8, y:   3, w:  7, h: 12, a:  60 },
-                ];
-                for (const l of leaves) {
-                    const c = leafColors[Math.floor(Math.random() * leafColors.length)];
-                    this.mazeLayer.add(this.add.ellipse(cx + l.x, cy + l.y, l.w, l.h, c, 0.88).setAngle(l.a));
-                }
-            } else if (season.name === 'Winter') {
-                // Snow pile — irregular lumpy mounds in white/icy blue
-                this.mazeLayer.add([
-                    this.add.circle(cx - 10, cy + 6, 10, 0xddeeff, 0.90),
-                    this.add.circle(cx +  9, cy + 7,  9, 0xe8f4ff, 0.85),
-                    this.add.circle(cx -  2, cy - 2, 13, 0xffffff, 0.95),
-                    this.add.circle(cx +  5, cy - 5,  8, 0xf0f8ff, 0.80),
-                    // Subtle shadow underneath the pile
-                    this.add.ellipse(cx, cy + 6, 30, 8, 0x8aaabb, 0.18),
-                ]);
-            } else if (season.name === 'Spring') {
-                // Tall grass — cluster of thin upright blades
-                const blades = [
-                    { x: -9,  h: 22, a: -12 },
-                    { x: -4,  h: 26, a:   5 },
-                    { x:  1,  h: 24, a:  -6 },
-                    { x:  6,  h: 20, a:  14 },
-                    { x: 11,  h: 23, a:  -3 },
-                    { x: -6,  h: 18, a:  20 },
-                    { x:  4,  h: 19, a: -18 },
-                ];
-                for (const b of blades) {
-                    // Blade — tall thin ellipse, slightly varied greens
-                    const green = Math.random() < 0.5 ? 0x66bb33 : 0x88cc44;
-                    this.mazeLayer.add(
-                        this.add.ellipse(cx + b.x, cy + 2, 5, b.h, green, 0.92).setAngle(b.a)
-                    );
-                    // Seed tip — tiny darker dot at the top of each blade
-                    this.mazeLayer.add(
-                        this.add.circle(
-                            cx + b.x + Math.sin((b.a * Math.PI) / 180) * (b.h / 2 - 2),
-                            cy + 2   - Math.cos((b.a * Math.PI) / 180) * (b.h / 2 - 2),
-                            2.5, 0x558822, 0.85
-                        )
-                    );
-                }
-            } else {
-                // Summer bush — three overlapping circles
-                this.mazeLayer.add([
-                    this.add.circle(cx - 9, cy + 5, 11, 0x228844, 0.85),
-                    this.add.circle(cx + 9, cy + 5, 11, 0x228844, 0.85),
-                    this.add.circle(cx,     cy - 3, 13, 0x228844, 0.90),
-                ]);
-            }
+            this.drawBushAt(col, row, season);
         }
     }
 
+    // ── Guarantee a hiding spot near a given cell ─────────────────────────────
+    private guaranteeBushNear(hCol: number, hRow: number, season: MonthConfig['season']) {
+        // Already have a bush within Manhattan 2? Nothing to do.
+        for (let dr = -2; dr <= 2; dr++) {
+            for (let dc = -2; dc <= 2; dc++) {
+                if (Math.abs(dc) + Math.abs(dr) > 2) continue;
+                if (this.bushCells.has(`${hCol + dc},${hRow + dr}`)) return;
+            }
+        }
+        // Pick a random orthogonal neighbour to force a bush into
+        const dirs = [{ dc: 0, dr: -1 }, { dc: 1, dr: 0 }, { dc: 0, dr: 1 }, { dc: -1, dr: 0 }];
+        const valid = dirs
+            .map(({ dc, dr }) => ({ col: hCol + dc, row: hRow + dr }))
+            .filter(({ col, row }) =>
+                col >= 0 && col < COLS && row >= 0 && row < ROWS &&
+                !(col === 0 && row === 0) && !(col === COLS - 1 && row === ROWS - 1)
+            );
+        if (valid.length === 0) return;
+        const { col, row } = valid[Math.floor(Math.random() * valid.length)];
+        this.bushCells.add(`${col},${row}`);
+        this.drawBushAt(col, row, season);
+    }
+
     // ── Hazard spawn ──────────────────────────────────────────────────────────
-    private spawnHazard(seasonName: string) {
+    private spawnHazard(season: SeasonTheme) {
         // Pick a start cell with Manhattan distance > 5 from the fairy's start
         const candidates: { col: number; row: number }[] = [];
         for (let row = 0; row < ROWS; row++) {
@@ -743,10 +775,15 @@ export default class GameScene extends Phaser.Scene {
         }
         const { col, row } = candidates[Math.floor(Math.random() * candidates.length)];
 
-        this.hazard = new Hazard(this, this.cells, col, row, seasonName, () => {
-            this.cameras.main.flash(450, 180, 0, 0);
-            this.cameras.main.shake(300, 0.009);
+        // Ensure a hiding spot near the hazard start
+        this.guaranteeBushNear(col, row, season);
 
+        // Ensure a hiding spot roughly halfway between player (0,0) and hazard
+        const midCol = Math.round(col / 2);
+        const midRow = Math.round(row / 2);
+        this.guaranteeBushNear(midCol, midRow, season);
+
+        this.hazard = new Hazard(this, this.cells, col, row, season.name, () => {
             this.lives--;
             this.updateLives();
 
@@ -835,7 +872,9 @@ export default class GameScene extends Phaser.Scene {
     private buildFlowerSprite(cx: number, cy: number): Phaser.GameObjects.Container {
         const palette = [0xffb7c5, 0xcc88ff, 0xffee88, 0xffffff, 0xffaadd];
         const pColor  = palette[Math.floor(Math.random() * palette.length)];
-        const parts: Phaser.GameObjects.GameObject[] = [];
+        const parts: Phaser.GameObjects.GameObject[] = [
+            this.add.circle(0, 0, 24, 0xffffff, 0.72),               // contrast disc
+        ];
         for (let i = 0; i < 5; i++) {
             const rad = (i * 72 * Math.PI) / 180;
             parts.push(
@@ -844,13 +883,14 @@ export default class GameScene extends Phaser.Scene {
             );
         }
         parts.push(this.add.circle(0, 0, 5, 0xffe066));
-        const c = this.add.container(cx, cy, parts).setDepth(1.8).setAlpha(0.5);
+        const c = this.add.container(cx, cy, parts).setDepth(1.8);
         this.tweens.add({ targets: c, scaleX: 1.1, scaleY: 1.1, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
         return c;
     }
 
     private buildPlantSprite(cx: number, cy: number): Phaser.GameObjects.Container {
         const parts: Phaser.GameObjects.GameObject[] = [
+            this.add.circle(0, 2, 24, 0xffffff, 0.72),               // contrast disc
             this.add.rectangle(0, 12,  16, 12, 0x8b5e3c),            // pot body
             this.add.rectangle(0,  6,  20,  5, 0xaa7b4e),            // pot rim
             this.add.rectangle(0, -2,   3, 12, 0x559933),            // stem
@@ -858,13 +898,14 @@ export default class GameScene extends Phaser.Scene {
             this.add.ellipse( 9, -6, 12,  8, 0x55aa22, 0.9).setAngle( 30),
             this.add.ellipse( 0,-14, 10,  6, 0x66bb33, 0.9),
         ];
-        const c = this.add.container(cx, cy, parts).setDepth(1.8).setAlpha(0.45);
+        const c = this.add.container(cx, cy, parts).setDepth(1.8);
         this.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
         return c;
     }
 
     private buildAcornSprite(cx: number, cy: number): Phaser.GameObjects.Container {
         const parts: Phaser.GameObjects.GameObject[] = [
+            this.add.circle(0, 0, 24, 0xffffff, 0.72),               // contrast disc
             this.add.rectangle(0, -13,  3,  6, 0x5a3010),            // stem
             this.add.ellipse(  0,  -7, 18, 10, 0x6b3f1e),            // cap
             this.add.circle(  -5, -7,   2, 0x8b5e3c, 0.6),           // cap texture
@@ -872,7 +913,7 @@ export default class GameScene extends Phaser.Scene {
             this.add.ellipse(  0,   2, 16, 20, 0xc8852a),             // body
             this.add.ellipse( -4,  -1,  5, 10, 0xdda050, 0.5),       // highlight
         ];
-        const c = this.add.container(cx, cy, parts).setDepth(1.8).setAlpha(0.5);
+        const c = this.add.container(cx, cy, parts).setDepth(1.8);
         this.tweens.add({ targets: c, angle: { from: -6, to: 6 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
         return c;
     }
@@ -941,5 +982,78 @@ export default class GameScene extends Phaser.Scene {
                 });
             });
         });
+    }
+
+    // ── Fog of war ────────────────────────────────────────────────────────────
+    private buildFogLayer(season: SeasonTheme) {
+        const fogKey = `fog_${season.name}`;
+        if (!this.textures.exists(fogKey)) {
+            const g = this.make.graphics({ add: false });
+
+            // Dark base — season-tinted
+            const r = (season.bgColor >> 16) & 0xff;
+            const gv = (season.bgColor >> 8)  & 0xff;
+            const b  =  season.bgColor         & 0xff;
+            // Slightly lighter than bgColor for texture interest
+            const mid = Phaser.Display.Color.GetColor(
+                Math.min(255, r + 18),
+                Math.min(255, gv + 18),
+                Math.min(255, b + 18),
+            );
+
+            g.fillStyle(season.bgColor, 1);
+            g.fillRect(0, 0, TILE, TILE);
+
+            // Subtle grain — solid lighter blobs (no alpha, keeps tile fully opaque)
+            g.fillStyle(mid, 1);
+            for (let i = 0; i < 14; i++) {
+                g.fillCircle(
+                    Math.floor(Math.random() * TILE),
+                    Math.floor(Math.random() * TILE),
+                    1 + Math.random() * 3,
+                );
+            }
+
+            g.generateTexture(fogKey, TILE, TILE);
+            g.destroy();
+        }
+
+        this.fogTiles = [];
+        for (let row = 0; row < ROWS; row++) {
+            this.fogTiles[row] = [];
+            for (let col = 0; col < COLS; col++) {
+                this.fogTiles[row][col] = this.add.image(
+                    col * TILE + TILE / 2,
+                    row * TILE + TILE / 2 + HEADER,
+                    fogKey,
+                // TILE+2 so tiles overlap by 1px each side — no sub-pixel gaps at wall boundaries
+                ).setDepth(2.5).setDisplaySize(TILE + 2, TILE + 2);
+                // alpha defaults to 1.0 — unrevealed tiles are fully opaque
+            }
+        }
+    }
+
+    private revealAround(col: number, row: number) {
+        for (let dr = -2; dr <= 2; dr++) {
+            for (let dc = -2; dc <= 2; dc++) {
+                const nc = col + dc, nr = row + dr;
+                if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
+
+                const dist = Math.max(Math.abs(dc), Math.abs(dr)); // Chebyshev
+                const key  = `${nc},${nr}`;
+                const tile = this.fogTiles[nr][nc];
+
+                if (dist <= 1) {
+                    // Fully lit — clear the fog tile
+                    this.lit.add(key);
+                    this.revealed.add(key);
+                    tile.setAlpha(0);
+                } else if (!this.lit.has(key)) {
+                    // Revealed but outside current light radius — dim overlay
+                    this.revealed.add(key);
+                    tile.setAlpha(0.52);
+                }
+            }
+        }
     }
 }
