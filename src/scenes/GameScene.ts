@@ -17,6 +17,17 @@ const MOVE_DIRS = [
 
 type Cell = { col: number; row: number };
 
+// Returns the first month of the season that contains `month`
+// Jan–Feb → 1 (Winter),  Mar–May → 3 (Spring),
+// Jun–Aug → 6 (Summer),  Sep–Nov → 9 (Fall),  Dec → 12 (Winter)
+function seasonStart(month: number): number {
+    if (month <= 2)  return 1;
+    if (month <= 5)  return 3;
+    if (month <= 8)  return 6;
+    if (month <= 11) return 9;
+    return 12;
+}
+
 function solvePath(cells: number[][], cols: number, rows: number): Cell[] {
     const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
     const prev: (Cell | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
@@ -788,13 +799,13 @@ export default class GameScene extends Phaser.Scene {
             this.updateLives();
 
             if (this.lives <= 0) {
-                // Game over — restart the month with fresh lives
+                // Game over — restart from the first month of this season
                 this.time.delayedCall(700, () => {
                     this.hazard?.destroy();
                     this.cameras.main.fadeOut(600, 0, 0, 0);
                     this.cameras.main.once('camerafadeoutcomplete', () => {
                         this.scene.start('GameScene', {
-                            month:     this.monthConfig.month,
+                            month:     seasonStart(this.monthConfig.month),
                             algorithm: this.algorithm,
                             from:      this.fromScene,
                         });
@@ -829,14 +840,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Season objectives ─────────────────────────────────────────────────────
     private placeObjectives(season: SeasonTheme) {
-        if (season.name === 'Winter') {
-            this.objDone  = true;
-            this.objTotal = 0;
-            this.updateObjText();
-            return;
-        }
-
-        const count = season.name === 'Spring' ? 3 : 2;
+        const count = season.name === 'Spring' ? 3 : 5;   // Winter = 5 snowflakes
         this.objTotal = count;
 
         const avoid = new Set<string>(['0,0', `${COLS - 1},${ROWS - 1}`]);
@@ -860,9 +864,10 @@ export default class GameScene extends Phaser.Scene {
             const cy = row * TILE + TILE / 2 + HEADER;
             let container: Phaser.GameObjects.Container;
             switch (season.name) {
-                case 'Spring': container = this.buildFlowerSprite(cx, cy); break;
-                case 'Summer': container = this.buildPlantSprite(cx, cy);  break;
-                default:       container = this.buildAcornSprite(cx, cy);  break;
+                case 'Spring': container = this.buildFlowerSprite(cx, cy);   break;
+                case 'Summer': container = this.buildPlantSprite(cx, cy);    break;
+                case 'Winter': container = this.buildSnowflakeSprite(cx, cy); break;
+                default:       container = this.buildAcornSprite(cx, cy);    break;
             }
             this.objectives.set(`${col},${row}`, container);
         }
@@ -918,6 +923,26 @@ export default class GameScene extends Phaser.Scene {
         return c;
     }
 
+    private buildSnowflakeSprite(cx: number, cy: number): Phaser.GameObjects.Container {
+        const parts: Phaser.GameObjects.GameObject[] = [
+            this.add.circle(0, 0, 22, 0xddeeff, 0.55),          // soft glow disc
+        ];
+        // Six arms — each a thin rectangle + small diamond tip
+        for (let i = 0; i < 6; i++) {
+            const angleDeg = i * 60;
+            const arm = this.add.rectangle(0, -10, 3, 18, 0xffffff, 0.95).setAngle(angleDeg);
+            const tip = this.add.rectangle(0, -20, 4, 4, 0xddeeff, 0.9).setAngle(angleDeg + 45);
+            parts.push(arm, tip);
+        }
+        // Centre dot
+        parts.push(this.add.circle(0, 0, 4, 0xffffff));
+        const c = this.add.container(cx, cy, parts).setDepth(1.8);
+        // Slow spin + gentle drift
+        this.tweens.add({ targets: c, angle: 360, repeat: -1, duration: 8000, ease: 'Linear' });
+        this.tweens.add({ targets: c, y: cy - 6, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
+        return c;
+    }
+
     private checkObjective() {
         if (this.objDone) return;
         const k = `${this.gridX},${this.gridY}`;
@@ -955,6 +980,7 @@ export default class GameScene extends Phaser.Scene {
         const season = this.monthConfig.season;
         const label  = season.name === 'Spring' ? 'POLLINATE'
                      : season.name === 'Summer' ? 'WATER'
+                     : season.name === 'Winter' ? 'COLLECT'
                      : 'PLANT';
         const filled = '\u25C6'.repeat(this.objCompleted);
         const empty  = '\u25C7'.repeat(Math.max(0, this.objTotal - this.objCompleted));
@@ -969,14 +995,17 @@ export default class GameScene extends Phaser.Scene {
         if (this.gridX !== COLS - 1 || this.gridY !== ROWS - 1) return;
         if (!this.objDone) return;
 
-        const nextMonth = (this.monthConfig.month % 12) + 1;   // 12 → 1
+        const nextMonth  = (this.monthConfig.month % 12) + 1;   // 12 → 1
+        const curSeason  = this.monthConfig.season.name;
+        const nextSeason = MONTHS[nextMonth - 1].season.name;
 
         this.time.delayedCall(500, () => {
             this.hazard?.destroy();
             this.cameras.main.fadeOut(800, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('GameScene', {
+                this.scene.start('QuoteScene', {
                     month:     nextMonth,
+                    isSeason:  nextSeason !== curSeason,
                     algorithm: this.algorithm,
                     from:      this.fromScene,
                 });

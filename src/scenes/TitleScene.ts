@@ -89,7 +89,7 @@ export default class TitleScene extends Phaser.Scene {
         btn.on('pointerdown', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('GameScene', { month: 1, from: 'TitleScene' });
+                this.scene.start('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene' });
             });
         });
 
