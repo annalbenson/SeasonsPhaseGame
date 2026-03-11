@@ -68,6 +68,51 @@ HUD: `◆◇◇  POLLINATE` style counter (top-right). Goal tile has a dim overl
 - Add a brief "objective unlocked" banner text when the last one is collected
 - Winter objective: collect snowflakes (5 drifting sparkle items)?
 
+---
+
+## Idea: Fog of War
+
+The maze starts completely hidden (black overlay). As the player explores, tiles they've visited are revealed and stay visible. Tiles in the player's immediate vicinity (1-2 cells) are "lit"; previously-visited tiles outside that radius show dimly.
+
+### Behaviour
+- On level load: all tiles black/hidden except the starting cell and its immediate neighbours
+- Each step reveals cells within radius R (suggest R=2 tiles) and permanently "clears" those cells
+- Cleared cells render at ~50% brightness; "lit" cells (current vicinity) at full brightness
+- Hazard only visible when in a lit or cleared cell (adds tension — you hear it but can't always see it)
+- Keys/gates/objectives visible only once their cell is revealed
+
+### Implementation sketch
+- Track a `revealed: Set<string>` of `"col,row"` cells (persists for the level duration)
+- Render a dark `Graphics` overlay over the mazeLayer that cuts out revealed cells using `fillRect` with `blendMode: ERASE`
+- Two layers: full-black mask for unrevealed, dim mask for revealed-but-not-lit
+- Update the mask in the movement `onComplete` callback (same place `checkObjective` runs)
+
+### Open questions
+- Does full fog apply to all months, or only some (e.g. deeper winter = denser fog)?
+- Should the hazard have a faint glow visible through the fog as a hint?
+
+---
+
+## Idea: Landmark sprites (decorative, non-interactive)
+
+Scatter a few season-appropriate static sprites around the maze as visual landmarks / atmosphere. These don't block movement, don't interact with the player, and are purely decorative — but they make the maze feel like a world rather than a grid.
+
+### Season → landmark ideas
+| Season | Landmarks |
+|--------|-----------|
+| Spring | Pond (blue ellipse + lily pads), bird nest on a stick, flowering stump |
+| Summer | Old windmill (sail arms), tall sunflower cluster, beehive hanging from a post |
+| Fall   | Hollow tree trunk (dark opening), mushroom cluster, hay bale |
+| Winter | Frozen pond (icy circle), snowman (three stacked circles), bare branch with snow |
+
+### Notes
+- 2–4 landmarks per maze, placed on non-path, non-bush, non-objective cells
+- Drawn using the same Graphics/Shape primitive approach as hiding spots and objectives
+- Depth: ~0.5 (above floor, below walls) so they sit "on" the floor
+- No collision, no interaction — just scenery
+
+---
+
 ### Weather system interface (sketch)
 ```ts
 interface WeatherSystem {

@@ -90,7 +90,7 @@ export default class GameScene extends Phaser.Scene {
     private objectives   = new Map<string, Phaser.GameObjects.Container>();
     private objCompleted = 0;
     private objTotal     = 0;
-    private objText!:      Phaser.GameObjects.Text;
+    private objText: Phaser.GameObjects.Text | null = null;
     private objDone      = false;
     private goalLock:      Phaser.GameObjects.Arc | null = null;
 
@@ -111,6 +111,7 @@ export default class GameScene extends Phaser.Scene {
         this.objTotal     = 0;
         this.objDone      = false;
         this.goalLock     = null;
+        this.objText      = null;
     }
 
     create() {
