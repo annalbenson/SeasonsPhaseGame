@@ -179,7 +179,7 @@ export default class GameScene extends Phaser.Scene {
             Spring: [0xffdd00, 0xffffff, 0xffaa00, 0xffee88],
             Summer: [fairyGlow, 0xffffff, fairyGlow, 0xffffff],
             Winter: [0xffffff, 0xddeeff, 0xaaccff, 0xffffff],
-            Fall:   [fairyGlow, 0xffffff, fairyGlow, 0xffffff],
+            Fall:   [0xd88030, 0xffd090, 0xc06010, 0xffaa00],   // autumn/acorn
         };
         this.emitter = this.add.particles(startX, startY, 'sparkle', {
             scale:     { start: 0.6, end: 0 },
@@ -262,6 +262,7 @@ export default class GameScene extends Phaser.Scene {
     private createPlayerSprite(x: number, y: number, season: SeasonTheme): Phaser.GameObjects.Container {
         switch (season.name) {
             case 'Spring': return this.createBee(x, y);
+            case 'Fall':   return this.createSquirrel(x, y);
             case 'Winter': return this.createBunny(x, y);
             default:       return this.createFairy(x, y, season.uiAccent);
         }
@@ -332,6 +333,52 @@ export default class GameScene extends Phaser.Scene {
         this.tweens.add({ targets: [earR, innerEarR], angle: { from:  5, to: -5 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
         this.tweens.add({ targets: glow, alpha: { from: 0.12, to: 0.32 }, yoyo: true, repeat: -1, duration: 1500 });
         this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 950, ease: 'Sine.easeInOut' });
+
+        return outer;
+    }
+
+    // ── Squirrel (Fall) ───────────────────────────────────────────────────────
+    private createSquirrel(x: number, y: number): Phaser.GameObjects.Container {
+        const brown   = 0xb05818;
+        const tailCol = 0xd88030;
+        const cream   = 0xffd090;
+
+        const glow = this.add.circle(0, 0, 22, tailCol, 0.15);
+
+        // Bushy tail — two overlapping ellipses curling to the right
+        const tailOuter = this.add.ellipse(11, 3, 22, 28, tailCol);
+        const tailInner = this.add.ellipse(12, 2, 13, 20, 0xe8a050, 0.65);
+
+        // Body
+        const body  = this.add.ellipse(-2, 4, 16, 20, brown);
+        const belly = this.add.ellipse(-2, 5, 10, 13, cream, 0.4);
+
+        // Head
+        const head  = this.add.circle(-3, -8, 8, brown);
+
+        // Ears — small rounded with pink inner
+        const earL   = this.add.ellipse(-9,  -14, 6, 8, brown);
+        const earR   = this.add.ellipse( 3,  -14, 6, 8, brown);
+        const earLi  = this.add.ellipse(-9,  -14, 3, 5, 0xffb8c8, 0.7);
+        const earRi  = this.add.ellipse( 3,  -14, 3, 5, 0xffb8c8, 0.7);
+
+        // Face
+        const eyeL = this.add.circle(-7, -10, 2.5, 0x331100);
+        const eyeR = this.add.circle( 0, -10, 2.5, 0x331100);
+        const nose = this.add.circle(-3,  -5, 1.8, 0x553322);
+
+        const visual = this.add.container(0, 0, [
+            glow, tailOuter, tailInner,
+            body, belly, head,
+            earL, earR, earLi, earRi,
+            eyeL, eyeR, nose,
+        ]);
+        const outer = this.add.container(x, y, [visual]);
+
+        // Tail fluff
+        this.tweens.add({ targets: [tailOuter, tailInner], scaleY: { from: 1, to: 1.1 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.22 }, yoyo: true, repeat: -1, duration: 1400 });
+        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 850, ease: 'Sine.easeInOut' });
 
         return outer;
     }
@@ -570,30 +617,46 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Bush placement ────────────────────────────────────────────────────────
     private placeBushes(widenedCells: Set<string>, season: MonthConfig['season']) {
-        const palette: Record<string, number> = {
-            Winter: 0x889eb8,
-            Spring: 0x88c844,
-            Summer: 0x228844,
-            Fall:   0xc86820,
-        };
-        const color = palette[season.name] ?? 0x228844;
-
         for (const key of widenedCells) {
             const [col, row] = key.split(',').map(Number);
-            if (col === 0 && row === 0)                       continue; // start cell
-            if (col === COLS - 1 && row === ROWS - 1)         continue; // goal cell
-            if (Math.random() > 0.5)                          continue; // ~50% chance
+            if (col === 0 && row === 0)               continue;
+            if (col === COLS - 1 && row === ROWS - 1) continue;
+            if (Math.random() > 0.5)                  continue;
 
             this.bushCells.add(key);
-
-            // Three overlapping circles form a bush cluster
             const cx = col * TILE + TILE / 2;
             const cy = row * TILE + TILE / 2;
-            this.mazeLayer.add([
-                this.add.circle(cx - 9, cy + 5, 11, color, 0.85),
-                this.add.circle(cx + 9, cy + 5, 11, color, 0.85),
-                this.add.circle(cx,     cy - 3, 13, color, 0.90),
-            ]);
+
+            if (season.name === 'Fall') {
+                // Leaf pile — scattered autumn leaves
+                const leafColors = [0xd04010, 0xe86820, 0xffaa00, 0xf0d020, 0xc06010, 0xa03008, 0xd4a010];
+                const leaves = [
+                    { x: -10, y:  -4, w: 10, h: 16, a: -35 },
+                    { x:   4, y:  -8, w:  9, h: 15, a:  20 },
+                    { x:  10, y:   5, w: 11, h: 15, a: -55 },
+                    { x:  -5, y:   8, w: 10, h: 14, a:  40 },
+                    { x:  -1, y:  -1, w:  9, h: 14, a:  10 },
+                    { x:   8, y:  -3, w:  8, h: 13, a: -20 },
+                    { x:  -8, y:   3, w:  7, h: 12, a:  60 },
+                ];
+                for (const l of leaves) {
+                    const c = leafColors[Math.floor(Math.random() * leafColors.length)];
+                    this.mazeLayer.add(this.add.ellipse(cx + l.x, cy + l.y, l.w, l.h, c, 0.88).setAngle(l.a));
+                }
+            } else {
+                // Standard bush — three overlapping circles
+                const palette: Record<string, number> = {
+                    Winter: 0x889eb8,
+                    Spring: 0x88c844,
+                    Summer: 0x228844,
+                };
+                const color = palette[season.name] ?? 0x228844;
+                this.mazeLayer.add([
+                    this.add.circle(cx - 9, cy + 5, 11, color, 0.85),
+                    this.add.circle(cx + 9, cy + 5, 11, color, 0.85),
+                    this.add.circle(cx,     cy - 3, 13, color, 0.90),
+                ]);
+            }
         }
     }
 
