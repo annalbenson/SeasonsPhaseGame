@@ -276,23 +276,23 @@ export default class GameScene extends Phaser.Scene {
         const accentHex = `#${season.uiAccent.toString(16).padStart(6, '0')}`;
 
         // Month name — spaced-out like the title screen
-        this.add.text(W / 2, 26, spaced(this.monthConfig.name), {
-            fontSize:  '17px',
+        this.add.text(W / 2, 30, spaced(this.monthConfig.name), {
+            fontSize:  '22px',
             fontStyle: 'bold',
             color:     accentHex,
         }).setOrigin(0.5).setDepth(3);
 
         // Season name — smaller, muted
-        this.add.text(W / 2, 44, season.name, {
-            fontSize: '10px',
+        this.add.text(W / 2, 58, season.name, {
+            fontSize: '13px',
             color:    `${accentHex}99`,
         }).setOrigin(0.5).setDepth(3);
 
-        // Historical quote — tiny, italic, lightly tinted
-        this.add.text(W / 2, 60, `"${this.monthConfig.quote}" — ${this.monthConfig.author}`, {
-            fontSize:  '9px',
+        // Historical quote — italic, lightly tinted
+        this.add.text(W / 2, 80, `"${this.monthConfig.quote}" — ${this.monthConfig.author}`, {
+            fontSize:  '12px',
             fontStyle: 'italic',
-            color:     `${accentHex}55`,
+            color:     `${accentHex}66`,
         }).setOrigin(0.5).setDepth(3);
     }
 
