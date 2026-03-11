@@ -19,12 +19,25 @@ Navigate to `http://localhost:5173`. Guide your character through a procedurally
 
 The game cycles through all 12 months, each with a distinct season palette, weather effects, character sprites, and a roaming hazard.
 
-| Season | Player | Hazard | Weather |
-|--------|--------|--------|---------|
-| Spring (Mar–May) | Bee | Frog | Rain |
-| Summer (Jun–Aug) | Fairy | Snake | Heat shimmer |
-| Fall (Sep–Nov) | Fairy | Snake | Falling leaves |
-| Winter (Dec–Feb) | Bunny | Owl | Snow |
+| Season | Player | Hazard | Hiding spot | Objective | Weather |
+|--------|--------|--------|-------------|-----------|---------|
+| Spring (Mar–May) | Bee | Frog | Tall grass | Pollinate 3 flowers | Rain |
+| Summer (Jun–Aug) | Fairy | Snake | Bush | Water 2 plants | Heat shimmer |
+| Fall (Sep–Nov) | Squirrel | Fox | Leaf pile | Plant 2 acorns | Falling leaves |
+| Winter (Dec–Feb) | Bunny | Owl | Snow pile | — (no objective) | Snow |
+
+Each month header shows a historical quote from a poet who wrote about that time of year.
+
+## Objectives
+
+Before the exit opens, most seasons require you to complete a short task:
+
+- **Spring** — step on all 3 flower buds scattered around the maze (they bloom on contact)
+- **Summer** — step on 2 wilted potted plants to water them
+- **Fall** — step on 2 acorns to plant them
+- **Winter** — no objective; the exit is open immediately
+
+When the last objective is collected, the goal tile unlocks with a light flash.
 
 ## Hazard & lives
 

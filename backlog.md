@@ -50,38 +50,23 @@ matching the real season. Weather acts as **active hindrances** — not just dec
 
 ---
 
-## Idea: Season-specific level objectives (before completing the maze)
+## ✅ Season-specific level objectives (shipped)
 
-Each season has a thematic side-objective the player must complete before the goal flower
-opens / the exit becomes active. Completing the objective then lets the player finish the maze.
+Each season requires a short task before the exit opens.
 
-### Confirmed seasons
+| Season | Player | Hazard | Hiding | Objective |
+|--------|--------|--------|--------|-----------|
+| Spring | Bee    | Frog   | Tall grass  | Pollinate 3 flowers (visit dim buds; they bloom on contact) |
+| Summer | Fairy  | Snake  | Bush        | Water 2 potted plants |
+| Fall   | Squirrel | Fox  | Leaf pile   | Plant 2 acorns |
+| Winter | Bunny  | Owl    | Snow pile   | None — exit open immediately |
 
-| Season | Player | Hazard | Objective idea |
-|--------|--------|--------|----------------|
-| Spring | Bee    | Frog   | **Pollinate flowers** — visit N flower tiles scattered around the maze before the exit opens. Flowers glow when visited; counter shown in HUD. |
-| Summer | Fairy  | Snake  | TBD |
-| Winter | Bunny  | Owl    | TBD |
-| Fall   | TBD    | TBD    | TBD |
+HUD: `◆◇◇  POLLINATE` style counter (top-right). Goal tile has a dim overlay that fades when unlocked.
 
-### Spring pollination detail
-- Place 4–6 small flower sprites on random open cells (not start, not goal, not gate cells)
-- Flower starts dim/closed; when the bee steps on it, it blooms (color burst, scale pop tween)
-- HUD shows `🌸 2 / 5` style counter
-- When all flowers pollinated: goal flower animates open, exit becomes active
-- Unvisited flowers visible on screen at all times (they don't move)
-- Suggested colors: varied pastels (pink 0xffb7c5, lavender 0xcc88ff, yellow 0xffee88, white 0xffffff)
-
-### General objective system sketch
-```ts
-interface LevelObjective {
-    season: SeasonName;
-    isComplete(): boolean;
-    onPlayerStep(col: number, row: number): void;   // called after each move
-    setup(mazeLayer, cells, path): void;             // place interactables
-    destroy(): void;
-}
-```
+### Ideas for next iteration
+- Animate the bloom/water effect more elaborately (particle burst matching season palette)
+- Add a brief "objective unlocked" banner text when the last one is collected
+- Winter objective: collect snowflakes (5 drifting sparkle items)?
 
 ### Weather system interface (sketch)
 ```ts

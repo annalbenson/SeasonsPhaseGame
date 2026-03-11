@@ -87,6 +87,13 @@ export default class GameScene extends Phaser.Scene {
     private lives = 3;
     private livesText!: Phaser.GameObjects.Text;
 
+    private objectives   = new Map<string, Phaser.GameObjects.Container>();
+    private objCompleted = 0;
+    private objTotal     = 0;
+    private objText!:      Phaser.GameObjects.Text;
+    private objDone      = false;
+    private goalLock:      Phaser.GameObjects.Arc | null = null;
+
     constructor() { super('GameScene'); }
 
     init(data: { algorithm?: AlgorithmKey; month?: number; from?: string }) {
@@ -99,6 +106,11 @@ export default class GameScene extends Phaser.Scene {
         this.bushCells   = new Set();
         this.isHiding    = false;
         this.lives       = 3;
+        this.objectives  = new Map();
+        this.objCompleted = 0;
+        this.objTotal     = 0;
+        this.objDone      = false;
+        this.goalLock     = null;
     }
 
     create() {
@@ -139,6 +151,15 @@ export default class GameScene extends Phaser.Scene {
         );
         this.placeGoalFlower(season);
 
+        // Dim overlay on goal — removed once objectives are complete
+        if (season.name !== 'Winter') {
+            this.goalLock = this.add.circle(
+                (COLS - 1) * TILE + TILE / 2,
+                (ROWS - 1) * TILE + TILE / 2 + HEADER,
+                TILE / 2 - 2, 0x000000, 0.45,
+            ).setDepth(1.6);
+        }
+
         // Walls
         const g = this.add.graphics();
         g.lineStyle(4, season.wallColor, 1);
@@ -159,6 +180,9 @@ export default class GameScene extends Phaser.Scene {
 
         // Keys + gates (also added to mazeLayer inside placePuzzleItems)
         this.placePuzzleItems();
+
+        // Season objectives — placed after puzzle items so we can avoid their cells
+        this.placeObjectives(season);
 
         // ── Weather ───────────────────────────────────────────────────────────
         addWeather(this, season.name);
@@ -196,11 +220,17 @@ export default class GameScene extends Phaser.Scene {
         // ── Header strip ──────────────────────────────────────────────────────
         this.buildHeader(season);
 
-        this.livesText = this.add.text(10, HEADER / 2, '', {
-            fontSize: '15px',
+        this.livesText = this.add.text(10, 8, '', {
+            fontSize: '14px',
             color:    '#ff5577',
-        }).setOrigin(0, 0.5).setDepth(3);
+        }).setOrigin(0, 0).setDepth(3);
         this.updateLives();
+
+        this.objText = this.add.text(W - 10, 8, '', {
+            fontSize: '13px',
+            color:    '#ffe066',
+        }).setOrigin(1, 0).setDepth(3);
+        this.updateObjText();
 
         // ── Input ─────────────────────────────────────────────────────────────
         this.cursors = this.input.keyboard!.createCursorKeys();
@@ -243,18 +273,26 @@ export default class GameScene extends Phaser.Scene {
         // Subtle separator line at the bottom of the header
         this.add.rectangle(W / 2, HEADER - 1, W, 1, season.uiAccent, 0.25).setDepth(3);
 
-        // Month name — spaced-out like the title screen
         const accentHex = `#${season.uiAccent.toString(16).padStart(6, '0')}`;
-        this.add.text(W / 2, HEADER / 2 - 8, spaced(this.monthConfig.name), {
+
+        // Month name — spaced-out like the title screen
+        this.add.text(W / 2, 26, spaced(this.monthConfig.name), {
             fontSize:  '17px',
             fontStyle: 'bold',
             color:     accentHex,
         }).setOrigin(0.5).setDepth(3);
 
         // Season name — smaller, muted
-        this.add.text(W / 2, HEADER / 2 + 10, season.name, {
+        this.add.text(W / 2, 44, season.name, {
             fontSize: '10px',
-            color:    `${accentHex}99`,   // same hue, lower opacity via hex alpha
+            color:    `${accentHex}99`,
+        }).setOrigin(0.5).setDepth(3);
+
+        // Historical quote — tiny, italic, lightly tinted
+        this.add.text(W / 2, 60, `"${this.monthConfig.quote}" — ${this.monthConfig.author}`, {
+            fontSize:  '9px',
+            fontStyle: 'italic',
+            color:     `${accentHex}55`,
         }).setOrigin(0.5).setDepth(3);
     }
 
@@ -524,6 +562,7 @@ export default class GameScene extends Phaser.Scene {
             onComplete: () => {
                 this.moving = false;
                 this.collectKey();
+                this.checkObjective();
                 this.checkGoal();
             },
         });
@@ -750,9 +789,143 @@ export default class GameScene extends Phaser.Scene {
         this.livesText.setText(full + empty);
     }
 
+    // ── Season objectives ─────────────────────────────────────────────────────
+    private placeObjectives(season: SeasonTheme) {
+        if (season.name === 'Winter') {
+            this.objDone  = true;
+            this.objTotal = 0;
+            this.updateObjText();
+            return;
+        }
+
+        const count = season.name === 'Spring' ? 3 : 2;
+        this.objTotal = count;
+
+        const avoid = new Set<string>(['0,0', `${COLS - 1},${ROWS - 1}`]);
+        for (const k of this.keyItems.keys()) avoid.add(k);
+
+        const candidates: Cell[] = [];
+        for (let row = 0; row < ROWS; row++) {
+            for (let col = 0; col < COLS; col++) {
+                if (!avoid.has(`${col},${row}`)) candidates.push({ col, row });
+            }
+        }
+        // Fisher-Yates shuffle
+        for (let i = candidates.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+        }
+
+        for (let i = 0; i < Math.min(count, candidates.length); i++) {
+            const { col, row } = candidates[i];
+            const cx = col * TILE + TILE / 2;
+            const cy = row * TILE + TILE / 2 + HEADER;
+            let container: Phaser.GameObjects.Container;
+            switch (season.name) {
+                case 'Spring': container = this.buildFlowerSprite(cx, cy); break;
+                case 'Summer': container = this.buildPlantSprite(cx, cy);  break;
+                default:       container = this.buildAcornSprite(cx, cy);  break;
+            }
+            this.objectives.set(`${col},${row}`, container);
+        }
+        this.updateObjText();
+    }
+
+    private buildFlowerSprite(cx: number, cy: number): Phaser.GameObjects.Container {
+        const palette = [0xffb7c5, 0xcc88ff, 0xffee88, 0xffffff, 0xffaadd];
+        const pColor  = palette[Math.floor(Math.random() * palette.length)];
+        const parts: Phaser.GameObjects.GameObject[] = [];
+        for (let i = 0; i < 5; i++) {
+            const rad = (i * 72 * Math.PI) / 180;
+            parts.push(
+                this.add.ellipse(Math.sin(rad) * 8, -Math.cos(rad) * 8, 7, 14, pColor, 0.9)
+                    .setAngle(i * 72),
+            );
+        }
+        parts.push(this.add.circle(0, 0, 5, 0xffe066));
+        const c = this.add.container(cx, cy, parts).setDepth(1.8).setAlpha(0.5);
+        this.tweens.add({ targets: c, scaleX: 1.1, scaleY: 1.1, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
+        return c;
+    }
+
+    private buildPlantSprite(cx: number, cy: number): Phaser.GameObjects.Container {
+        const parts: Phaser.GameObjects.GameObject[] = [
+            this.add.rectangle(0, 12,  16, 12, 0x8b5e3c),            // pot body
+            this.add.rectangle(0,  6,  20,  5, 0xaa7b4e),            // pot rim
+            this.add.rectangle(0, -2,   3, 12, 0x559933),            // stem
+            this.add.ellipse(-9, -6, 12,  8, 0x55aa22, 0.9).setAngle(-30),
+            this.add.ellipse( 9, -6, 12,  8, 0x55aa22, 0.9).setAngle( 30),
+            this.add.ellipse( 0,-14, 10,  6, 0x66bb33, 0.9),
+        ];
+        const c = this.add.container(cx, cy, parts).setDepth(1.8).setAlpha(0.45);
+        this.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
+        return c;
+    }
+
+    private buildAcornSprite(cx: number, cy: number): Phaser.GameObjects.Container {
+        const parts: Phaser.GameObjects.GameObject[] = [
+            this.add.rectangle(0, -13,  3,  6, 0x5a3010),            // stem
+            this.add.ellipse(  0,  -7, 18, 10, 0x6b3f1e),            // cap
+            this.add.circle(  -5, -7,   2, 0x8b5e3c, 0.6),           // cap texture
+            this.add.circle(   5, -7,   2, 0x8b5e3c, 0.6),
+            this.add.ellipse(  0,   2, 16, 20, 0xc8852a),             // body
+            this.add.ellipse( -4,  -1,  5, 10, 0xdda050, 0.5),       // highlight
+        ];
+        const c = this.add.container(cx, cy, parts).setDepth(1.8).setAlpha(0.5);
+        this.tweens.add({ targets: c, angle: { from: -6, to: 6 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
+        return c;
+    }
+
+    private checkObjective() {
+        if (this.objDone) return;
+        const k = `${this.gridX},${this.gridY}`;
+        const container = this.objectives.get(k);
+        if (!container) return;
+
+        this.objectives.delete(k);
+        this.objCompleted++;
+
+        // Bloom/collect burst then destroy
+        this.tweens.add({
+            targets:  container,
+            scaleX:   1.6, scaleY: 1.6,
+            alpha:    0,
+            duration: 380,
+            ease:     'Back.easeOut',
+            onComplete: () => container.destroy(),
+        });
+        this.cameras.main.flash(250, 255, 240, 180, false);
+
+        if (this.objCompleted >= this.objTotal) {
+            this.objDone = true;
+            if (this.goalLock) {
+                this.tweens.add({ targets: this.goalLock, alpha: 0, duration: 700 });
+            }
+            this.cameras.main.flash(500, 120, 255, 160, false);
+        }
+        this.updateObjText();
+    }
+
+    private updateObjText() {
+        if (!this.objText) return;
+        if (this.objTotal === 0) { this.objText.setText(''); return; }
+
+        const season = this.monthConfig.season;
+        const label  = season.name === 'Spring' ? 'POLLINATE'
+                     : season.name === 'Summer' ? 'WATER'
+                     : 'PLANT';
+        const filled = '\u25C6'.repeat(this.objCompleted);
+        const empty  = '\u25C7'.repeat(Math.max(0, this.objTotal - this.objCompleted));
+        this.objText.setText(this.objDone
+            ? `${ '\u25C6'.repeat(this.objTotal) }  ${label} \u2713`
+            : `${filled}${empty}  ${label}`
+        );
+    }
+
     // ── Month progression ─────────────────────────────────────────────────────
     private checkGoal() {
         if (this.gridX !== COLS - 1 || this.gridY !== ROWS - 1) return;
+        if (!this.objDone) return;
 
         const nextMonth = (this.monthConfig.month % 12) + 1;   // 12 → 1
 
