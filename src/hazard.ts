@@ -30,7 +30,7 @@ export class Hazard {
     private danger!: Phaser.GameObjects.Arc;   // red aura, visible only when hunting
     private scene:   Phaser.Scene;
     private cells:   number[][];
-    private state:   'wandering' | 'hunting' = 'wandering';
+    private state:   'wandering' | 'hunting' | 'passing' = 'wandering';
     private moving   = false;
     private dead     = false;
     private timer!:  Phaser.Time.TimerEvent;
@@ -71,7 +71,10 @@ export class Hazard {
         this.fairyHiding = hiding;
 
         const dist = Math.abs(col - this.gridX) + Math.abs(row - this.gridY);
-        const next: typeof this.state = (!hiding && dist <= 5) ? 'hunting' : 'wandering';
+        const next: typeof this.state =
+            (!hiding && dist <= 5) ? 'hunting' :
+            ( hiding && dist <= 6) ? 'passing' :
+            'wandering';
 
         if (next !== this.state) {
             this.state = next;
@@ -114,7 +117,7 @@ export class Hazard {
     // ── Movement internals ────────────────────────────────────────────────────
     private scheduleMove() {
         if (this.dead) return;
-        const delay = this.state === 'hunting' ? 900 : 1600 + Math.random() * 700;
+        const delay = this.state === 'hunting' ? 900 : 1500 + Math.random() * 600;
         this.timer = this.scene.time.delayedCall(delay, () => this.move());
     }
 
@@ -124,6 +127,11 @@ export class Hazard {
         let dir;
         if (this.state === 'hunting') {
             dir = this.huntDir();
+        } else if (this.state === 'passing') {
+            // Walk toward the hidden player, but once adjacent/on top use random
+            // so the hazard continues through rather than oscillating in place
+            const dist = Math.abs(this.fairyCol - this.gridX) + Math.abs(this.fairyRow - this.gridY);
+            dir = dist > 1 ? this.huntDir() : this.randomDir();
         } else if (this.retreatMoves > 0) {
             dir = this.retreatDir();
             this.retreatMoves--;
@@ -140,7 +148,7 @@ export class Hazard {
             targets:  this.sprite,
             x:        this.gridX * TILE + TILE / 2,
             y:        this.gridY * TILE + TILE / 2 + HEADER,
-            duration: this.state === 'hunting' ? 820 : 1500,
+            duration: this.state === 'hunting' ? 820 : 1400,
             ease:     'Sine.easeInOut',
             onComplete: () => {
                 if (this.dead) return;
