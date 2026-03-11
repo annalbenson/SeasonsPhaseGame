@@ -653,14 +653,38 @@ export default class GameScene extends Phaser.Scene {
                     // Subtle shadow underneath the pile
                     this.add.ellipse(cx, cy + 6, 30, 8, 0x8aaabb, 0.18),
                 ]);
+            } else if (season.name === 'Spring') {
+                // Tall grass — cluster of thin upright blades
+                const blades = [
+                    { x: -9,  h: 22, a: -12 },
+                    { x: -4,  h: 26, a:   5 },
+                    { x:  1,  h: 24, a:  -6 },
+                    { x:  6,  h: 20, a:  14 },
+                    { x: 11,  h: 23, a:  -3 },
+                    { x: -6,  h: 18, a:  20 },
+                    { x:  4,  h: 19, a: -18 },
+                ];
+                for (const b of blades) {
+                    // Blade — tall thin ellipse, slightly varied greens
+                    const green = Math.random() < 0.5 ? 0x66bb33 : 0x88cc44;
+                    this.mazeLayer.add(
+                        this.add.ellipse(cx + b.x, cy + 2, 5, b.h, green, 0.92).setAngle(b.a)
+                    );
+                    // Seed tip — tiny darker dot at the top of each blade
+                    this.mazeLayer.add(
+                        this.add.circle(
+                            cx + b.x + Math.sin((b.a * Math.PI) / 180) * (b.h / 2 - 2),
+                            cy + 2   - Math.cos((b.a * Math.PI) / 180) * (b.h / 2 - 2),
+                            2.5, 0x558822, 0.85
+                        )
+                    );
+                }
             } else {
-                // Standard bush — three overlapping circles
-                const palette: Record<string, number> = { Spring: 0x88c844, Summer: 0x228844 };
-                const color = palette[season.name] ?? 0x228844;
+                // Summer bush — three overlapping circles
                 this.mazeLayer.add([
-                    this.add.circle(cx - 9, cy + 5, 11, color, 0.85),
-                    this.add.circle(cx + 9, cy + 5, 11, color, 0.85),
-                    this.add.circle(cx,     cy - 3, 13, color, 0.90),
+                    this.add.circle(cx - 9, cy + 5, 11, 0x228844, 0.85),
+                    this.add.circle(cx + 9, cy + 5, 11, 0x228844, 0.85),
+                    this.add.circle(cx,     cy - 3, 13, 0x228844, 0.90),
                 ]);
             }
         }
