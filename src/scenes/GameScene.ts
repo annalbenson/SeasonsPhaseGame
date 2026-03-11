@@ -28,15 +28,18 @@ function seasonStart(month: number): number {
     return 12;
 }
 
-function solvePath(cells: number[][], cols: number, rows: number): Cell[] {
+function solvePath(
+    cells: number[][], cols: number, rows: number,
+    startCol = 0, startRow = 0, endCol = cols - 1, endRow = rows - 1,
+): Cell[] {
     const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
     const prev: (Cell | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
-    const queue: Cell[] = [{ col: 0, row: 0 }];
-    visited[0][0] = true;
+    const queue: Cell[] = [{ col: startCol, row: startRow }];
+    visited[startRow][startCol] = true;
 
     while (queue.length > 0) {
         const { col, row } = queue.shift()!;
-        if (col === cols - 1 && row === rows - 1) break;
+        if (col === endCol && row === endRow) break;
         for (const { dc, dr, wall } of MOVE_DIRS) {
             const nc = col + dc, nr = row + dr;
             if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
@@ -48,7 +51,7 @@ function solvePath(cells: number[][], cols: number, rows: number): Cell[] {
     }
 
     const path: Cell[] = [];
-    let cur: Cell | null = { col: cols - 1, row: rows - 1 };
+    let cur: Cell | null = { col: endCol, row: endRow };
     while (cur) { path.unshift(cur); cur = prev[cur.row][cur.col]; }
     return path;
 }
@@ -109,6 +112,11 @@ export default class GameScene extends Phaser.Scene {
     private revealed = new Set<string>();
     private lit      = new Set<string>();
 
+    private startCol = 0;
+    private startRow = 0;
+    private goalCol  = COLS - 1;
+    private goalRow  = ROWS - 1;
+
     constructor() { super('GameScene'); }
 
     init(data: { algorithm?: AlgorithmKey; month?: number; from?: string }) {
@@ -130,6 +138,22 @@ export default class GameScene extends Phaser.Scene {
         this.fogTiles     = [];
         this.revealed     = new Set();
         this.lit          = new Set();
+
+        // Pick two distinct random corners for start and goal
+        const corners = [
+            { col: 0,        row: 0        },
+            { col: COLS - 1, row: 0        },
+            { col: 0,        row: ROWS - 1 },
+            { col: COLS - 1, row: ROWS - 1 },
+        ];
+        for (let i = corners.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [corners[i], corners[j]] = [corners[j], corners[i]];
+        }
+        this.startCol = corners[0].col;
+        this.startRow = corners[0].row;
+        this.goalCol  = corners[1].col;
+        this.goalRow  = corners[1].row;
     }
 
     create() {
@@ -164,20 +188,18 @@ export default class GameScene extends Phaser.Scene {
         // Goal tile
         this.mazeLayer.add(
             this.add.rectangle(
-                (COLS - 1) * TILE + TILE / 2, (ROWS - 1) * TILE + TILE / 2,
+                this.goalCol * TILE + TILE / 2, this.goalRow * TILE + TILE / 2,
                 TILE, TILE, season.goalColor
             )
         );
         this.placeGoalFlower(season);
 
         // Dim overlay on goal — removed once objectives are complete
-        if (season.name !== 'Winter') {
-            this.goalLock = this.add.circle(
-                (COLS - 1) * TILE + TILE / 2,
-                (ROWS - 1) * TILE + TILE / 2 + HEADER,
-                TILE / 2 - 2, 0x000000, 0.45,
-            ).setDepth(1.6);
-        }
+        this.goalLock = this.add.circle(
+            this.goalCol * TILE + TILE / 2,
+            this.goalRow * TILE + TILE / 2 + HEADER,
+            TILE / 2 - 2, 0x000000, 0.45,
+        ).setDepth(1.6);
 
         // Walls
         const g = this.add.graphics();
@@ -210,9 +232,9 @@ export default class GameScene extends Phaser.Scene {
         this.createSparkleTexture();
 
         // Player lives in world space (not in mazeLayer) with y offset applied
-        this.gridX = 0; this.gridY = 0;
-        const startX = TILE / 2;
-        const startY = TILE / 2 + HEADER;
+        this.gridX = this.startCol; this.gridY = this.startRow;
+        const startX = this.startCol * TILE + TILE / 2;
+        const startY = this.startRow * TILE + TILE / 2 + HEADER;
         this.player = this.createPlayerSprite(startX, startY, season);
         this.player.setDepth(2);
 
@@ -285,7 +307,7 @@ export default class GameScene extends Phaser.Scene {
 
         // ── Fog of war ────────────────────────────────────────────────────────
         this.buildFogLayer(season);
-        this.revealAround(0, 0);
+        this.revealAround(this.startCol, this.startRow);
 
         // ── Fade in ───────────────────────────────────────────────────────────
         this.cameras.main.fadeIn(900, 0, 0, 0);
@@ -477,7 +499,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Puzzle item placement ─────────────────────────────────────────────────
     private placePuzzleItems(season: SeasonTheme) {
-        const path = solvePath(this.cells, COLS, ROWS);
+        const path = solvePath(this.cells, COLS, ROWS, this.startCol, this.startRow, this.goalCol, this.goalRow);
         const n    = path.length;
         if (n < 8) return;
 
@@ -605,8 +627,8 @@ export default class GameScene extends Phaser.Scene {
     // ── Goal flower ───────────────────────────────────────────────────────────
     private placeGoalFlower(season: SeasonTheme) {
         // World-space centre of the goal cell (mazeLayer is at y=HEADER)
-        const cx = (COLS - 1) * TILE + TILE / 2;
-        const cy = (ROWS - 1) * TILE + TILE / 2 + HEADER;
+        const cx = this.goalCol * TILE + TILE / 2;
+        const cy = this.goalRow * TILE + TILE / 2 + HEADER;
 
         const parts: Phaser.GameObjects.GameObject[] = [];
 
@@ -742,9 +764,9 @@ export default class GameScene extends Phaser.Scene {
     private placeBushes(widenedCells: Set<string>, season: MonthConfig['season']) {
         for (const key of widenedCells) {
             const [col, row] = key.split(',').map(Number);
-            if (col === 0 && row === 0)               continue;
-            if (col === COLS - 1 && row === ROWS - 1) continue;
-            if (Math.random() > 0.5)                  continue;
+            if (col === this.startCol && row === this.startRow) continue;
+            if (col === this.goalCol  && row === this.goalRow)  continue;
+            if (Math.random() > 0.5)                           continue;
             this.bushCells.add(key);
             this.drawBushAt(col, row, season);
         }
@@ -765,7 +787,8 @@ export default class GameScene extends Phaser.Scene {
             .map(({ dc, dr }) => ({ col: hCol + dc, row: hRow + dr }))
             .filter(({ col, row }) =>
                 col >= 0 && col < COLS && row >= 0 && row < ROWS &&
-                !(col === 0 && row === 0) && !(col === COLS - 1 && row === ROWS - 1)
+                !(col === this.startCol && row === this.startRow) &&
+                !(col === this.goalCol  && row === this.goalRow)
             );
         if (valid.length === 0) return;
         const { col, row } = valid[Math.floor(Math.random() * valid.length)];
@@ -775,12 +798,14 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Hazard spawn ──────────────────────────────────────────────────────────
     private spawnHazard(season: SeasonTheme) {
-        // Pick a start cell with Manhattan distance > 5 from the fairy's start
+        // Pick a cell with Manhattan distance > 5 from the player's start corner
         const candidates: { col: number; row: number }[] = [];
         for (let row = 0; row < ROWS; row++) {
             for (let col = 0; col < COLS; col++) {
-                if (col === COLS - 1 && row === ROWS - 1) continue;
-                if (col + row <= 5) continue;
+                if (col === this.goalCol  && row === this.goalRow)  continue;
+                if (col === this.startCol && row === this.startRow) continue;
+                const dist = Math.abs(col - this.startCol) + Math.abs(row - this.startRow);
+                if (dist <= 5) continue;
                 candidates.push({ col, row });
             }
         }
@@ -789,9 +814,9 @@ export default class GameScene extends Phaser.Scene {
         // Ensure a hiding spot near the hazard start
         this.guaranteeBushNear(col, row, season);
 
-        // Ensure a hiding spot roughly halfway between player (0,0) and hazard
-        const midCol = Math.round(col / 2);
-        const midRow = Math.round(row / 2);
+        // Ensure a hiding spot roughly halfway between player start and hazard
+        const midCol = Math.round((col + this.startCol) / 2);
+        const midRow = Math.round((row + this.startRow) / 2);
         this.guaranteeBushNear(midCol, midRow, season);
 
         this.hazard = new Hazard(this, this.cells, col, row, season.name, () => {
@@ -812,16 +837,16 @@ export default class GameScene extends Phaser.Scene {
                     });
                 });
             } else {
-                // Send fairy back to start, scatter the snake
+                // Send fairy back to start, scatter the enemy
                 this.tweens.killTweensOf(this.player);
-                this.gridX    = 0;
-                this.gridY    = 0;
+                this.gridX    = this.startCol;
+                this.gridY    = this.startRow;
                 this.moving   = false;
                 this.isHiding = false;
                 this.tweens.add({
                     targets:  this.player,
-                    x:        TILE / 2,
-                    y:        TILE / 2 + HEADER,
+                    x:        this.startCol * TILE + TILE / 2,
+                    y:        this.startRow * TILE + TILE / 2 + HEADER,
                     alpha:    1.0,
                     duration: 500,
                     ease:     'Power2',
@@ -843,7 +868,7 @@ export default class GameScene extends Phaser.Scene {
         const count = season.name === 'Spring' ? 3 : 5;   // Winter = 5 snowflakes
         this.objTotal = count;
 
-        const avoid = new Set<string>(['0,0', `${COLS - 1},${ROWS - 1}`]);
+        const avoid = new Set<string>([`${this.startCol},${this.startRow}`, `${this.goalCol},${this.goalRow}`]);
         for (const k of this.keyItems.keys()) avoid.add(k);
 
         const candidates: Cell[] = [];
@@ -992,7 +1017,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Month progression ─────────────────────────────────────────────────────
     private checkGoal() {
-        if (this.gridX !== COLS - 1 || this.gridY !== ROWS - 1) return;
+        if (this.gridX !== this.goalCol || this.gridY !== this.goalRow) return;
         if (!this.objDone) return;
 
         const nextMonth  = (this.monthConfig.month % 12) + 1;   // 12 → 1
