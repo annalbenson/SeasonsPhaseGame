@@ -9,56 +9,43 @@ npm install
 npm run dev
 ```
 
-Navigate to `http://localhost:5173`. Guide your character through a procedurally generated maze each month. Reach the goal flower in the bottom-right corner to advance to the next month.
+Navigate to `http://localhost:5173`. Guide your character through a procedurally generated maze each month. Collect objectives, unlock gates, avoid the hazard, and reach the goal to advance. Complete all 12 months to finish the year.
 
-**Controls:** Arrow keys or WASD
-**R** — new maze (same month)
-**M** — return to title
+**Controls:** Arrow keys or WASD — tap to step, hold to slide
+**R** — new maze (same month) · **M** — return to title · **E** — skip to end screen
 
 ## Seasons
 
-The game cycles through all 12 months, each with a distinct season palette, weather effects, character sprites, and a roaming hazard.
+The game cycles through all 12 months, each with a distinct season palette, weather effects, character sprites, and a roaming hazard. Each month opens with a quote card; season boundaries get an additional season title card.
 
 | Season | Player | Hazard | Hiding spot | Objective | Weather |
 |--------|--------|--------|-------------|-----------|---------|
+| Winter (Jan–Feb, Dec) | Bunny | Owl | Snow pile | Collect 2 snowflakes | Snow |
 | Spring (Mar–May) | Bee | Frog | Tall grass | Pollinate 3 flowers | Rain |
 | Summer (Jun–Aug) | Fairy | Snake | Bush | Water 2 plants | Heat shimmer |
 | Fall (Sep–Nov) | Squirrel | Fox | Leaf pile | Plant 2 acorns | Falling leaves |
-| Winter (Dec–Feb) | Bunny | Owl | Snow pile | — (no objective) | Snow |
-
-Each month header shows a historical quote from a poet who wrote about that time of year.
-
-## Objectives
-
-Before the exit opens, most seasons require you to complete a short task:
-
-- **Spring** — step on all 3 flower buds scattered around the maze (they bloom on contact)
-- **Summer** — step on 2 wilted potted plants to water them
-- **Fall** — step on 2 acorns to plant them
-- **Winter** — no objective; the exit is open immediately
-
-When the last objective is collected, the goal tile unlocks with a light flash.
 
 ## Hazard & lives
 
-A roaming predator patrols the maze. When it gets within 5 cells it switches to hunting mode (red aura glows). Getting caught sends you back to start and costs a life — you have 3 per month. Lose all 3 and the month resets.
+A roaming predator patrols the maze. Getting within 5 cells triggers hunting mode (red aura). Getting caught costs a life — 3 per month. Lose all 3 and the season restarts from its first month.
 
-**Hiding:** step into a bush (darker clusters in wider corridors) to become invisible to the hazard.
+**Hiding:** step into a bush to become invisible. Bushes are guaranteed near the hazard spawn, along the solution path, and at the midpoint between you and the enemy.
 
 ## Keys & gates
 
-Gold diamonds (◆) scattered along the solution path are keys. Red bars are locked gates. Collect a key then walk into a gate to open it. Gates are always placed after their key on the path, so the maze is always completable.
+Season-coloured diamonds (◆) are keys; coloured bars are locked gates. Each gate is placed on a bridge edge (no alternate route), so gates are never bypassable. Keys always appear before their gate on the solution path.
+
+## Side panel
+
+A persistent panel shows current objectives, lives, key inventory, and a colour-coded legend for all game elements.
 
 ## Maze generation
 
-Four algorithms are available (selected randomly per maze):
+All mazes use Kruskal's algorithm — uniform feel, no directional bias. Start and goal are randomised to opposite corners each level.
 
-| Algorithm | Character |
-|-----------|-----------|
-| Recursive Backtracker (DFS) | Long winding corridors, few dead ends |
-| Prim's Algorithm | Bushy — many short dead ends |
-| Binary Tree | Fast; notice the top-row bias |
-| Kruskal's Algorithm | Uniform feel, no directional bias |
+## End screen
+
+Completing December advances to a closing screen with a final quote before returning to the title.
 
 ## Credits
 

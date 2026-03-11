@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS, HEADER } from '../constants';
+import { TILE, COLS, ROWS, HEADER, PANEL } from '../constants';
 
-const W = COLS * TILE;
+const W = COLS * TILE + PANEL;
 const H = ROWS * TILE + HEADER;
 
 export default class TitleScene extends Phaser.Scene {

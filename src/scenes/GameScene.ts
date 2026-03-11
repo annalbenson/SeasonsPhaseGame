@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS, HEADER } from '../constants';
+import { TILE, COLS, ROWS, HEADER, PANEL } from '../constants';
 import { ALGORITHMS, AlgorithmKey, WALLS, widenCorridors } from '../maze';
 import { MONTHS, MonthConfig, SeasonTheme } from '../seasons';
 import { addWeather } from '../weather';
@@ -56,6 +56,24 @@ function solvePath(
     return path;
 }
 
+// Returns true if blocking the edge (fromCol,fromRow)→(toCol,toRow) disconnects start from goal.
+// Used to ensure gates sit on true bridges so they can't be bypassed via widen-created cycles.
+function isBridge(
+    cells: number[][], cols: number, rows: number,
+    fromCol: number, fromRow: number, toCol: number, toRow: number,
+    startCol: number, startRow: number, goalCol: number, goalRow: number,
+): boolean {
+    const dc = toCol - fromCol, dr = toRow - fromRow;
+    const fw = dc ===  1 ? WALLS.RIGHT  : dc === -1 ? WALLS.LEFT   : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+    const tw = dc ===  1 ? WALLS.LEFT   : dc === -1 ? WALLS.RIGHT  : dr === 1 ? WALLS.TOP    : WALLS.BOTTOM;
+    cells[fromRow][fromCol] |= fw;
+    cells[toRow][toCol]     |= tw;
+    const path = solvePath(cells, cols, rows, startCol, startRow, goalCol, goalRow);
+    cells[fromRow][fromCol] &= ~fw;
+    cells[toRow][toCol]     &= ~tw;
+    return path.length === 0;
+}
+
 // ── Gate data ─────────────────────────────────────────────────────────────────
 interface Gate {
     fromCol: number; fromRow: number;
@@ -71,7 +89,7 @@ function spaced(text: string): string {
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
 export default class GameScene extends Phaser.Scene {
-    private algorithm: AlgorithmKey = 'dfs';
+    private algorithm: AlgorithmKey = 'kruskals';
     private monthConfig!: MonthConfig;
     private fromScene = 'TitleScene';
 
@@ -85,7 +103,8 @@ export default class GameScene extends Phaser.Scene {
     private emitter!: Phaser.GameObjects.Particles.ParticleEmitter;
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
-    private moving = false;
+    private moving   = false;
+    private slideDir: { dx: number; dy: number } | null = null;
 
     private cells!: number[][];
 
@@ -120,7 +139,7 @@ export default class GameScene extends Phaser.Scene {
     constructor() { super('GameScene'); }
 
     init(data: { algorithm?: AlgorithmKey; month?: number; from?: string }) {
-        this.algorithm   = data.algorithm ?? 'dfs';
+        this.algorithm   = data.algorithm ?? 'kruskals';
         this.monthConfig = MONTHS[(data.month ?? 1) - 1];
         this.fromScene   = data.from ?? 'TitleScene';
         this.keyItems    = new Map();
@@ -261,18 +280,6 @@ export default class GameScene extends Phaser.Scene {
         // ── Header strip ──────────────────────────────────────────────────────
         this.buildHeader(season);
 
-        this.livesText = this.add.text(10, 8, '', {
-            fontSize: '14px',
-            color:    '#ff5577',
-        }).setOrigin(0, 0).setDepth(3);
-        this.updateLives();
-
-        this.objText = this.add.text(W - 10, 8, '', {
-            fontSize: '13px',
-            color:    '#ffe066',
-        }).setOrigin(1, 0).setDepth(3);
-        this.updateObjText();
-
         // ── Input ─────────────────────────────────────────────────────────────
         this.cursors = this.input.keyboard!.createCursorKeys();
         this.wasd = {
@@ -291,19 +298,10 @@ export default class GameScene extends Phaser.Scene {
             this.cameras.main.fadeOut(500, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this.fromScene));
         });
+        this.input.keyboard!.addKey('E').on('down', () => this.goToEnd());
 
-        // ── Inventory (bottom-left, inside maze area) ─────────────────────────
-        this.inventoryText = this.add.text(10, ROWS * TILE + HEADER - 10, '', {
-            fontSize: '14px', color: '#ffe066',
-            backgroundColor: '#00000044', padding: { x: 6, y: 3 },
-        }).setDepth(3).setOrigin(0, 1);
-        this.updateInventory();
-
-        // Hint (bottom-right)
-        this.add.text(W - 10, ROWS * TILE + HEADER - 10, 'R  new maze   M  menu', {
-            fontSize: '11px', color: '#ffffff33',
-            backgroundColor: '#00000033', padding: { x: 6, y: 3 },
-        }).setDepth(3).setOrigin(1, 1);
+        // ── Side panel ────────────────────────────────────────────────────────
+        this.buildSidePanel(season);
 
         // ── Fog of war ────────────────────────────────────────────────────────
         this.buildFogLayer(season);
@@ -341,13 +339,140 @@ export default class GameScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(3);
     }
 
+    // ── Side panel (objectives + legend) ─────────────────────────────────────
+    private buildSidePanel(season: SeasonTheme) {
+        const px    = W;                          // panel left edge
+        const pw    = PANEL;
+        const ph    = ROWS * TILE + HEADER;
+        const cx    = px + pw / 2;                // panel centre x
+        const depth = 3;
+
+        const accent  = season.uiAccent;
+        const accentH = `#${accent.toString(16).padStart(6, '0')}`;
+        // Blend accent toward white so dim text is always legible on the dark panel
+        const dimmed  = Math.floor(accent * 0.55);
+        const r = Math.max((dimmed >> 16) & 0xff, 0x88);
+        const g = Math.max((dimmed >>  8) & 0xff, 0x88);
+        const b = Math.max( dimmed        & 0xff, 0x88);
+        const dimH = `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+
+        // Panel background — slightly lighter than scene bg
+        const panelBg = (season.bgColor & 0xfefefe) + 0x0a0a0a;
+        this.add.rectangle(px + pw / 2, ph / 2, pw, ph, panelBg).setDepth(depth - 1);
+
+        // Thin left border
+        this.add.rectangle(px + 1, ph / 2, 1, ph, accent, 0.2).setDepth(depth);
+
+        // ── OBJECTIVES section ────────────────────────────────────────────────
+        let y = HEADER + 18;
+
+        this.add.text(cx, y, 'OBJECTIVES', {
+            fontSize: '10px', color: dimH, letterSpacing: 3,
+        }).setOrigin(0.5).setDepth(depth);
+
+        y += 22;
+        this.objText = this.add.text(cx, y, '', {
+            fontSize: '15px', color: accentH, align: 'center',
+        }).setOrigin(0.5, 0).setDepth(depth);
+        this.updateObjText();
+
+        y += 38;
+        // ── LIVES section ─────────────────────────────────────────────────────
+        this.add.text(cx, y, 'LIVES', {
+            fontSize: '10px', color: dimH, letterSpacing: 3,
+        }).setOrigin(0.5).setDepth(depth);
+
+        y += 20;
+        this.livesText = this.add.text(cx, y, '', {
+            fontSize: '16px', color: '#ff5577',
+        }).setOrigin(0.5, 0).setDepth(depth);
+        this.updateLives();
+
+        y += 34;
+        // ── INVENTORY section ─────────────────────────────────────────────────
+        this.add.text(cx, y, 'KEYS', {
+            fontSize: '10px', color: dimH, letterSpacing: 3,
+        }).setOrigin(0.5).setDepth(depth);
+
+        y += 20;
+        this.inventoryText = this.add.text(cx, y, '', {
+            fontSize: '16px', color: `#${season.keyColor.toString(16).padStart(6, '0')}`,
+        }).setOrigin(0.5, 0).setDepth(depth);
+        this.updateInventory();
+
+        // ── Divider ───────────────────────────────────────────────────────────
+        y += 38;
+        this.add.rectangle(cx, y, pw - 32, 1, accent, 0.2).setDepth(depth);
+
+        // ── LEGEND section ────────────────────────────────────────────────────
+        y += 16;
+        this.add.text(cx, y, 'LEGEND', {
+            fontSize: '10px', color: dimH, letterSpacing: 3,
+        }).setOrigin(0.5).setDepth(depth);
+
+        y += 18;
+        const lx = px + 14;   // swatch left edge
+        const tx = px + 30;   // label left edge
+        const legendItems: { draw: (g: Phaser.GameObjects.Graphics, ly: number) => void; label: string }[] = [
+            {
+                label: 'you',
+                draw: (g, ly) => { g.fillStyle(accent, 0.9); g.fillCircle(lx + 7, ly, 6); },
+            },
+            {
+                label: 'enemy — hide!',
+                draw: (g, ly) => { g.fillStyle(0xff6600, 0.9); g.fillCircle(lx + 7, ly, 6); },
+            },
+            {
+                label: 'key',
+                draw: (g, ly) => {
+                    g.fillStyle(season.keyColor, 1);
+                    g.fillRect(lx + 2, ly - 5, 10, 10);
+                },
+            },
+            {
+                label: 'gate — use key',
+                draw: (g, ly) => { g.fillStyle(season.gateColor, 1); g.fillRect(lx + 1, ly - 2, 13, 4); },
+            },
+            {
+                label: 'bush — hide here',
+                draw: (g, ly) => { g.fillStyle(0x2e7d32, 0.9); g.fillCircle(lx + 7, ly - 2, 5); g.fillStyle(0x1b5e20, 0.8); g.fillCircle(lx + 3, ly + 2, 3); g.fillCircle(lx + 11, ly + 2, 3); },
+            },
+            {
+                label: 'goal — reach it',
+                draw: (g, ly) => { g.fillStyle(season.goalColor, 0.9); g.fillCircle(lx + 7, ly, 6); },
+            },
+        ];
+
+        const gfx = this.add.graphics().setDepth(depth);
+        for (const item of legendItems) {
+            item.draw(gfx, y + 6);
+            this.add.text(tx, y, item.label, {
+                fontSize: '11px', color: dimH,
+            }).setOrigin(0, 0).setDepth(depth);
+            y += 20;
+        }
+
+        // ── Divider ───────────────────────────────────────────────────────────
+        y += 4;
+        this.add.rectangle(cx, y, pw - 32, 1, accent, 0.2).setDepth(depth);
+
+        // ── Controls hint ─────────────────────────────────────────────────────
+        y += 14;
+        for (const line of ['R  new maze', 'M  menu', 'E  end screen', '↑↓←→  move', 'hold  slide']) {
+            this.add.text(cx, y, line, {
+                fontSize: '10px', color: `#ffffff22`,
+            }).setOrigin(0.5, 0).setDepth(depth);
+            y += 14;
+        }
+    }
+
     // ── Player sprite dispatcher ──────────────────────────────────────────────
     private createPlayerSprite(x: number, y: number, season: SeasonTheme): Phaser.GameObjects.Container {
         switch (season.name) {
             case 'Spring': return this.createBee(x, y);
             case 'Fall':   return this.createSquirrel(x, y);
             case 'Winter': return this.createBunny(x, y);
-            default:       return this.createFairy(x, y, season.uiAccent);
+            default:       return this.createFairy(x, y, 0xffffaa);   // warm yellow glow — visible on green
         }
     }
 
@@ -503,10 +628,26 @@ export default class GameScene extends Phaser.Scene {
         const n    = path.length;
         if (n < 10) return;
 
-        // Gates divide the path into thirds; each key is placed randomly
-        // *before* its paired gate so the player must collect it first.
-        const gate1Idx = Math.floor(n * 0.38);
-        const gate2Idx = Math.floor(n * 0.72);
+        // Gates must sit on "bridge" edges so widenCorridors cycles can't bypass them.
+        // Scan outward from ideal percentage positions to find the nearest bridge.
+        const findBridge = (target: number, minIdx: number, maxIdx: number): number => {
+            for (let offset = 0; offset <= maxIdx - minIdx; offset++) {
+                for (const sign of [1, -1]) {
+                    const idx = target + offset * sign;
+                    if (idx < minIdx || idx > maxIdx) continue;
+                    const from = path[idx], to = path[idx + 1];
+                    if (to && isBridge(this.cells, COLS, ROWS, from.col, from.row, to.col, to.row,
+                                       this.startCol, this.startRow, this.goalCol, this.goalRow)) {
+                        return idx;
+                    }
+                }
+            }
+            return -1;
+        };
+
+        const gate1Idx = findBridge(Math.floor(n * 0.38), 3,        Math.floor(n * 0.55));
+        const gate2Idx = findBridge(Math.floor(n * 0.72), gate1Idx + 3, n - 2);
+        if (gate1Idx < 0 || gate2Idx < 0) return; // no valid bridge positions — skip gates
 
         // Key 1: anywhere between path[2] and gate1 (exclusive)
         const key1Idx = 2 + Math.floor(Math.random() * (gate1Idx - 3));
@@ -583,18 +724,24 @@ export default class GameScene extends Phaser.Scene {
 
         if (dx === 0 && dy === 0) return;
 
+        this.slideDir = { dx, dy };
+        this.tryStep(dx, dy);
+    }
+
+    // Attempt one step; called for first tap and every continued slide step.
+    private tryStep(dx: number, dy: number) {
         const walls = this.cells[this.gridY][this.gridX];
-        if (dx ===  1 && (walls & WALLS.RIGHT))  return;
-        if (dx === -1 && (walls & WALLS.LEFT))   return;
-        if (dy ===  1 && (walls & WALLS.BOTTOM)) return;
-        if (dy === -1 && (walls & WALLS.TOP))    return;
+        if (dx ===  1 && (walls & WALLS.RIGHT))  { this.slideDir = null; return; }
+        if (dx === -1 && (walls & WALLS.LEFT))   { this.slideDir = null; return; }
+        if (dy ===  1 && (walls & WALLS.BOTTOM)) { this.slideDir = null; return; }
+        if (dy === -1 && (walls & WALLS.TOP))    { this.slideDir = null; return; }
 
         const newX = this.gridX + dx;
         const newY = this.gridY + dy;
 
         const gate = this.findGate(this.gridX, this.gridY, newX, newY);
         if (gate) {
-            if (this.keyCount === 0) return;
+            if (this.keyCount === 0) { this.slideDir = null; return; }
             this.keyCount--;
             gate.open = true;
             gate.graphic.destroy();
@@ -617,8 +764,22 @@ export default class GameScene extends Phaser.Scene {
                 this.collectKey();
                 this.checkObjective();
                 this.checkGoal();
+                this.continueSlide();
             },
         });
+    }
+
+    // After each step, keep sliding if the key is still held and the path is clear.
+    private continueSlide() {
+        if (!this.slideDir) return;
+        const { dx, dy } = this.slideDir;
+        const stillHeld =
+            (dx === -1 && (this.cursors.left.isDown  || this.wasd.left.isDown))  ||
+            (dx ===  1 && (this.cursors.right.isDown || this.wasd.right.isDown)) ||
+            (dy === -1 && (this.cursors.up.isDown    || this.wasd.up.isDown))    ||
+            (dy ===  1 && (this.cursors.down.isDown  || this.wasd.down.isDown));
+        if (!stillHeld) { this.slideDir = null; return; }
+        this.tryStep(dx, dy);
     }
 
     private collectKey() {
@@ -773,9 +934,17 @@ export default class GameScene extends Phaser.Scene {
             const [col, row] = key.split(',').map(Number);
             if (col === this.startCol && row === this.startRow) continue;
             if (col === this.goalCol  && row === this.goalRow)  continue;
-            if (Math.random() > 0.5)                           continue;
+            if (Math.random() > 0.65)                          continue;
             this.bushCells.add(key);
             this.drawBushAt(col, row, season);
+        }
+
+        // Guarantee bushes every ~5 steps along the main solution path so the
+        // player always has a hiding spot reachable from common corridors.
+        const path = solvePath(this.cells, COLS, ROWS, this.startCol, this.startRow, this.goalCol, this.goalRow);
+        const step = 5;
+        for (let i = step; i < path.length - step; i += step) {
+            this.guaranteeBushNear(path[i].col, path[i].row, season);
         }
     }
 
@@ -872,7 +1041,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Season objectives ─────────────────────────────────────────────────────
     private placeObjectives(season: SeasonTheme) {
-        const count = season.name === 'Spring' ? 3 : 5;   // Winter = 5 snowflakes
+        const count = season.name === 'Spring' ? 3 : 2;   // Winter/Summer/Fall = 2; Spring = 3
         this.objTotal = count;
 
         const avoid = new Set<string>([`${this.startCol},${this.startRow}`, `${this.goalCol},${this.goalRow}`]);
@@ -1020,11 +1189,22 @@ export default class GameScene extends Phaser.Scene {
     }
 
     // ── Month progression ─────────────────────────────────────────────────────
+    private goToEnd() {
+        this.hazard?.destroy();
+        this.cameras.main.fadeOut(800, 0, 0, 0);
+        this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('EndScene'));
+    }
+
     private checkGoal() {
         if (this.gridX !== this.goalCol || this.gridY !== this.goalRow) return;
         if (!this.objDone) return;
 
-        const nextMonth  = (this.monthConfig.month % 12) + 1;   // 12 → 1
+        if (this.monthConfig.month === 12) {
+            this.time.delayedCall(500, () => this.goToEnd());
+            return;
+        }
+
+        const nextMonth  = this.monthConfig.month + 1;
         const curSeason  = this.monthConfig.season.name;
         const nextSeason = MONTHS[nextMonth - 1].season.name;
 

@@ -80,7 +80,7 @@ const FALL: SeasonTheme = {
 
 export const MONTHS: MonthConfig[] = [
     { month:  1, name: 'January',   shortName: 'Jan', season: WINTER, quote: 'The frost performs its secret ministry.',            author: 'Samuel Taylor Coleridge' },
-    { month:  2, name: 'February',  shortName: 'Feb', season: WINTER, quote: 'If Winter comes, can Spring be far behind?',         author: 'Percy Bysshe Shelley'    },
+    { month:  2, name: 'February',  shortName: 'Feb', season: WINTER, quote: 'Now fades the last long streak of snow.',            author: 'Alfred, Lord Tennyson'   },
     { month:  3, name: 'March',     shortName: 'Mar', season: SPRING, quote: 'The winds of March were wild and chill.',            author: 'Bayard Taylor'           },
     { month:  4, name: 'April',     shortName: 'Apr', season: SPRING, quote: 'April hath put a spirit of youth in everything.',    author: 'William Shakespeare'     },
     { month:  5, name: 'May',       shortName: 'May', season: SPRING, quote: 'A little Madness in the Spring is wholesome.',       author: 'Emily Dickinson'         },

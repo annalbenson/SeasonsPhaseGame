@@ -203,11 +203,11 @@ export class Hazard {
         }
     }
 
-    // ── Snake (Summer / Fall) ─────────────────────────────────────────────────
+    // ── Snake (Summer) ────────────────────────────────────────────────────────
     private buildSnake(x: number, y: number): Phaser.GameObjects.Container {
-        const bodyCol  = 0x3d7028;
-        const headCol  = 0x4e8f35;
-        const bellyCol = 0x7ab840;
+        const bodyCol  = 0xcc5500;   // burnt orange — pops against green tiles
+        const headCol  = 0xdd6600;   // warm orange
+        const bellyCol = 0xffcc88;   // pale peach
 
         this.danger = this.scene.add.circle(0, 0, 32, 0xcc2200, 0);
 
@@ -218,7 +218,7 @@ export class Hazard {
         const s1   = this.scene.add.circle( -4,   9, 9, bodyCol);
 
         const head  = this.scene.add.ellipse(0, 0, 20, 14, headCol);
-        const belly = this.scene.add.ellipse(0, 1, 12,  7, bellyCol, 0.35);
+        const belly = this.scene.add.ellipse(0, 1, 12,  7, bellyCol, 0.80);
 
         const eyeL = this.scene.add.circle(-5, -4, 2.5, 0xffffff);
         const pupL = this.scene.add.circle(-5, -4, 1.5, 0x111111);

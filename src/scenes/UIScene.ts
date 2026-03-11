@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TILE, COLS, HEADER } from '../constants';
+import { TILE, COLS, HEADER, PANEL } from '../constants';
 
 // Runs in parallel on top of every other scene.
 // Owns the mute button so neither MenuScene nor GameScene has to.
@@ -10,7 +10,7 @@ export default class UIScene extends Phaser.Scene {
 
     create() {
         this.btn = this.add
-            .text(COLS * TILE - 10, Math.round(HEADER / 2), this.label(), {
+            .text(COLS * TILE + PANEL - 10, Math.round(HEADER / 2), this.label(), {
                 fontSize: '13px',
                 color: '#aabbcc',
                 backgroundColor: '#00000055',
