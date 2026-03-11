@@ -501,12 +501,19 @@ export default class GameScene extends Phaser.Scene {
     private placePuzzleItems(season: SeasonTheme) {
         const path = solvePath(this.cells, COLS, ROWS, this.startCol, this.startRow, this.goalCol, this.goalRow);
         const n    = path.length;
-        if (n < 8) return;
+        if (n < 10) return;
 
-        const keyIndices  = [Math.floor(n * 0.18), Math.floor(n * 0.55)];
-        const gateIndices = [Math.floor(n * 0.35), Math.floor(n * 0.72)];
+        // Gates divide the path into thirds; each key is placed randomly
+        // *before* its paired gate so the player must collect it first.
+        const gate1Idx = Math.floor(n * 0.38);
+        const gate2Idx = Math.floor(n * 0.72);
 
-        for (const idx of keyIndices) {
+        // Key 1: anywhere between path[2] and gate1 (exclusive)
+        const key1Idx = 2 + Math.floor(Math.random() * (gate1Idx - 3));
+        // Key 2: anywhere between gate1+1 and gate2 (exclusive)
+        const key2Idx = gate1Idx + 1 + Math.floor(Math.random() * (gate2Idx - gate1Idx - 2));
+
+        for (const idx of [key1Idx, key2Idx]) {
             const { col, row } = path[idx];
             const rect = this.add
                 .rectangle(col * TILE + TILE / 2, row * TILE + TILE / 2, 18, 18, season.keyColor)
@@ -515,7 +522,7 @@ export default class GameScene extends Phaser.Scene {
             this.keyItems.set(`${col},${row}`, rect);
         }
 
-        for (const idx of gateIndices) {
+        for (const idx of [gate1Idx, gate2Idx]) {
             const from = path[idx];
             const to   = path[idx + 1];
             if (!to) continue;
@@ -986,14 +993,11 @@ export default class GameScene extends Phaser.Scene {
             ease:     'Back.easeOut',
             onComplete: () => container.destroy(),
         });
-        this.cameras.main.flash(250, 255, 240, 180, false);
-
         if (this.objCompleted >= this.objTotal) {
             this.objDone = true;
             if (this.goalLock) {
                 this.tweens.add({ targets: this.goalLock, alpha: 0, duration: 700 });
             }
-            this.cameras.main.flash(500, 120, 255, 160, false);
         }
         this.updateObjText();
     }

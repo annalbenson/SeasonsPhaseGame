@@ -25,7 +25,7 @@ export default class QuoteScene extends Phaser.Scene {
 
         if (isSeason) {
             // Big season name — centred, dominant
-            const nameY = H / 2 - 70;
+            const nameY = H / 2 - 80;
             targets.push(
                 this.add.text(W / 2, nameY, season.name.toUpperCase(), {
                     fontSize:      '52px',
@@ -35,14 +35,22 @@ export default class QuoteScene extends Phaser.Scene {
                 }).setOrigin(0.5).setAlpha(0),
             );
 
+            // Month name below season name
+            targets.push(
+                this.add.text(W / 2, nameY + 50, cfg.name.toUpperCase(), {
+                    fontSize:      '15px',
+                    color:         dimHex,
+                    letterSpacing: 4,
+                }).setOrigin(0.5).setAlpha(0),
+            );
+
             // Thin separator line
-            const line = this.add.rectangle(W / 2, nameY + 44, 120, 1, season.uiAccent, 0.35).setAlpha(0);
-            targets.push(line);
+            targets.push(this.add.rectangle(W / 2, nameY + 72, 120, 1, season.uiAccent, 0.35).setAlpha(0));
 
             // Quote below the line
             targets.push(
-                this.add.text(W / 2, nameY + 72, `"${cfg.quote}"`, {
-                    fontSize:  '14px',
+                this.add.text(W / 2, nameY + 96, `"${cfg.quote}"`, {
+                    fontSize:  '18px',
                     fontStyle: 'italic',
                     color:     dimHex,
                     wordWrap:  { width: W - 100 },
@@ -51,15 +59,23 @@ export default class QuoteScene extends Phaser.Scene {
             );
 
             targets.push(
-                this.add.text(W / 2, nameY + 120, `— ${cfg.author}`, {
-                    fontSize: '12px',
+                this.add.text(W / 2, nameY + 148, `— ${cfg.author}`, {
+                    fontSize: '14px',
                     color:    dimHex,
                 }).setOrigin(0.5).setAlpha(0),
             );
         } else {
-            // Just the quote, centred
-            const quoteText = this.add.text(W / 2, H / 2 - 30, `"${cfg.quote}"`, {
-                fontSize:  '17px',
+            // Month name above quote
+            targets.push(
+                this.add.text(W / 2, H / 2 - 80, cfg.name.toUpperCase(), {
+                    fontSize:      '15px',
+                    color:         dimHex,
+                    letterSpacing: 4,
+                }).setOrigin(0.5).setAlpha(0),
+            );
+
+            const quoteText = this.add.text(W / 2, H / 2 - 20, `"${cfg.quote}"`, {
+                fontSize:  '21px',
                 fontStyle: 'italic',
                 color:     accentHex,
                 wordWrap:  { width: W - 80 },
@@ -68,21 +84,13 @@ export default class QuoteScene extends Phaser.Scene {
 
             const authorText = this.add.text(
                 W / 2,
-                H / 2 + quoteText.height / 2 + 20,
+                H / 2 + quoteText.height / 2 + 22,
                 `— ${cfg.author}`,
-                { fontSize: '13px', color: dimHex },
+                { fontSize: '15px', color: dimHex },
             ).setOrigin(0.5).setAlpha(0);
 
             targets.push(quoteText, authorText);
         }
-
-        // Month name — bottom centre, always
-        targets.push(
-            this.add.text(W / 2, H - 36, cfg.name, {
-                fontSize: '11px',
-                color:    dimHex,
-            }).setOrigin(0.5).setAlpha(0),
-        );
 
         const holdMs = isSeason ? 3200 : 2400;
 
