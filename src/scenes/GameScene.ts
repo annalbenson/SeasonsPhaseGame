@@ -643,13 +643,19 @@ export default class GameScene extends Phaser.Scene {
                     const c = leafColors[Math.floor(Math.random() * leafColors.length)];
                     this.mazeLayer.add(this.add.ellipse(cx + l.x, cy + l.y, l.w, l.h, c, 0.88).setAngle(l.a));
                 }
+            } else if (season.name === 'Winter') {
+                // Snow pile — irregular lumpy mounds in white/icy blue
+                this.mazeLayer.add([
+                    this.add.circle(cx - 10, cy + 6, 10, 0xddeeff, 0.90),
+                    this.add.circle(cx +  9, cy + 7,  9, 0xe8f4ff, 0.85),
+                    this.add.circle(cx -  2, cy - 2, 13, 0xffffff, 0.95),
+                    this.add.circle(cx +  5, cy - 5,  8, 0xf0f8ff, 0.80),
+                    // Subtle shadow underneath the pile
+                    this.add.ellipse(cx, cy + 6, 30, 8, 0x8aaabb, 0.18),
+                ]);
             } else {
                 // Standard bush — three overlapping circles
-                const palette: Record<string, number> = {
-                    Winter: 0x889eb8,
-                    Spring: 0x88c844,
-                    Summer: 0x228844,
-                };
+                const palette: Record<string, number> = { Spring: 0x88c844, Summer: 0x228844 };
                 const color = palette[season.name] ?? 0x228844;
                 this.mazeLayer.add([
                     this.add.circle(cx - 9, cy + 5, 11, color, 0.85),
