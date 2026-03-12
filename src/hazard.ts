@@ -30,6 +30,7 @@ export class Hazard {
     private danger!: Phaser.GameObjects.Arc;   // red aura, visible only when hunting
     private scene:   Phaser.Scene;
     private cells:   number[][];
+    private blocked: Set<string>;
     private state:   'wandering' | 'hunting' | 'passing' = 'wandering';
     private moving   = false;
     private dead     = false;
@@ -48,9 +49,11 @@ export class Hazard {
         startRow:   number,
         seasonName: string,
         onCatch:    () => void,
+        blocked:    Set<string> = new Set(),
     ) {
         this.scene   = scene;
         this.cells   = cells;
+        this.blocked = blocked;
         this.gridX   = startCol;
         this.gridY   = startRow;
         this.onCatch = onCatch;
@@ -83,9 +86,7 @@ export class Hazard {
 
     scatter() {
         if (this.moving || this.dead) return;
-        const walls = this.cells[this.gridY][this.gridX];
-        const dir = [...DIRS]
-            .filter(d => !(walls & d.wall))
+        const dir = [...this.validDirs()]
             .sort((a, b) => {
                 const da = Math.abs(this.fairyCol - (this.gridX + a.dc))
                          + Math.abs(this.fairyRow  - (this.gridY + a.dr));
@@ -163,22 +164,26 @@ export class Hazard {
         });
     }
 
-    private retreatDir() {
-        // Move away from player spawn (0,0) — pick the direction that maximises distance
+    private validDirs() {
         const walls = this.cells[this.gridY][this.gridX];
-        const valid = DIRS.filter(d => !(walls & d.wall));
+        return DIRS.filter(d =>
+            !(walls & d.wall) &&
+            !this.blocked.has(`${this.gridX + d.dc},${this.gridY + d.dr}`)
+        );
+    }
+
+    private retreatDir() {
+        const valid = this.validDirs();
         if (valid.length === 0) return null;
         return valid.sort((a, b) => {
             const da = (this.gridX + a.dc) + (this.gridY + a.dr);
             const db = (this.gridX + b.dc) + (this.gridY + b.dr);
-            return db - da; // higher Manhattan-from-origin = farther away
+            return db - da;
         })[0];
     }
 
     private huntDir() {
-        const walls = this.cells[this.gridY][this.gridX];
-        return [...DIRS]
-            .filter(d => !(walls & d.wall))
+        return [...this.validDirs()]
             .map(d => ({
                 ...d,
                 dist: Math.abs(this.fairyCol - (this.gridX + d.dc))
@@ -188,8 +193,7 @@ export class Hazard {
     }
 
     private randomDir() {
-        const walls = this.cells[this.gridY][this.gridX];
-        const valid = DIRS.filter(d => !(walls & d.wall));
+        const valid = this.validDirs();
         return valid.length ? valid[Math.floor(Math.random() * valid.length)] : null;
     }
 

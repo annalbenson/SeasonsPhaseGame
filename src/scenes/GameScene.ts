@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { TILE, COLS, ROWS, HEADER, PANEL } from '../constants';
-import { ALGORITHMS, AlgorithmKey, WALLS, widenCorridors } from '../maze';
+import { ALGORITHMS, AlgorithmKey, WALLS, OPPOSITE, widenCorridors } from '../maze';
 import { MONTHS, MonthConfig, SeasonTheme } from '../seasons';
 import { addWeather } from '../weather';
 import { Hazard } from '../hazard';
@@ -50,28 +50,32 @@ function solvePath(
         }
     }
 
+    if (!visited[endRow][endCol]) return [];   // unreachable
     const path: Cell[] = [];
     let cur: Cell | null = { col: endCol, row: endRow };
     while (cur) { path.unshift(cur); cur = prev[cur.row][cur.col]; }
     return path;
 }
 
-// Returns true if blocking the edge (fromCol,fromRow)→(toCol,toRow) disconnects start from goal.
-// Used to ensure gates sit on true bridges so they can't be bypassed via widen-created cycles.
-function isBridge(
-    cells: number[][], cols: number, rows: number,
-    fromCol: number, fromRow: number, toCol: number, toRow: number,
-    startCol: number, startRow: number, goalCol: number, goalRow: number,
-): boolean {
-    const dc = toCol - fromCol, dr = toRow - fromRow;
-    const fw = dc ===  1 ? WALLS.RIGHT  : dc === -1 ? WALLS.LEFT   : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
-    const tw = dc ===  1 ? WALLS.LEFT   : dc === -1 ? WALLS.RIGHT  : dr === 1 ? WALLS.TOP    : WALLS.BOTTOM;
-    cells[fromRow][fromCol] |= fw;
-    cells[toRow][toCol]     |= tw;
-    const path = solvePath(cells, cols, rows, startCol, startRow, goalCol, goalRow);
-    cells[fromRow][fromCol] &= ~fw;
-    cells[toRow][toCol]     &= ~tw;
-    return path.length === 0;
+// BFS flood-fill: returns all reachable cells from (startCol,startRow) in the given maze.
+// `blocked` is an optional set of "col,row" keys the fill cannot enter (scenery obstacles).
+function floodFill(cells: number[][], cols: number, rows: number, startCol: number, startRow: number, blocked?: Set<string>): Set<string> {
+    const visited = new Set<string>();
+    const queue: Cell[] = [{ col: startCol, row: startRow }];
+    visited.add(`${startCol},${startRow}`);
+    while (queue.length > 0) {
+        const { col, row } = queue.shift()!;
+        for (const { dc, dr, wall } of MOVE_DIRS) {
+            const nc = col + dc, nr = row + dr;
+            const key = `${nc},${nr}`;
+            if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+            if (visited.has(key) || (cells[row][col] & wall)) continue;
+            if (blocked?.has(key)) continue;
+            visited.add(key);
+            queue.push({ col: nc, row: nr });
+        }
+    }
+    return visited;
 }
 
 // ── Gate data ─────────────────────────────────────────────────────────────────
@@ -107,6 +111,7 @@ export default class GameScene extends Phaser.Scene {
     private slideDir: { dx: number; dy: number } | null = null;
 
     private cells!: number[][];
+    private gateEdges: { from: Cell; to: Cell }[] = [];
 
     private keyItems = new Map<string, Phaser.GameObjects.Rectangle>();
     private gates: Gate[] = [];
@@ -114,8 +119,10 @@ export default class GameScene extends Phaser.Scene {
     private inventoryText!: Phaser.GameObjects.Text;
 
     private bushCells = new Set<string>();
-    private hazard!: Hazard;
+    private sceneryBlocked = new Set<string>();
+    private hazards: Hazard[] = [];
     private isHiding = false;
+    private gate1Cell: { col: number; row: number } | null = null;
 
     private lives = 3;
     private livesText!: Phaser.GameObjects.Text;
@@ -145,8 +152,11 @@ export default class GameScene extends Phaser.Scene {
         this.keyItems    = new Map();
         this.gates       = [];
         this.keyCount    = 0;
-        this.bushCells   = new Set();
+        this.bushCells      = new Set();
+        this.sceneryBlocked = new Set();
+        this.hazards        = [];
         this.isHiding    = false;
+        this.gate1Cell   = null;
         this.lives       = 3;
         this.objectives  = new Map();
         this.objCompleted = 0;
@@ -184,9 +194,39 @@ export default class GameScene extends Phaser.Scene {
         // ── Maze ──────────────────────────────────────────────────────────────
         this.cells = ALGORITHMS[this.algorithm].generate(COLS, ROWS);
 
-        // Widen some corridors — creates occasional 2-tile-wide sections for
-        // atmosphere and future interactables (bushes, hiding spots, etc.)
+        // Find gate edges on the spanning tree (every edge is a bridge here).
+        // Place gates at ~33% and ~67% of the solution path so they partition
+        // the maze into three progressive zones.
+        const treePath = solvePath(this.cells, COLS, ROWS,
+            this.startCol, this.startRow, this.goalCol, this.goalRow);
+        this.gateEdges = [];
+        if (treePath.length >= 10) {
+            const g1Idx = Math.floor(treePath.length * 0.33);
+            const g2Idx = Math.floor(treePath.length * 0.67);
+            this.gateEdges = [
+                { from: treePath[g1Idx], to: treePath[g1Idx + 1] },
+                { from: treePath[g2Idx], to: treePath[g2Idx + 1] },
+            ];
+        }
+
+        // Block gate edges before widening so corridors can't create bypasses
+        for (const { from, to } of this.gateEdges) {
+            const dc = to.col - from.col, dr = to.row - from.row;
+            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+            this.cells[from.row][from.col] |= fw;
+            this.cells[to.row][to.col]     |= OPPOSITE[fw];
+        }
+
+        // Widen some corridors — creates occasional 2-tile-wide sections
         const widenedCells = widenCorridors(this.cells, COLS, ROWS);
+
+        // Re-open gate passages (the gate objects will block the player, not walls)
+        for (const { from, to } of this.gateEdges) {
+            const dc = to.col - from.col, dr = to.row - from.row;
+            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+            this.cells[from.row][from.col] &= ~fw;
+            this.cells[to.row][to.col]     &= ~OPPOSITE[fw];
+        }
 
         // All maze content lives in this container, offset below the header
         this.mazeLayer = this.add.container(0, HEADER);
@@ -289,12 +329,12 @@ export default class GameScene extends Phaser.Scene {
             right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
         };
         this.input.keyboard!.addKey('R').on('down', () => {
-            this.hazard?.destroy();
+            for (const h of this.hazards) h.destroy();
             this.cameras.main.fadeOut(350, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => this.scene.restart());
         });
         this.input.keyboard!.addKey('M').on('down', () => {
-            this.hazard?.destroy();
+            for (const h of this.hazards) h.destroy();
             this.cameras.main.fadeOut(500, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this.fromScene));
         });
@@ -319,21 +359,21 @@ export default class GameScene extends Phaser.Scene {
         const accentHex = `#${season.uiAccent.toString(16).padStart(6, '0')}`;
 
         // Month name — spaced-out like the title screen
-        this.add.text(W / 2, 30, spaced(this.monthConfig.name), {
-            fontSize:  '22px',
+        this.add.text(W / 2, 32, spaced(this.monthConfig.name), {
+            fontSize:  '26px',
             fontStyle: 'bold',
             color:     accentHex,
         }).setOrigin(0.5).setDepth(3);
 
         // Season name — smaller, muted
-        this.add.text(W / 2, 58, season.name, {
-            fontSize: '13px',
+        this.add.text(W / 2, 66, season.name, {
+            fontSize: '15px',
             color:    `${accentHex}99`,
         }).setOrigin(0.5).setDepth(3);
 
         // Historical quote — italic, lightly tinted
-        this.add.text(W / 2, 80, `"${this.monthConfig.quote}" — ${this.monthConfig.author}`, {
-            fontSize:  '12px',
+        this.add.text(W / 2, 94, `"${this.monthConfig.quote}" — ${this.monthConfig.author}`, {
+            fontSize:  '14px',
             fontStyle: 'italic',
             color:     `${accentHex}66`,
         }).setOrigin(0.5).setDepth(3);
@@ -364,105 +404,170 @@ export default class GameScene extends Phaser.Scene {
         this.add.rectangle(px + 1, ph / 2, 1, ph, accent, 0.2).setDepth(depth);
 
         // ── OBJECTIVES section ────────────────────────────────────────────────
-        let y = HEADER + 18;
+        let y = HEADER + 22;
 
         this.add.text(cx, y, 'OBJECTIVES', {
-            fontSize: '10px', color: dimH, letterSpacing: 3,
+            fontSize: '14px', color: dimH, letterSpacing: 4,
         }).setOrigin(0.5).setDepth(depth);
 
-        y += 22;
+        y += 26;
         this.objText = this.add.text(cx, y, '', {
-            fontSize: '15px', color: accentH, align: 'center',
+            fontSize: '18px', color: accentH, align: 'center',
         }).setOrigin(0.5, 0).setDepth(depth);
         this.updateObjText();
 
-        y += 38;
+        y += 44;
         // ── LIVES section ─────────────────────────────────────────────────────
         this.add.text(cx, y, 'LIVES', {
-            fontSize: '10px', color: dimH, letterSpacing: 3,
+            fontSize: '14px', color: dimH, letterSpacing: 4,
         }).setOrigin(0.5).setDepth(depth);
 
-        y += 20;
+        y += 24;
         this.livesText = this.add.text(cx, y, '', {
-            fontSize: '16px', color: '#ff5577',
+            fontSize: '20px', color: '#ff5577',
         }).setOrigin(0.5, 0).setDepth(depth);
         this.updateLives();
 
-        y += 34;
+        y += 40;
         // ── INVENTORY section ─────────────────────────────────────────────────
         this.add.text(cx, y, 'KEYS', {
-            fontSize: '10px', color: dimH, letterSpacing: 3,
+            fontSize: '14px', color: dimH, letterSpacing: 4,
         }).setOrigin(0.5).setDepth(depth);
 
-        y += 20;
+        y += 24;
         this.inventoryText = this.add.text(cx, y, '', {
-            fontSize: '16px', color: `#${season.keyColor.toString(16).padStart(6, '0')}`,
+            fontSize: '20px', color: `#${season.keyColor.toString(16).padStart(6, '0')}`,
         }).setOrigin(0.5, 0).setDepth(depth);
         this.updateInventory();
 
         // ── Divider ───────────────────────────────────────────────────────────
-        y += 38;
+        y += 44;
         this.add.rectangle(cx, y, pw - 32, 1, accent, 0.2).setDepth(depth);
 
         // ── LEGEND section ────────────────────────────────────────────────────
-        y += 16;
+        y += 20;
         this.add.text(cx, y, 'LEGEND', {
-            fontSize: '10px', color: dimH, letterSpacing: 3,
+            fontSize: '14px', color: dimH, letterSpacing: 4,
         }).setOrigin(0.5).setDepth(depth);
 
-        y += 18;
-        const lx = px + 14;   // swatch left edge
-        const tx = px + 30;   // label left edge
+        y += 22;
+        const lx = px + 20;   // swatch left edge
+        const tx = px + 40;   // label left edge
+        // Season-specific enemy info
+        const enemyMap: Record<string, { color: number; label: string }> = {
+            Spring: { color: 0x44aa22, label: 'frog — run!' },
+            Summer: { color: 0xcc5500, label: 'snake — run!' },
+            Fall:   { color: 0xdd5500, label: 'fox — run!' },
+            Winter: { color: 0x6b4520, label: 'owl — run!' },
+        };
+        const enemy = enemyMap[season.name] ?? enemyMap.Summer;
+
+        // Season-specific hiding spot info
+        const hideMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
+            Spring: {
+                label: 'tall grass — hide!',
+                draw: (g, ly) => {
+                    g.fillStyle(0x66bb33, 0.9); g.fillEllipse(lx + 4, ly - 2, 4, 10);
+                    g.fillStyle(0x88cc44, 0.9); g.fillEllipse(lx + 8, ly - 4, 4, 12);
+                    g.fillStyle(0x66bb33, 0.9); g.fillEllipse(lx + 12, ly - 1, 4, 9);
+                },
+            },
+            Summer: {
+                label: 'bush — hide!',
+                draw: (g, ly) => {
+                    g.fillStyle(0x228844, 0.85); g.fillCircle(lx + 3, ly + 1, 5);
+                    g.fillStyle(0x228844, 0.85); g.fillCircle(lx + 11, ly + 1, 5);
+                    g.fillStyle(0x228844, 0.90); g.fillCircle(lx + 7, ly - 3, 6);
+                },
+            },
+            Fall: {
+                label: 'leaf pile — hide!',
+                draw: (g, ly) => {
+                    g.fillStyle(0xd04010, 0.88); g.fillEllipse(lx + 3, ly, 6, 4);
+                    g.fillStyle(0xffaa00, 0.88); g.fillEllipse(lx + 8, ly - 2, 5, 4);
+                    g.fillStyle(0xe86820, 0.88); g.fillEllipse(lx + 12, ly + 1, 6, 4);
+                },
+            },
+            Winter: {
+                label: 'snow pile — hide!',
+                draw: (g, ly) => {
+                    g.fillStyle(0xddeeff, 0.9); g.fillCircle(lx + 3, ly + 1, 5);
+                    g.fillStyle(0xe8f4ff, 0.85); g.fillCircle(lx + 11, ly + 1, 4);
+                    g.fillStyle(0xffffff, 0.95); g.fillCircle(lx + 7, ly - 2, 6);
+                },
+            },
+        };
+        const hide = hideMap[season.name] ?? hideMap.Summer;
+
+        // Season-specific objective info
+        const objMap: Record<string, { color: number; label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
+            Spring: {
+                color: 0xff88aa, label: 'flower — collect!',
+                draw: (g, ly) => { g.fillStyle(0xff88aa, 0.9); g.fillCircle(lx + 7, ly, 5); g.fillStyle(0xffee44, 0.9); g.fillCircle(lx + 7, ly, 2); },
+            },
+            Summer: {
+                color: 0x44aaff, label: 'plant — water!',
+                draw: (g, ly) => { g.fillStyle(0x44aaff, 0.9); g.fillCircle(lx + 7, ly, 5); },
+            },
+            Fall: {
+                color: 0xc07030, label: 'acorn — plant!',
+                draw: (g, ly) => { g.fillStyle(0xc07030, 0.9); g.fillCircle(lx + 7, ly, 5); },
+            },
+            Winter: {
+                color: 0xddeeff, label: 'snowflake — collect!',
+                draw: (g, ly) => { g.fillStyle(0xddeeff, 0.9); g.fillCircle(lx + 7, ly, 5); },
+            },
+        };
+        const obj = objMap[season.name] ?? objMap.Spring;
+
         const legendItems: { draw: (g: Phaser.GameObjects.Graphics, ly: number) => void; label: string }[] = [
             {
                 label: 'you',
                 draw: (g, ly) => { g.fillStyle(accent, 0.9); g.fillCircle(lx + 7, ly, 6); },
             },
             {
-                label: 'enemy — hide!',
-                draw: (g, ly) => { g.fillStyle(0xff6600, 0.9); g.fillCircle(lx + 7, ly, 6); },
+                label: enemy.label,
+                draw: (g, ly) => { g.fillStyle(enemy.color, 0.9); g.fillCircle(lx + 7, ly, 6); },
             },
+            hide,
+            obj,
             {
-                label: 'key',
+                label: 'key — collect!',
                 draw: (g, ly) => {
                     g.fillStyle(season.keyColor, 1);
                     g.fillRect(lx + 2, ly - 5, 10, 10);
                 },
             },
             {
-                label: 'gate — use key',
+                label: 'gate — unlock!',
                 draw: (g, ly) => { g.fillStyle(season.gateColor, 1); g.fillRect(lx + 1, ly - 2, 13, 4); },
             },
             {
-                label: 'bush — hide here',
-                draw: (g, ly) => { g.fillStyle(0x2e7d32, 0.9); g.fillCircle(lx + 7, ly - 2, 5); g.fillStyle(0x1b5e20, 0.8); g.fillCircle(lx + 3, ly + 2, 3); g.fillCircle(lx + 11, ly + 2, 3); },
-            },
-            {
-                label: 'goal — reach it',
+                label: 'goal — reach it!',
                 draw: (g, ly) => { g.fillStyle(season.goalColor, 0.9); g.fillCircle(lx + 7, ly, 6); },
             },
         ];
 
         const gfx = this.add.graphics().setDepth(depth);
         for (const item of legendItems) {
-            item.draw(gfx, y + 6);
+            item.draw(gfx, y + 7);
             this.add.text(tx, y, item.label, {
-                fontSize: '11px', color: dimH,
+                fontSize: '15px', color: dimH,
             }).setOrigin(0, 0).setDepth(depth);
-            y += 20;
+            y += 24;
         }
 
         // ── Divider ───────────────────────────────────────────────────────────
-        y += 4;
+        y += 6;
         this.add.rectangle(cx, y, pw - 32, 1, accent, 0.2).setDepth(depth);
 
         // ── Controls hint ─────────────────────────────────────────────────────
-        y += 14;
+        y += 18;
         for (const line of ['R  new maze', 'M  menu', 'E  end screen', '↑↓←→  move', 'hold  slide']) {
             this.add.text(cx, y, line, {
-                fontSize: '10px', color: `#ffffff22`,
+                fontSize: '14px', color: `#ffffff55`,
             }).setOrigin(0.5, 0).setDepth(depth);
-            y += 14;
+            y += 17;
         }
     }
 
@@ -624,50 +729,77 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Puzzle item placement ─────────────────────────────────────────────────
     private placePuzzleItems(season: SeasonTheme) {
-        const path = solvePath(this.cells, COLS, ROWS, this.startCol, this.startRow, this.goalCol, this.goalRow);
-        const n    = path.length;
-        if (n < 10) return;
+        if (this.gateEdges.length < 2) return;
 
-        // Gates must sit on "bridge" edges so widenCorridors cycles can't bypass them.
-        // Scan outward from ideal percentage positions to find the nearest bridge.
-        const findBridge = (target: number, minIdx: number, maxIdx: number): number => {
-            for (let offset = 0; offset <= maxIdx - minIdx; offset++) {
-                for (const sign of [1, -1]) {
-                    const idx = target + offset * sign;
-                    if (idx < minIdx || idx > maxIdx) continue;
-                    const from = path[idx], to = path[idx + 1];
-                    if (to && isBridge(this.cells, COLS, ROWS, from.col, from.row, to.col, to.row,
-                                       this.startCol, this.startRow, this.goalCol, this.goalRow)) {
-                        return idx;
-                    }
-                }
-            }
-            return -1;
-        };
-
-        const gate1Idx = findBridge(Math.floor(n * 0.38), 3,        Math.floor(n * 0.55));
-        const gate2Idx = findBridge(Math.floor(n * 0.72), gate1Idx + 3, n - 2);
-        if (gate1Idx < 0 || gate2Idx < 0) return; // no valid bridge positions — skip gates
-
-        // Key 1: anywhere between path[2] and gate1 (exclusive)
-        const key1Idx = 2 + Math.floor(Math.random() * (gate1Idx - 3));
-        // Key 2: anywhere between gate1+1 and gate2 (exclusive)
-        const key2Idx = gate1Idx + 1 + Math.floor(Math.random() * (gate2Idx - gate1Idx - 2));
-
-        for (const idx of [key1Idx, key2Idx]) {
-            const { col, row } = path[idx];
-            const rect = this.add
-                .rectangle(col * TILE + TILE / 2, row * TILE + TILE / 2, 18, 18, season.keyColor)
-                .setRotation(Math.PI / 4);
-            this.mazeLayer.add(rect);
-            this.keyItems.set(`${col},${row}`, rect);
+        // Temporarily block gate edges so flood-fill respects them as barriers
+        const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
+        for (const { from, to } of this.gateEdges) {
+            const dc = to.col - from.col, dr = to.row - from.row;
+            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+            wallOps.push({ from, to, fw });
+            this.cells[from.row][from.col] |= fw;
+            this.cells[to.row][to.col]     |= OPPOSITE[fw];
         }
 
-        for (const idx of [gate1Idx, gate2Idx]) {
-            const from = path[idx];
-            const to   = path[idx + 1];
-            if (!to) continue;
+        // Zone 1: reachable from start (before gate 1)
+        const zone1 = floodFill(this.cells, COLS, ROWS, this.startCol, this.startRow, this.sceneryBlocked);
+        // Zone 2: reachable from gate1's far side (between gate 1 and gate 2)
+        const g1To = this.gateEdges[0].to;
+        const zone2 = floodFill(this.cells, COLS, ROWS, g1To.col, g1To.row, this.sceneryBlocked);
 
+        // Restore passages (gate objects handle blocking, not walls)
+        for (const { from, to, fw } of wallOps) {
+            this.cells[from.row][from.col] &= ~fw;
+            this.cells[to.row][to.col]     &= ~OPPOSITE[fw];
+        }
+
+        // Store gate1 position for hazard spawning
+        this.gate1Cell = this.gateEdges[0].from;
+
+        // Build sets of solution-path cells to avoid for key placement
+        const pathCells = new Set<string>();
+        const solPath = solvePath(this.cells, COLS, ROWS,
+            this.startCol, this.startRow, this.goalCol, this.goalRow);
+        for (const c of solPath) pathCells.add(`${c.col},${c.row}`);
+
+        // Pick key locations OFF the solution path to encourage exploration
+        const pickOffPath = (zone: Set<string>): Cell | null => {
+            const offPath = [...zone].filter(k =>
+                !pathCells.has(k) &&
+                k !== `${this.startCol},${this.startRow}` &&
+                k !== `${this.goalCol},${this.goalRow}`
+            );
+            if (offPath.length > 0) {
+                const key = offPath[Math.floor(Math.random() * offPath.length)];
+                const [c, r] = key.split(',').map(Number);
+                return { col: c, row: r };
+            }
+            // Fallback: anywhere in the zone that isn't start/goal
+            const any = [...zone].filter(k =>
+                k !== `${this.startCol},${this.startRow}` &&
+                k !== `${this.goalCol},${this.goalRow}`
+            );
+            if (any.length === 0) return null;
+            const key = any[Math.floor(Math.random() * any.length)];
+            const [c, r] = key.split(',').map(Number);
+            return { col: c, row: r };
+        };
+
+        const key1Pos = pickOffPath(zone1);
+        const key2Pos = pickOffPath(zone2);
+
+        // Place keys
+        for (const pos of [key1Pos, key2Pos]) {
+            if (!pos) continue;
+            const rect = this.add
+                .rectangle(pos.col * TILE + TILE / 2, pos.row * TILE + TILE / 2, 18, 18, season.keyColor)
+                .setRotation(Math.PI / 4);
+            this.mazeLayer.add(rect);
+            this.keyItems.set(`${pos.col},${pos.row}`, rect);
+        }
+
+        // Place gate graphics
+        for (const { from, to } of this.gateEdges) {
             const dc = to.col - from.col;
             const dr = to.row - from.row;
 
@@ -710,7 +842,7 @@ export default class GameScene extends Phaser.Scene {
             this.isHiding = nowHiding;
             this.tweens.add({ targets: this.player, alpha: nowHiding ? 0.35 : 1.0, duration: 300 });
         }
-        this.hazard.setTarget(this.gridX, this.gridY, this.isHiding);
+        for (const h of this.hazards) h.setTarget(this.gridX, this.gridY, this.isHiding);
 
         if (this.moving) return;
 
@@ -738,6 +870,9 @@ export default class GameScene extends Phaser.Scene {
 
         const newX = this.gridX + dx;
         const newY = this.gridY + dy;
+
+        // Scenic obstacles block movement
+        if (this.sceneryBlocked.has(`${newX},${newY}`)) { this.slideDir = null; return; }
 
         const gate = this.findGate(this.gridX, this.gridY, newX, newY);
         if (gate) {
@@ -920,10 +1055,15 @@ export default class GameScene extends Phaser.Scene {
                 );
             }
         } else {
+            // Summer bushes — dark foliage with bright flower accents to pop against green floor
             this.mazeLayer.add([
-                this.add.circle(cx - 9, cy + 5, 11, 0x228844, 0.85),
-                this.add.circle(cx + 9, cy + 5, 11, 0x228844, 0.85),
-                this.add.circle(cx,     cy - 3, 13, 0x228844, 0.90),
+                this.add.circle(cx - 9, cy + 5, 11, 0x165a30, 0.92),
+                this.add.circle(cx + 9, cy + 5, 11, 0x165a30, 0.92),
+                this.add.circle(cx,     cy - 3, 13, 0x1a6636, 0.95),
+                // Small flowers/berries for visibility
+                this.add.circle(cx - 6, cy - 5, 3, 0xff6688, 0.9),
+                this.add.circle(cx + 7, cy + 2, 2.5, 0xffdd44, 0.9),
+                this.add.circle(cx + 1, cy - 7, 2.5, 0xff88aa, 0.85),
             ]);
         }
     }
@@ -942,9 +1082,141 @@ export default class GameScene extends Phaser.Scene {
         // Guarantee bushes every ~5 steps along the main solution path so the
         // player always has a hiding spot reachable from common corridors.
         const path = solvePath(this.cells, COLS, ROWS, this.startCol, this.startRow, this.goalCol, this.goalRow);
+
+        // Scenic decorations on remaining widened cells that didn't get a bush.
+        // Must not land on the solution path or gate-adjacent cells (they're blocking).
+        const pathSet = new Set(path.map(c => `${c.col},${c.row}`));
+        // Protect cells adjacent to gates so the player can always reach gate edges
+        const gateProtected = new Set<string>();
+        for (const { from, to } of this.gateEdges) {
+            gateProtected.add(`${from.col},${from.row}`);
+            gateProtected.add(`${to.col},${to.row}`);
+        }
+        for (const key of widenedCells) {
+            if (this.bushCells.has(key)) continue;
+            if (pathSet.has(key)) continue;
+            if (gateProtected.has(key)) continue;
+            if (Math.random() > 0.45) continue;
+            const [col, row] = key.split(',').map(Number);
+            if (col === this.startCol && row === this.startRow) continue;
+            if (col === this.goalCol  && row === this.goalRow)  continue;
+            this.sceneryBlocked.add(key);
+            this.drawScenery(col, row, season);
+        }
         const step = 5;
         for (let i = step; i < path.length - step; i += step) {
             this.guaranteeBushNear(path[i].col, path[i].row, season);
+        }
+    }
+
+    // ── Scenic obstacle (blocking landmark, tile-sized) ────────────────────
+    private drawScenery(col: number, row: number, season: MonthConfig['season']) {
+        const cx = col * TILE + TILE / 2;
+        const cy = row * TILE + TILE / 2;
+        const variant = Math.floor(Math.random() * 3);
+
+        if (season.name === 'Spring') {
+            if (variant === 0) {
+                // Boulder with moss
+                this.mazeLayer.add(this.add.ellipse(cx, cy + 4, 44, 32, 0x778877, 0.85));
+                this.mazeLayer.add(this.add.ellipse(cx - 2, cy - 2, 36, 26, 0x99aa99, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx + 8, cy - 8, 14, 8, 0x66aa44, 0.6));
+                this.mazeLayer.add(this.add.ellipse(cx - 10, cy - 6, 10, 6, 0x77bb55, 0.5));
+            } else if (variant === 1) {
+                // Pond
+                this.mazeLayer.add(this.add.ellipse(cx, cy, 46, 36, 0x4477aa, 0.5));
+                this.mazeLayer.add(this.add.ellipse(cx - 4, cy - 3, 30, 20, 0x5599cc, 0.4));
+                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 6, 8, 5, 0x77bbee, 0.3));
+                // Lily pad
+                this.mazeLayer.add(this.add.circle(cx - 8, cy + 4, 5, 0x44aa44, 0.6));
+            } else {
+                // Flower patch (dense wildflowers)
+                const colors = [0xff88bb, 0xffaa44, 0xcc77ff, 0xff6688, 0xffdd55];
+                for (let i = 0; i < 8; i++) {
+                    const fx = (Math.random() - 0.5) * 40;
+                    const fy = (Math.random() - 0.5) * 40;
+                    const c = colors[Math.floor(Math.random() * colors.length)];
+                    this.mazeLayer.add(this.add.circle(cx + fx, cy + fy, 5, c, 0.8));
+                    this.mazeLayer.add(this.add.circle(cx + fx, cy + fy, 2, 0xffee88, 0.9));
+                }
+            }
+        } else if (season.name === 'Summer') {
+            if (variant === 0) {
+                // Large mossy rock formation
+                this.mazeLayer.add(this.add.ellipse(cx + 6, cy + 6, 36, 28, 0x445544, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx - 6, cy - 2, 30, 24, 0x556655, 0.75));
+                this.mazeLayer.add(this.add.ellipse(cx, cy - 8, 20, 14, 0x668866, 0.7));
+                this.mazeLayer.add(this.add.ellipse(cx + 10, cy - 4, 12, 8, 0x448844, 0.6));
+            } else if (variant === 1) {
+                // Fallen log
+                this.mazeLayer.add(this.add.ellipse(cx, cy, 48, 16, 0x5a3a1a, 0.75).setAngle(Math.random() * 30 - 15));
+                this.mazeLayer.add(this.add.circle(cx - 20, cy, 8, 0x6a4a2a, 0.7));
+                this.mazeLayer.add(this.add.circle(cx + 20, cy, 7, 0x4a2a0a, 0.65));
+                // Moss on log
+                this.mazeLayer.add(this.add.ellipse(cx + 4, cy - 6, 16, 6, 0x448844, 0.5));
+            } else {
+                // Dense fern cluster
+                for (let i = 0; i < 6; i++) {
+                    const a = (i * 60) + Math.random() * 20;
+                    const r = 6 + Math.random() * 6;
+                    this.mazeLayer.add(
+                        this.add.ellipse(cx + Math.cos(a * 0.017) * r, cy + Math.sin(a * 0.017) * r,
+                            6, 24, 0x2a7a3a, 0.65).setAngle(a)
+                    );
+                }
+                this.mazeLayer.add(this.add.circle(cx, cy, 6, 0x1a5a2a, 0.7));
+            }
+        } else if (season.name === 'Fall') {
+            if (variant === 0) {
+                // Large mushroom cluster
+                // Stem + cap 1
+                this.mazeLayer.add(this.add.ellipse(cx - 10, cy + 8, 8, 18, 0xeeddcc, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx - 10, cy - 4, 22, 14, 0xcc3322, 0.8));
+                this.mazeLayer.add(this.add.circle(cx - 14, cy - 6, 2.5, 0xffeecc, 0.7));
+                this.mazeLayer.add(this.add.circle(cx - 6, cy - 8, 2, 0xffeecc, 0.7));
+                // Stem + cap 2 (smaller)
+                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 10, 6, 14, 0xeeddcc, 0.75));
+                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 2, 16, 10, 0xdd5533, 0.75));
+                this.mazeLayer.add(this.add.circle(cx + 8, cy + 1, 1.5, 0xffeecc, 0.6));
+            } else if (variant === 1) {
+                // Tree stump with rings
+                this.mazeLayer.add(this.add.ellipse(cx, cy + 4, 40, 32, 0x5a3a1a, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx, cy - 4, 34, 26, 0x7a5a3a, 0.75));
+                this.mazeLayer.add(this.add.circle(cx, cy - 4, 10, 0x8a6a4a, 0.6));
+                this.mazeLayer.add(this.add.circle(cx, cy - 4, 5, 0x9a7a5a, 0.5));
+            } else {
+                // Pumpkin patch
+                this.mazeLayer.add(this.add.ellipse(cx - 6, cy + 2, 28, 24, 0xdd7722, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx + 12, cy + 6, 20, 18, 0xcc6611, 0.75));
+                this.mazeLayer.add(this.add.ellipse(cx - 6, cy - 2, 4, 8, 0x338822, 0.7));
+                this.mazeLayer.add(this.add.ellipse(cx + 12, cy + 2, 3, 6, 0x338822, 0.65));
+            }
+        } else {
+            // Winter
+            if (variant === 0) {
+                // Frozen pond
+                this.mazeLayer.add(this.add.ellipse(cx, cy, 46, 36, 0x88bbdd, 0.35));
+                this.mazeLayer.add(this.add.ellipse(cx - 4, cy - 3, 30, 20, 0xaaddff, 0.3));
+                this.mazeLayer.add(this.add.ellipse(cx + 8, cy + 4, 14, 8, 0xcceeFF, 0.25));
+                // Crack lines
+                this.mazeLayer.add(this.add.ellipse(cx - 6, cy, 18, 1.5, 0xffffff, 0.35).setAngle(20));
+                this.mazeLayer.add(this.add.ellipse(cx + 4, cy + 3, 12, 1.5, 0xffffff, 0.3).setAngle(-30));
+            } else if (variant === 1) {
+                // Dead tree trunk with snow
+                this.mazeLayer.add(this.add.ellipse(cx, cy + 6, 14, 36, 0x554433, 0.7));
+                this.mazeLayer.add(this.add.ellipse(cx - 12, cy - 8, 10, 20, 0x554433, 0.6).setAngle(35));
+                this.mazeLayer.add(this.add.ellipse(cx + 10, cy - 10, 8, 16, 0x554433, 0.6).setAngle(-25));
+                // Snow on top
+                this.mazeLayer.add(this.add.ellipse(cx, cy - 12, 20, 8, 0xeef4ff, 0.7));
+                this.mazeLayer.add(this.add.ellipse(cx - 10, cy - 16, 12, 6, 0xddeeff, 0.6));
+            } else {
+                // Large snowdrift
+                this.mazeLayer.add(this.add.ellipse(cx, cy + 4, 44, 28, 0xddeeff, 0.6));
+                this.mazeLayer.add(this.add.ellipse(cx - 6, cy - 4, 30, 18, 0xeef4ff, 0.55));
+                this.mazeLayer.add(this.add.circle(cx - 12, cy - 8, 2, 0xffffff, 0.7));
+                this.mazeLayer.add(this.add.circle(cx + 10, cy - 2, 1.5, 0xffffff, 0.6));
+                this.mazeLayer.add(this.add.circle(cx + 4, cy - 10, 1.5, 0xffffff, 0.65));
+            }
         }
     }
 
@@ -964,7 +1236,8 @@ export default class GameScene extends Phaser.Scene {
             .filter(({ col, row }) =>
                 col >= 0 && col < COLS && row >= 0 && row < ROWS &&
                 !(col === this.startCol && row === this.startRow) &&
-                !(col === this.goalCol  && row === this.goalRow)
+                !(col === this.goalCol  && row === this.goalRow) &&
+                !this.sceneryBlocked.has(`${col},${row}`)
             );
         if (valid.length === 0) return;
         const { col, row } = valid[Math.floor(Math.random() * valid.length)];
@@ -974,35 +1247,13 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Hazard spawn ──────────────────────────────────────────────────────────
     private spawnHazard(season: SeasonTheme) {
-        // Pick a cell with Manhattan distance > 5 from the player's start corner
-        const candidates: { col: number; row: number }[] = [];
-        for (let row = 0; row < ROWS; row++) {
-            for (let col = 0; col < COLS; col++) {
-                if (col === this.goalCol  && row === this.goalRow)  continue;
-                if (col === this.startCol && row === this.startRow) continue;
-                const dist = Math.abs(col - this.startCol) + Math.abs(row - this.startRow);
-                if (dist <= 5) continue;
-                candidates.push({ col, row });
-            }
-        }
-        const { col, row } = candidates[Math.floor(Math.random() * candidates.length)];
-
-        // Ensure a hiding spot near the hazard start
-        this.guaranteeBushNear(col, row, season);
-
-        // Ensure a hiding spot roughly halfway between player start and hazard
-        const midCol = Math.round((col + this.startCol) / 2);
-        const midRow = Math.round((row + this.startRow) / 2);
-        this.guaranteeBushNear(midCol, midRow, season);
-
-        this.hazard = new Hazard(this, this.cells, col, row, season.name, () => {
+        const onCaught = () => {
             this.lives--;
             this.updateLives();
 
             if (this.lives <= 0) {
-                // Game over — restart from the first month of this season
                 this.time.delayedCall(700, () => {
-                    this.hazard?.destroy();
+                    for (const h of this.hazards) h.destroy();
                     this.cameras.main.fadeOut(600, 0, 0, 0);
                     this.cameras.main.once('camerafadeoutcomplete', () => {
                         this.scene.start('GameScene', {
@@ -1013,7 +1264,6 @@ export default class GameScene extends Phaser.Scene {
                     });
                 });
             } else {
-                // Send fairy back to start, scatter the enemy
                 this.tweens.killTweensOf(this.player);
                 this.gridX    = this.startCol;
                 this.gridY    = this.startRow;
@@ -1027,9 +1277,55 @@ export default class GameScene extends Phaser.Scene {
                     duration: 500,
                     ease:     'Power2',
                 });
-                this.hazard.scatter();
+                for (const h of this.hazards) h.scatter();
             }
-        });
+        };
+
+        const pick = (candidates: { col: number; row: number }[]) =>
+            candidates[Math.floor(Math.random() * candidates.length)];
+
+        // Split the grid into two zones: before gate1 (near start) and after gate1 (near goal)
+        const g = this.gate1Cell;
+        const nearStart: { col: number; row: number }[] = [];
+        const nearGoal:  { col: number; row: number }[] = [];
+
+        for (let row = 0; row < ROWS; row++) {
+            for (let col = 0; col < COLS; col++) {
+                if (col === this.goalCol  && row === this.goalRow)  continue;
+                if (col === this.startCol && row === this.startRow) continue;
+                if (this.sceneryBlocked.has(`${col},${row}`)) continue;
+                const distFromStart = Math.abs(col - this.startCol) + Math.abs(row - this.startRow);
+                if (distFromStart <= 3) continue; // too close to player spawn
+
+                if (g) {
+                    const distToGate = Math.abs(col - g.col) + Math.abs(row - g.row);
+                    const distToGoal = Math.abs(col - this.goalCol) + Math.abs(row - this.goalRow);
+                    const distToStart = distFromStart;
+                    // Before gate1: closer to start than to goal
+                    if (distToStart < distToGoal && distFromStart >= 4) nearStart.push({ col, row });
+                    // After gate1: closer to goal than to start, and away from gate
+                    if (distToGoal < distToStart && distToGate >= 2) nearGoal.push({ col, row });
+                } else {
+                    // No gates — just split by distance
+                    if (distFromStart <= 7) nearStart.push({ col, row });
+                    else nearGoal.push({ col, row });
+                }
+            }
+        }
+
+        // Enemy 1: in the start-side zone
+        if (nearStart.length > 0) {
+            const pos = pick(nearStart);
+            this.guaranteeBushNear(pos.col, pos.row, season);
+            this.hazards.push(new Hazard(this, this.cells, pos.col, pos.row, season.name, onCaught, this.sceneryBlocked));
+        }
+
+        // Enemy 2: in the goal-side zone
+        if (nearGoal.length > 0) {
+            const pos = pick(nearGoal);
+            this.guaranteeBushNear(pos.col, pos.row, season);
+            this.hazards.push(new Hazard(this, this.cells, pos.col, pos.row, season.name, onCaught, this.sceneryBlocked));
+        }
     }
 
     // ── Lives display ─────────────────────────────────────────────────────────
@@ -1044,14 +1340,19 @@ export default class GameScene extends Phaser.Scene {
         const count = season.name === 'Spring' ? 3 : 2;   // Winter/Summer/Fall = 2; Spring = 3
         this.objTotal = count;
 
+        // Only place objectives on cells the player can physically reach
+        const reachable = floodFill(this.cells, COLS, ROWS,
+            this.startCol, this.startRow, this.sceneryBlocked);
+
         const avoid = new Set<string>([`${this.startCol},${this.startRow}`, `${this.goalCol},${this.goalRow}`]);
         for (const k of this.keyItems.keys()) avoid.add(k);
+        for (const k of this.sceneryBlocked) avoid.add(k);
 
         const candidates: Cell[] = [];
-        for (let row = 0; row < ROWS; row++) {
-            for (let col = 0; col < COLS; col++) {
-                if (!avoid.has(`${col},${row}`)) candidates.push({ col, row });
-            }
+        for (const key of reachable) {
+            if (avoid.has(key)) continue;
+            const [col, row] = key.split(',').map(Number);
+            candidates.push({ col, row });
         }
         // Fisher-Yates shuffle
         for (let i = candidates.length - 1; i > 0; i--) {
@@ -1190,7 +1491,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Month progression ─────────────────────────────────────────────────────
     private goToEnd() {
-        this.hazard?.destroy();
+        for (const h of this.hazards) h.destroy();
         this.cameras.main.fadeOut(800, 0, 0, 0);
         this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('EndScene'));
     }
@@ -1209,7 +1510,7 @@ export default class GameScene extends Phaser.Scene {
         const nextSeason = MONTHS[nextMonth - 1].season.name;
 
         this.time.delayedCall(500, () => {
-            this.hazard?.destroy();
+            for (const h of this.hazards) h.destroy();
             this.cameras.main.fadeOut(800, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('QuoteScene', {

@@ -21,7 +21,7 @@ export default class QuoteScene extends Phaser.Scene {
         this.cameras.main.setBackgroundColor(season.bgColor);
 
         const accentHex = `#${season.uiAccent.toString(16).padStart(6, '0')}`;
-        const dimHex    = `#${Math.floor(season.uiAccent * 0.5).toString(16).padStart(6, '0')}`;
+        const dimHex    = `#${Math.floor(season.uiAccent * 0.65).toString(16).padStart(6, '0')}`;
 
         const goToGame = () => {
             this.cameras.main.fadeOut(900, 0, 0, 0);
@@ -76,13 +76,13 @@ export default class QuoteScene extends Phaser.Scene {
         onDone: () => void,
     ) {
         const monthLabel = this.add.text(W / 2, H / 2 - 80, cfg.name.toUpperCase(), {
-            fontSize:      '13px',
+            fontSize:      '15px',
             color:         dimHex,
             letterSpacing: 5,
         }).setOrigin(0.5).setAlpha(0);
 
         const quoteText = this.add.text(W / 2, H / 2 - 20, `"${cfg.quote}"`, {
-            fontSize:  '21px',
+            fontSize:  '24px',
             fontStyle: 'italic',
             color:     accentHex,
             wordWrap:  { width: W - 120 },
@@ -93,7 +93,7 @@ export default class QuoteScene extends Phaser.Scene {
             W / 2,
             H / 2 + quoteText.height / 2 + 28,
             `— ${cfg.author}`,
-            { fontSize: '14px', color: dimHex },
+            { fontSize: '16px', color: dimHex },
         ).setOrigin(0.5).setAlpha(0);
 
         this.tweens.add({

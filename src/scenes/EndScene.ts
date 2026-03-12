@@ -43,7 +43,7 @@ export default class EndScene extends Phaser.Scene {
         targets.push(
             this.add.text(cx, H / 2 + 20, '— Percy Bysshe Shelley', {
                 fontSize: '14px',
-                color:    '#4a6a80',
+                color:    '#6a8fa8',
             }).setOrigin(0.5).setAlpha(0),
         );
 

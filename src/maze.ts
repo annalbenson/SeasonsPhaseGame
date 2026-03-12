@@ -4,7 +4,7 @@ export const WALLS = { TOP: 1, RIGHT: 2, BOTTOM: 4, LEFT: 8 } as const;
 
 const ALL_WALLS = WALLS.TOP | WALLS.RIGHT | WALLS.BOTTOM | WALLS.LEFT;
 
-const OPPOSITE: Record<number, number> = {
+export const OPPOSITE: Record<number, number> = {
     [WALLS.TOP]:    WALLS.BOTTOM,
     [WALLS.RIGHT]:  WALLS.LEFT,
     [WALLS.BOTTOM]: WALLS.TOP,

@@ -32,7 +32,7 @@ export default class CalendarScene extends Phaser.Scene {
         }).setOrigin(0.5, 0);
 
         this.add.text(W / 2, 58, 'choose a month', {
-            fontSize: '13px', color: '#888899',
+            fontSize: '15px', color: '#888899',
         }).setOrigin(0.5, 0);
 
         // ── Month tiles ───────────────────────────────────────────────────────
@@ -46,11 +46,11 @@ export default class CalendarScene extends Phaser.Scene {
 
         // ── Footer ────────────────────────────────────────────────────────────
         const algoBtn = this.add.text(W / 2, H - 14, 'or try algorithm mode', {
-            fontSize: '12px', color: '#555566',
+            fontSize: '14px', color: '#7777aa',
         }).setOrigin(0.5, 1).setInteractive({ useHandCursor: true });
 
-        algoBtn.on('pointerover', () => algoBtn.setColor('#9999bb'));
-        algoBtn.on('pointerout',  () => algoBtn.setColor('#555566'));
+        algoBtn.on('pointerover', () => algoBtn.setColor('#bbbbdd'));
+        algoBtn.on('pointerout',  () => algoBtn.setColor('#7777aa'));
         algoBtn.on('pointerdown', () => this.scene.start('MenuScene'));
 
         // ── Music & persistent HUD ────────────────────────────────────────────
@@ -87,7 +87,7 @@ export default class CalendarScene extends Phaser.Scene {
 
         // Season name — small, in the dark band
         this.add.text(cx, cy + TILE_H / 2 - TILE_H / 4 / 2, season.name, {
-            fontSize: '11px',
+            fontSize: '14px',
             color: '#ffffff',
         }).setOrigin(0.5);
 

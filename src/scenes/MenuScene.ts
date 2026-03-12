@@ -75,15 +75,15 @@ export default class MenuScene extends Phaser.Scene {
 
             // Description
             this.add.text(x, y + 14, algo.description, {
-                fontSize: '13px',
+                fontSize: '15px',
                 color: '#ffffffcc',
             }).setOrigin(0.5);
         });
 
         // Footer hint
         this.add.text(W / 2, H - 30, 'Press M during a game to return here', {
-            fontSize: '13px',
-            color: '#666688',
+            fontSize: '15px',
+            color: '#8888aa',
         }).setOrigin(0.5);
     }
 }

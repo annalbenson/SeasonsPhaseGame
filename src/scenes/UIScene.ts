@@ -11,7 +11,7 @@ export default class UIScene extends Phaser.Scene {
     create() {
         this.btn = this.add
             .text(COLS * TILE + PANEL - 10, Math.round(HEADER / 2), this.label(), {
-                fontSize: '13px',
+                fontSize: '15px',
                 color: '#aabbcc',
                 backgroundColor: '#00000055',
                 padding: { x: 7, y: 4 },

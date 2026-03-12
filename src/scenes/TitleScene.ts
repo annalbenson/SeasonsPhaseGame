@@ -51,20 +51,20 @@ export default class TitleScene extends Phaser.Scene {
         });
 
         // ── Title ─────────────────────────────────────────────────────────────
-        this.add.text(W / 2, H / 2 - 160, 'S E A S O N S', {
-            fontSize:    '44px',
+        this.add.text(W / 2, H / 2 - 180, 'S E A S O N S', {
+            fontSize:    '72px',
             fontStyle:   'bold',
             color:       '#c8e4f4',
         }).setOrigin(0.5);
 
         this.add.text(W / 2, H / 2 - 100, 'a quiet journey through the year', {
-            fontSize: '13px',
-            color:    '#4a6a80',
+            fontSize: '22px',
+            color:    '#6a8fa8',
         }).setOrigin(0.5);
 
         // ── New Game button ───────────────────────────────────────────────────
-        const btn = this.add.text(W / 2, H / 2, 'New Game', {
-            fontSize: '21px',
+        const btn = this.add.text(W / 2, H / 2 + 20, 'New Game', {
+            fontSize: '32px',
             color:    '#7ab8d4',
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
