@@ -91,7 +91,14 @@ export default class TitleScene extends Phaser.Scene {
             });
         });
 
-        makeButton(W / 2, H / 2 + 70, 'How to Play', () => {
+        makeButton(W / 2, H / 2 + 70, 'Hard Mode', () => {
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene', hard: true });
+            });
+        });
+
+        makeButton(W / 2, H / 2 + 130, 'How to Play', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('TutorialScene');

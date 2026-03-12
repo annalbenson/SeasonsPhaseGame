@@ -33,7 +33,7 @@ export class Hazard {
     private blocked: Set<string>;
     private state:   'wandering' | 'hunting' | 'passing' = 'wandering';
     private moving   = false;
-    private dead     = false;
+    dead     = false;
     private timer!:  Phaser.Time.TimerEvent;
     private onCatch: () => void;
 
@@ -41,7 +41,7 @@ export class Hazard {
     private fairyRow     = 0;
     private fairyHiding  = false;
     private retreatMoves = 5;  // first N wander moves go away from (0,0)
-    private stunned      = false;
+    stunned      = false;
 
     constructor(
         scene:      Phaser.Scene,
@@ -86,6 +86,9 @@ export class Hazard {
             this.state = next;
         }
     }
+
+    /** Trigger catch from outside (e.g. player walked onto this hazard). */
+    onCatchPublic() { this.onCatch(); }
 
     scatter() {
         if (this.moving || this.dead) return;

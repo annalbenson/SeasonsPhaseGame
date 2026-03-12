@@ -79,12 +79,17 @@ export default class GameScene extends Phaser.Scene {
     private revealed = new Set<string>();
     private lit      = new Set<string>();
     private lastLitTime = new Map<string, number>();  // key → timestamp of last lit
-    private static FOG_DECAY_START = 30000;  // ms before fog starts returning
-    private static FOG_DECAY_DURATION = 15000;  // ms to fade from dim to fully hidden
+    private static FOG_DECAY_START = 30000;  // ms before fog starts returning (normal)
+    private static FOG_DECAY_DURATION = 15000;  // ms to fade from dim to fully hidden (normal)
+    private static FOG_DECAY_START_HARD = 10000;   // hard mode: 10s grace
+    private static FOG_DECAY_DURATION_HARD = 8000; // hard mode: 8s fade
+    private hardMode = false;
 
-    // Skill system — one-use seasonal ability
+    // Skill system — cooldown-based seasonal ability
     private skillUsed   = false;
     private skillArmed  = false;  // true for directional skills (hop, dash) awaiting arrow key
+    private skillCooldownEnd = 0; // timestamp when skill becomes available again
+    private static SKILL_COOLDOWN = 15000; // 15 second cooldown
     private skillText!: Phaser.GameObjects.Text;
     private skillKey!: Phaser.Input.Keyboard.Key;
 
@@ -95,10 +100,11 @@ export default class GameScene extends Phaser.Scene {
 
     constructor() { super('GameScene'); }
 
-    init(data: { algorithm?: AlgorithmKey; month?: number; from?: string }) {
+    init(data: { algorithm?: AlgorithmKey; month?: number; from?: string; hard?: boolean }) {
         this.algorithm   = data.algorithm ?? 'kruskals';
         this.monthConfig = MONTHS[(data.month ?? 1) - 1];
         this.fromScene   = data.from ?? 'TitleScene';
+        this.hardMode    = data.hard ?? false;
         this.keyItems    = new Map();
         this.gates       = [];
         this.keyCount    = 0;
@@ -120,6 +126,7 @@ export default class GameScene extends Phaser.Scene {
         this.lastLitTime  = new Map();
         this.skillUsed    = false;
         this.skillArmed   = false;
+        this.skillCooldownEnd = 0;
 
         // Pick two distinct random corners for start and goal
         const corners = [
@@ -506,26 +513,31 @@ export default class GameScene extends Phaser.Scene {
         };
         const obj = objMap[season.name] ?? objMap.Spring;
 
-        // Season-specific scenery obstacle info
-        const sceneryMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
-            Spring: {
-                label: 'boulder — go around!',
-                draw: (g, ly) => { g.fillStyle(0x778877, 0.85); g.fillEllipse(lx + 7, ly, 12, 8); g.fillStyle(0x99aa99, 0.7); g.fillEllipse(lx + 6, ly - 1, 8, 5); },
-            },
-            Summer: {
-                label: 'log — go around!',
-                draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.75); g.fillEllipse(lx + 7, ly, 14, 5); g.fillStyle(0x6a4a2a, 0.7); g.fillCircle(lx + 1, ly, 2.5); },
-            },
-            Fall: {
-                label: 'stump — go around!',
-                draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.8); g.fillEllipse(lx + 7, ly + 1, 12, 9); g.fillStyle(0x7a5a3a, 0.7); g.fillEllipse(lx + 7, ly - 1, 8, 6); },
-            },
-            Winter: {
-                label: 'rock — go around!',
-                draw: (g, ly) => { g.fillStyle(0x556666, 0.8); g.fillEllipse(lx + 7, ly + 1, 14, 8); g.fillStyle(0x6a7a7a, 0.7); g.fillEllipse(lx + 5, ly - 1, 9, 5); },
-            },
+        // Season-specific scenery obstacles — all variants shown in legend
+        type LI = { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void };
+        const sceneryMap: Record<string, LI[]> = {
+            Spring: [
+                { label: 'boulder — go around!', draw: (g, ly) => { g.fillStyle(0x778877, 0.85); g.fillEllipse(lx + 7, ly, 12, 8); g.fillStyle(0x99aa99, 0.7); g.fillEllipse(lx + 6, ly - 1, 8, 5); } },
+                { label: 'pond — go around!', draw: (g, ly) => { g.fillStyle(0x4477aa, 0.5); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0x5599cc, 0.4); g.fillEllipse(lx + 5, ly - 1, 8, 5); } },
+                { label: 'flowers — go around!', draw: (g, ly) => { g.fillStyle(0xff88bb, 0.8); g.fillCircle(lx + 3, ly, 3); g.fillStyle(0xffaa44, 0.8); g.fillCircle(lx + 9, ly - 2, 3); g.fillStyle(0xcc77ff, 0.8); g.fillCircle(lx + 6, ly + 2, 3); } },
+            ],
+            Summer: [
+                { label: 'rock — go around!', draw: (g, ly) => { g.fillStyle(0x445544, 0.8); g.fillEllipse(lx + 7, ly, 12, 8); g.fillStyle(0x556655, 0.7); g.fillEllipse(lx + 5, ly - 1, 8, 5); } },
+                { label: 'log — go around!', draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.75); g.fillEllipse(lx + 7, ly, 14, 5); g.fillStyle(0x6a4a2a, 0.7); g.fillCircle(lx + 1, ly, 2.5); } },
+                { label: 'ferns — go around!', draw: (g, ly) => { g.fillStyle(0x2a7a3a, 0.65); g.fillEllipse(lx + 3, ly, 3, 8); g.fillEllipse(lx + 7, ly - 1, 3, 8); g.fillEllipse(lx + 11, ly, 3, 8); } },
+            ],
+            Fall: [
+                { label: 'mushrooms — go around!', draw: (g, ly) => { g.fillStyle(0xeeddcc, 0.8); g.fillEllipse(lx + 5, ly + 2, 4, 8); g.fillStyle(0xcc3322, 0.8); g.fillEllipse(lx + 5, ly - 3, 10, 6); } },
+                { label: 'stump — go around!', draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.8); g.fillEllipse(lx + 7, ly + 1, 12, 9); g.fillStyle(0x7a5a3a, 0.7); g.fillEllipse(lx + 7, ly - 1, 8, 6); } },
+                { label: 'pumpkins — go around!', draw: (g, ly) => { g.fillStyle(0xdd7722, 0.8); g.fillEllipse(lx + 5, ly, 10, 8); g.fillStyle(0xcc6611, 0.75); g.fillEllipse(lx + 11, ly + 1, 7, 6); } },
+            ],
+            Winter: [
+                { label: 'boulder — go around!', draw: (g, ly) => { g.fillStyle(0x556666, 0.8); g.fillEllipse(lx + 7, ly + 1, 14, 8); g.fillStyle(0x6a7a7a, 0.7); g.fillEllipse(lx + 5, ly - 1, 9, 5); } },
+                { label: 'rocks — go around!', draw: (g, ly) => { g.fillStyle(0x4a5a5a, 0.8); g.fillEllipse(lx + 4, ly, 8, 6); g.fillStyle(0x5a6a6a, 0.75); g.fillEllipse(lx + 10, ly - 1, 7, 5); } },
+                { label: 'stone slab — go around!', draw: (g, ly) => { g.fillStyle(0x4a5858, 0.8); g.fillEllipse(lx + 7, ly, 14, 6); g.fillStyle(0x5a6868, 0.7); g.fillEllipse(lx + 5, ly - 1, 10, 4); } },
+            ],
         };
-        const scenery = sceneryMap[season.name] ?? sceneryMap.Summer;
+        const sceneryItems = sceneryMap[season.name] ?? sceneryMap.Summer;
 
         // Season-specific skill legend entry
         const skillMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
@@ -558,7 +570,7 @@ export default class GameScene extends Phaser.Scene {
                 draw: (g, ly) => { g.fillStyle(enemy.color, 0.9); g.fillCircle(lx + 7, ly, 6); },
             },
             hide,
-            scenery,
+            ...sceneryItems,
             obj,
             skill,
             {
@@ -964,13 +976,22 @@ export default class GameScene extends Phaser.Scene {
     private updateSkillText() {
         if (!this.skillText) return;
         if (this.skillUsed) {
-            this.skillText.setText(`${this.skillName}  (used)`);
+            const remain = Math.max(0, Math.ceil((this.skillCooldownEnd - this.time.now) / 1000));
+            this.skillText.setText(`${this.skillName}  (${remain}s)`);
             this.skillText.setAlpha(0.35);
         } else if (this.skillArmed) {
             this.skillText.setText(`${this.skillName}  ▸▸`);
+            this.skillText.setAlpha(1);
         } else {
             this.skillText.setText(`${this.skillName}  [SPACE]`);
+            this.skillText.setAlpha(1);
         }
+    }
+
+    private startSkillCooldown() {
+        this.skillUsed = true;
+        this.skillCooldownEnd = this.time.now + GameScene.SKILL_COOLDOWN;
+        this.updateSkillText();
     }
 
     private activateSkill() {
@@ -980,7 +1001,7 @@ export default class GameScene extends Phaser.Scene {
 
         if (season === 'Spring') {
             // Bee Sting — stun nearest enemy for 5 seconds
-            this.skillUsed = true;
+            this.startSkillCooldown();
             let nearest: Hazard | null = null;
             let bestDist = Infinity;
             for (const h of this.hazards) {
@@ -995,7 +1016,7 @@ export default class GameScene extends Phaser.Scene {
             this.updateSkillText();
         } else if (season === 'Summer') {
             // Fairy Glow — reveal large fog area (radius 4 Chebyshev)
-            this.skillUsed = true;
+            this.startSkillCooldown();
             const now = this.time.now;
             for (let dr = -4; dr <= 4; dr++) {
                 for (let dc = -4; dc <= 4; dc++) {
@@ -1052,7 +1073,7 @@ export default class GameScene extends Phaser.Scene {
         if (this.findGate(adjX, adjY, landX, landY)) return false;
 
         // Execute the hop
-        this.skillUsed = true;
+        this.startSkillCooldown();
         this.skillArmed = false;
         this.gridX = landX;
         this.gridY = landY;
@@ -1072,6 +1093,7 @@ export default class GameScene extends Phaser.Scene {
                 this.collectKey();
                 this.checkObjective();
                 this.checkGoal();
+                this.checkHazardCollision();
             },
         });
         // Bounce scale for hop feel
@@ -1092,7 +1114,7 @@ export default class GameScene extends Phaser.Scene {
         const nx = this.gridX + dx, ny = this.gridY + dy;
         if (this.sceneryBlocked.has(`${nx},${ny}`)) return false;
 
-        this.skillUsed = true;
+        this.startSkillCooldown();
         this.skillArmed = false;
         this.moving = true;
         this.slideDir = null;
@@ -1125,6 +1147,7 @@ export default class GameScene extends Phaser.Scene {
 
         if (steps.length === 0) {
             this.skillUsed = false;
+            this.skillCooldownEnd = 0;
             this.skillArmed = true;
             this.moving = false;
             return false;
@@ -1172,6 +1195,14 @@ export default class GameScene extends Phaser.Scene {
     update() {
         this.emitter.setPosition(this.player.x, this.player.y);
         this.updateFogDecay();
+
+        // Skill cooldown tick
+        if (this.skillUsed && this.time.now >= this.skillCooldownEnd) {
+            this.skillUsed = false;
+            this.updateSkillText();
+        } else if (this.skillUsed) {
+            this.updateSkillText(); // update countdown display
+        }
 
         // Hiding state — fade fairy when inside a bush cell
         const nowHiding = this.bushCells.has(`${this.gridX},${this.gridY}`);
@@ -1253,9 +1284,23 @@ export default class GameScene extends Phaser.Scene {
                 this.collectKey();
                 this.checkObjective();
                 this.checkGoal();
+                if (this.checkHazardCollision()) return;
                 this.continueSlide();
             },
         });
+    }
+
+    /** Check if the player just moved onto a hazard's cell. */
+    private checkHazardCollision(): boolean {
+        if (this.isHiding) return false;
+        for (const h of this.hazards) {
+            if (h.dead || h.stunned) continue;
+            if (h.gridX === this.gridX && h.gridY === this.gridY) {
+                h.onCatchPublic();
+                return true;
+            }
+        }
+        return false;
     }
 
     // After each step, keep sliding if the key is still held and the path is clear.
@@ -1647,6 +1692,7 @@ export default class GameScene extends Phaser.Scene {
                             month:     seasonStart(this.monthConfig.month),
                             algorithm: this.algorithm,
                             from:      this.fromScene,
+                            hard:      this.hardMode,
                         });
                     });
                 });
@@ -1963,6 +2009,7 @@ export default class GameScene extends Phaser.Scene {
                     isSeason:  nextSeason !== curSeason,
                     algorithm: this.algorithm,
                     from:      this.fromScene,
+                    hard:      this.hardMode,
                 });
             });
         });
@@ -2059,8 +2106,8 @@ export default class GameScene extends Phaser.Scene {
     // Called every frame — gradually fade revealed-but-not-lit cells back to hidden
     private updateFogDecay() {
         const now = this.time.now;
-        const start = GameScene.FOG_DECAY_START;
-        const dur   = GameScene.FOG_DECAY_DURATION;
+        const start = this.hardMode ? GameScene.FOG_DECAY_START_HARD : GameScene.FOG_DECAY_START;
+        const dur   = this.hardMode ? GameScene.FOG_DECAY_DURATION_HARD : GameScene.FOG_DECAY_DURATION;
 
         for (const key of this.revealed) {
             if (this.lit.has(key)) continue; // currently visible, no decay

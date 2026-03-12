@@ -13,7 +13,7 @@ const H = ROWS * TILE + HEADER;
 export default class QuoteScene extends Phaser.Scene {
     constructor() { super('QuoteScene'); }
 
-    create(data: { month: number; isSeason?: boolean; algorithm?: AlgorithmKey; from?: string }) {
+    create(data: { month: number; isSeason?: boolean; algorithm?: AlgorithmKey; from?: string; hard?: boolean }) {
         const cfg      = MONTHS[(data.month ?? 1) - 1];
         const season   = cfg.season;
         const isSeason = data.isSeason ?? false;
@@ -30,6 +30,7 @@ export default class QuoteScene extends Phaser.Scene {
                     month:     data.month,
                     algorithm: data.algorithm,
                     from:      data.from ?? 'TitleScene',
+                    hard:      data.hard,
                 });
             });
         };
@@ -75,25 +76,25 @@ export default class QuoteScene extends Phaser.Scene {
         dimHex: string,
         onDone: () => void,
     ) {
-        const monthLabel = this.add.text(W / 2, H / 2 - 80, cfg.name.toUpperCase(), {
-            fontSize:      '15px',
+        const monthLabel = this.add.text(W / 2, H / 2 - 100, cfg.name.toUpperCase(), {
+            fontSize:      '22px',
             color:         dimHex,
-            letterSpacing: 5,
+            letterSpacing: 8,
         }).setOrigin(0.5).setAlpha(0);
 
-        const quoteText = this.add.text(W / 2, H / 2 - 20, `"${cfg.quote}"`, {
-            fontSize:  '24px',
+        const quoteText = this.add.text(W / 2, H / 2 - 10, `"${cfg.quote}"`, {
+            fontSize:  '32px',
             fontStyle: 'italic',
             color:     accentHex,
-            wordWrap:  { width: W - 120 },
+            wordWrap:  { width: W - 100 },
             align:     'center',
         }).setOrigin(0.5).setAlpha(0);
 
         const authorText = this.add.text(
             W / 2,
-            H / 2 + quoteText.height / 2 + 28,
+            H / 2 + quoteText.height / 2 + 36,
             `— ${cfg.author}`,
-            { fontSize: '16px', color: dimHex },
+            { fontSize: '20px', color: dimHex },
         ).setOrigin(0.5).setAlpha(0);
 
         this.tweens.add({

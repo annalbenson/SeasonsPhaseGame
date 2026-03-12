@@ -1212,9 +1212,20 @@ export default class TutorialScene extends Phaser.Scene {
                 this.collectKey();
                 this.checkObjective();
                 this.checkGoal();
+                if (this.checkEnemyCollision()) return;
                 this.continueSlide();
             },
         });
+    }
+
+    /** Check if the player walked onto the enemy's cell. */
+    private checkEnemyCollision(): boolean {
+        if (this.isHiding || !this.enemySprite || this.enemyStunned) return false;
+        if (this.enemyCol === this.gridX && this.enemyRow === this.gridY) {
+            this.onCaught();
+            return true;
+        }
+        return false;
     }
 
     private continueSlide() {
@@ -1321,6 +1332,7 @@ export default class TutorialScene extends Phaser.Scene {
                 this.collectKey();
                 this.checkObjective();
                 this.checkGoal();
+                this.checkEnemyCollision();
             },
         });
         this.tweens.add({ targets: this.player, scaleY: 1.3, yoyo: true, duration: 150 });
