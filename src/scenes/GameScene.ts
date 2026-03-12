@@ -520,6 +520,27 @@ export default class GameScene extends Phaser.Scene {
         };
         const obj = objMap[season.name] ?? objMap.Spring;
 
+        // Season-specific scenery obstacle info
+        const sceneryMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
+            Spring: {
+                label: 'boulder — go around!',
+                draw: (g, ly) => { g.fillStyle(0x778877, 0.85); g.fillEllipse(lx + 7, ly, 12, 8); g.fillStyle(0x99aa99, 0.7); g.fillEllipse(lx + 6, ly - 1, 8, 5); },
+            },
+            Summer: {
+                label: 'log — go around!',
+                draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.75); g.fillEllipse(lx + 7, ly, 14, 5); g.fillStyle(0x6a4a2a, 0.7); g.fillCircle(lx + 1, ly, 2.5); },
+            },
+            Fall: {
+                label: 'stump — go around!',
+                draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.8); g.fillEllipse(lx + 7, ly + 1, 12, 9); g.fillStyle(0x7a5a3a, 0.7); g.fillEllipse(lx + 7, ly - 1, 8, 6); },
+            },
+            Winter: {
+                label: 'drift — go around!',
+                draw: (g, ly) => { g.fillStyle(0xddeeff, 0.6); g.fillEllipse(lx + 7, ly + 1, 14, 8); g.fillStyle(0xeef4ff, 0.5); g.fillEllipse(lx + 5, ly - 1, 9, 5); },
+            },
+        };
+        const scenery = sceneryMap[season.name] ?? sceneryMap.Summer;
+
         const legendItems: { draw: (g: Phaser.GameObjects.Graphics, ly: number) => void; label: string }[] = [
             {
                 label: 'you',
@@ -530,6 +551,7 @@ export default class GameScene extends Phaser.Scene {
                 draw: (g, ly) => { g.fillStyle(enemy.color, 0.9); g.fillCircle(lx + 7, ly, 6); },
             },
             hide,
+            scenery,
             obj,
             {
                 label: 'key — collect!',

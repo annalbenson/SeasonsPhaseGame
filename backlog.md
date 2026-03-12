@@ -93,7 +93,7 @@ The maze starts completely hidden (black overlay). As the player explores, tiles
 
 ---
 
-## Idea: Landmark sprites (decorative, non-interactive)
+## ✅ Landmark sprites (shipped — now blocking scenic obstacles)
 
 Scatter a few season-appropriate static sprites around the maze as visual landmarks / atmosphere. These don't block movement, don't interact with the player, and are purely decorative — but they make the maze feel like a world rather than a grid.
 
@@ -117,7 +117,33 @@ Scatter a few season-appropriate static sprites around the maze as visual landma
 
 ## Bug: Color contrast / accessibility
 
-- [ ] **Text readability audit** — review all seasonal color schemes to ensure text meets WCAG AA contrast ratios (4.5:1 for normal text, 3:1 for large text). Current palettes cause hard-to-read text in some seasons.
+- [x] **Text readability audit** — review all seasonal color schemes to ensure text meets WCAG AA contrast ratios (4.5:1 for normal text, 3:1 for large text). Current palettes cause hard-to-read text in some seasons.
+
+---
+
+## Visual: Winter scenic obstacle
+
+- [ ] Winter scenic obstacle (snowdrift) looks too similar to the snow pile hiding spots. Replace with a **grey rock** formation so the two are visually distinct.
+
+---
+
+## Feature: Tutorial level
+
+- [ ] A guided tutorial before the main game begins, using a **purple/yellow color scheme** to visually distinguish it from the seasonal levels. Played on smaller grids (e.g. 5×5, then 6×6) to teach mechanics one at a time:
+  - **Step 1**: Movement + reach the goal (tiny maze, no hazards, no fog)
+  - **Step 2**: Introduce keys and gates (small maze with 1 key + 1 gate)
+  - **Step 3**: Introduce hiding spots and the enemy (small maze, 1 hazard, bushes highlighted)
+  - **Step 4**: Introduce objectives / collectibles (small maze with 1-2 objectives before goal unlocks)
+  - **Step 5**: Introduce fog of war (repeat a small maze but with fog enabled)
+- Brief text prompts or speech-bubble hints at the start of each step (e.g. "Collect the key to open the gate!")
+- Accessible from the title screen ("New Game" starts tutorial on first play, "Continue" skips to season 1)
+- Could track a `tutorialComplete` flag in localStorage to auto-skip on return visits
+
+---
+
+## Feature: Fog of war timeout / visibility decay
+
+- [ ] After a timeout (e.g. 30–60 seconds of a cell not being in the player's vicinity), previously revealed cells should start fading back toward hidden. Encourages the player to move quickly and discourages slow, methodical exploration. The player loses map knowledge over time and must rely on landmarks to re-orient.
 
 ---
 

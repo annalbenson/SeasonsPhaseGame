@@ -62,34 +62,39 @@ export default class TitleScene extends Phaser.Scene {
             color:    '#6a8fa8',
         }).setOrigin(0.5);
 
-        // ── New Game button ───────────────────────────────────────────────────
-        const btn = this.add.text(W / 2, H / 2 + 20, 'New Game', {
-            fontSize: '32px',
-            color:    '#7ab8d4',
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        // ── Buttons ───────────────────────────────────────────────────────────
+        const makeButton = (x: number, y: number, label: string, onClick: () => void) => {
+            const b = this.add.text(x, y, label, {
+                fontSize: '32px',
+                color:    '#7ab8d4',
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
-        // Gentle breathing pulse while idle
-        const pulse = this.tweens.add({
-            targets:  btn,
-            alpha:    { from: 0.6, to: 1.0 },
-            yoyo:     true,
-            repeat:   -1,
-            duration: 2000,
-            ease:     'Sine.easeInOut',
-        });
+            const p = this.tweens.add({
+                targets:  b,
+                alpha:    { from: 0.6, to: 1.0 },
+                yoyo:     true,
+                repeat:   -1,
+                duration: 2000,
+                ease:     'Sine.easeInOut',
+            });
 
-        btn.on('pointerover', () => {
-            pulse.pause();
-            btn.setAlpha(1).setColor('#ffffff');
-        });
-        btn.on('pointerout', () => {
-            btn.setColor('#7ab8d4');
-            pulse.resume();
-        });
-        btn.on('pointerdown', () => {
+            b.on('pointerover', () => { p.pause(); b.setAlpha(1).setColor('#ffffff'); });
+            b.on('pointerout',  () => { b.setColor('#7ab8d4'); p.resume(); });
+            b.on('pointerdown', onClick);
+            return b;
+        };
+
+        makeButton(W / 2, H / 2 + 10, 'New Game', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene' });
+            });
+        });
+
+        makeButton(W / 2, H / 2 + 70, 'How to Play', () => {
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('TutorialScene');
             });
         });
 
