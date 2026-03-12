@@ -113,6 +113,14 @@ Scatter a few season-appropriate static sprites around the maze as visual landma
 
 ---
 
+---
+
+## Bug: Color contrast / accessibility
+
+- [ ] **Text readability audit** — review all seasonal color schemes to ensure text meets WCAG AA contrast ratios (4.5:1 for normal text, 3:1 for large text). Current palettes cause hard-to-read text in some seasons.
+
+---
+
 ### Weather system interface (sketch)
 ```ts
 interface WeatherSystem {
