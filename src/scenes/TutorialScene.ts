@@ -359,15 +359,115 @@ export default class TutorialScene extends Phaser.Scene {
     }
 
     private spawnPlayer() {
-        const st = this.activeTheme();
+        const cfg = STEPS[this.step];
         const px = this.offsetX + this.gridX * TILE + TILE / 2;
         const py = this.offsetY + this.gridY * TILE + TILE / 2;
-        const glow = this.add.circle(0, 0, 20, st?.playerGlow ?? T.playerGlow, 0.25);
-        const body = this.add.circle(0, 0, 12, st?.playerColor ?? T.playerColor, 0.95);
-        const inner = this.add.circle(0, -2, 5, 0xffffff, 0.7);
-        this.player = this.add.container(px, py, [glow, body, inner]).setDepth(5);
+
+        if (cfg?.season) {
+            switch (cfg.season) {
+                case 'Winter': this.player = this.buildTutBunny(px, py);   break;
+                case 'Spring': this.player = this.buildTutBee(px, py);     break;
+                case 'Summer': this.player = this.buildTutFairy(px, py);   break;
+                case 'Fall':   this.player = this.buildTutSquirrel(px, py); break;
+                default: this.player = this.buildGenericPlayer(px, py);
+            }
+        } else {
+            this.player = this.buildGenericPlayer(px, py);
+        }
+        this.player.setDepth(5);
         this.stepGroup.add(this.player);
+    }
+
+    private buildGenericPlayer(x: number, y: number): Phaser.GameObjects.Container {
+        const glow = this.add.circle(0, 0, 20, T.playerGlow, 0.25);
+        const body = this.add.circle(0, 0, 12, T.playerColor, 0.95);
+        const inner = this.add.circle(0, -2, 5, 0xffffff, 0.7);
+        const c = this.add.container(x, y, [glow, body, inner]);
         this.tweens.add({ targets: glow, alpha: { from: 0.15, to: 0.4 }, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
+        return c;
+    }
+
+    // ── Season-specific player sprites (mirrors GameScene) ──────────────────
+    private buildTutBunny(x: number, y: number): Phaser.GameObjects.Container {
+        const white = 0xe8f4ff;
+        const glow = this.add.circle(0, 0, 22, 0xddeeff, 0.22);
+        const earL = this.add.ellipse(-9, -20, 8, 22, white);
+        const earR = this.add.ellipse(9, -20, 8, 22, white);
+        const innerEarL = this.add.ellipse(-9, -20, 4, 13, 0xffb8c8, 0.8);
+        const innerEarR = this.add.ellipse(9, -20, 4, 13, 0xffb8c8, 0.8);
+        const body = this.add.ellipse(0, 4, 20, 18, white);
+        const head = this.add.circle(0, -7, 9, 0xeef8ff);
+        const tail = this.add.circle(0, 13, 6, 0xffffff);
+        const eyeL = this.add.circle(-4, -9, 2.5, 0x224488);
+        const eyeR = this.add.circle(4, -9, 2.5, 0x224488);
+        const nose = this.add.circle(0, -5, 1.8, 0xffaacc);
+        const visual = this.add.container(0, 0, [glow, tail, earL, earR, innerEarL, innerEarR, body, head, eyeL, eyeR, nose]);
+        const outer = this.add.container(x, y, [visual]);
+        this.tweens.add({ targets: [earL, innerEarL], angle: { from: -5, to: 5 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: [earR, innerEarR], angle: { from: 5, to: -5 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: glow, alpha: { from: 0.12, to: 0.32 }, yoyo: true, repeat: -1, duration: 1500 });
+        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 950, ease: 'Sine.easeInOut' });
+        return outer;
+    }
+
+    private buildTutBee(x: number, y: number): Phaser.GameObjects.Container {
+        const glow = this.add.circle(0, 0, 22, 0xffdd00, 0.18);
+        const wingL = this.add.ellipse(-17, 1, 22, 12, 0xccecff, 0.78);
+        const wingR = this.add.ellipse(17, 1, 22, 12, 0xccecff, 0.78);
+        const body = this.add.ellipse(0, 3, 13, 20, 0xffdd00);
+        const stripe1 = this.add.ellipse(0, -1, 11, 5, 0x111100, 0.75);
+        const stripe2 = this.add.ellipse(0, 5, 11, 5, 0x111100, 0.75);
+        const stinger = this.add.ellipse(0, 14, 5, 8, 0x333300);
+        const head = this.add.circle(0, -11, 7, 0xffcc00);
+        const antL = this.add.circle(-5, -20, 2, 0x222200);
+        const antR = this.add.circle(5, -20, 2, 0x222200);
+        const visual = this.add.container(0, 0, [glow, wingL, wingR, body, stripe1, stripe2, stinger, head, antL, antR]);
+        const outer = this.add.container(x, y, [visual]);
+        this.tweens.add({ targets: wingL, scaleX: 0.1, yoyo: true, repeat: -1, duration: 90, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: wingR, scaleX: 0.1, yoyo: true, repeat: -1, duration: 90, delay: 45, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.28 }, yoyo: true, repeat: -1, duration: 1200 });
+        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
+        return outer;
+    }
+
+    private buildTutFairy(x: number, y: number): Phaser.GameObjects.Container {
+        const glow = this.add.circle(0, 0, 22, 0xffffaa, 0.22);
+        const wingL = this.add.ellipse(-14, -1, 18, 28, 0xbbddff, 0.72);
+        const wingR = this.add.ellipse(14, -1, 18, 28, 0xbbddff, 0.72);
+        const body = this.add.ellipse(0, 4, 11, 16, 0xff88cc);
+        const head = this.add.circle(0, -8, 7, 0xffddee);
+        const antennaL = this.add.circle(-5, -17, 2, 0xff99cc);
+        const antennaR = this.add.circle(5, -17, 2, 0xff99cc);
+        const visual = this.add.container(0, 0, [glow, wingL, wingR, body, head, antennaL, antennaR]);
+        const outer = this.add.container(x, y, [visual]);
+        this.tweens.add({ targets: wingL, scaleX: 0.15, yoyo: true, repeat: -1, duration: 105, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: wingR, scaleX: 0.15, yoyo: true, repeat: -1, duration: 105, delay: 52, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: glow, alpha: { from: 0.12, to: 0.38 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 950, ease: 'Sine.easeInOut' });
+        return outer;
+    }
+
+    private buildTutSquirrel(x: number, y: number): Phaser.GameObjects.Container {
+        const brown = 0xb05818, tailCol = 0xd88030, cream = 0xffd090;
+        const glow = this.add.circle(0, 0, 22, tailCol, 0.15);
+        const tailOuter = this.add.ellipse(11, 3, 22, 28, tailCol);
+        const tailInner = this.add.ellipse(12, 2, 13, 20, 0xe8a050, 0.65);
+        const body = this.add.ellipse(-2, 4, 16, 20, brown);
+        const belly = this.add.ellipse(-2, 5, 10, 13, cream, 0.4);
+        const head = this.add.circle(-3, -8, 8, brown);
+        const earL = this.add.ellipse(-9, -14, 6, 8, brown);
+        const earR = this.add.ellipse(3, -14, 6, 8, brown);
+        const earLi = this.add.ellipse(-9, -14, 3, 5, 0xffb8c8, 0.7);
+        const earRi = this.add.ellipse(3, -14, 3, 5, 0xffb8c8, 0.7);
+        const eyeL = this.add.circle(-7, -10, 2.5, 0x331100);
+        const eyeR = this.add.circle(0, -10, 2.5, 0x331100);
+        const nose = this.add.circle(-3, -5, 1.8, 0x553322);
+        const visual = this.add.container(0, 0, [glow, tailOuter, tailInner, body, belly, head, earL, earR, earLi, earRi, eyeL, eyeR, nose]);
+        const outer = this.add.container(x, y, [visual]);
+        this.tweens.add({ targets: [tailOuter, tailInner], scaleY: { from: 1, to: 1.1 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.22 }, yoyo: true, repeat: -1, duration: 1400 });
+        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 850, ease: 'Sine.easeInOut' });
+        return outer;
     }
 
     // ── Step 2: Keys + Gates ─────────────────────────────────────────────────
@@ -422,14 +522,8 @@ export default class TutorialScene extends Phaser.Scene {
 
         const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
         const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
-        const danger = this.add.circle(0, 0, 18, T.enemyColor, 0.15);
-        const ebody = this.add.circle(0, 0, 10, T.enemyColor, 0.9);
-        const eye1 = this.add.circle(-4, -3, 2.5, 0xffffff, 0.9);
-        const eye2 = this.add.circle(4, -3, 2.5, 0xffffff, 0.9);
-        this.enemySprite = this.add.container(ex, ey, [danger, ebody, eye1, eye2]).setDepth(4);
+        this.enemySprite = this.buildTutEnemy(ex, ey);
         this.stepGroup.add(this.enemySprite);
-
-        this.tweens.add({ targets: danger, alpha: { from: 0.1, to: 0.3 }, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
         this.scheduleEnemyMove();
     }
 
@@ -667,6 +761,116 @@ export default class TutorialScene extends Phaser.Scene {
         }
     }
 
+    // ── Season-specific enemy sprites (mirrors Hazard class) ──────────────────
+    private buildTutEnemy(x: number, y: number, season?: string): Phaser.GameObjects.Container {
+        switch (season) {
+            case 'Spring': return this.buildTutFrog(x, y);
+            case 'Fall':   return this.buildTutFox(x, y);
+            case 'Winter': return this.buildTutOwl(x, y);
+            case 'Summer': return this.buildTutSnake(x, y);
+            default:       return this.buildTutGenericEnemy(x, y);
+        }
+    }
+
+    private buildTutGenericEnemy(x: number, y: number): Phaser.GameObjects.Container {
+        const danger = this.add.circle(0, 0, 18, T.enemyColor, 0.15);
+        const ebody = this.add.circle(0, 0, 10, T.enemyColor, 0.9);
+        const eye1 = this.add.circle(-4, -3, 2.5, 0xffffff, 0.9);
+        const eye2 = this.add.circle(4, -3, 2.5, 0xffffff, 0.9);
+        const c = this.add.container(x, y, [danger, ebody, eye1, eye2]).setDepth(4);
+        this.tweens.add({ targets: danger, alpha: { from: 0.1, to: 0.3 }, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
+        return c;
+    }
+
+    private buildTutFrog(x: number, y: number): Phaser.GameObjects.Container {
+        const green = 0x44aa22, dark = 0x2a7a10, belly = 0x99cc44;
+        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
+        const legBL = this.add.ellipse(-15, 14, 16, 8, dark, 0.85).setAngle(-35);
+        const legBR = this.add.ellipse(15, 14, 16, 8, dark, 0.85).setAngle(35);
+        const legFL = this.add.ellipse(-16, -5, 10, 6, dark, 0.8).setAngle(-20);
+        const legFR = this.add.ellipse(16, -5, 10, 6, dark, 0.8).setAngle(20);
+        const body = this.add.circle(0, 4, 18, green);
+        const bellySpot = this.add.ellipse(0, 6, 22, 14, belly, 0.45);
+        const head = this.add.circle(0, -10, 12, 0x55bb33);
+        const mouth = this.add.ellipse(0, -4, 20, 5, dark, 0.65);
+        const eyeL = this.add.circle(-14, -12, 8, 0xffffff);
+        const eyeR = this.add.circle(14, -12, 8, 0xffffff);
+        const irisL = this.add.circle(-14, -12, 5, 0xcc8800);
+        const irisR = this.add.circle(14, -12, 5, 0xcc8800);
+        const pupL = this.add.circle(-14, -12, 2.5, 0x111111);
+        const pupR = this.add.circle(14, -12, 2.5, 0x111111);
+        const visual = this.add.container(0, 0, [danger, legBL, legBR, legFL, legFR, body, bellySpot, head, mouth, eyeL, eyeR, irisL, irisR, pupL, pupR]);
+        const outer = this.add.container(x, y, [visual]).setDepth(4);
+        this.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
+        return outer;
+    }
+
+    private buildTutSnake(x: number, y: number): Phaser.GameObjects.Container {
+        const bodyCol = 0xcc5500, headCol = 0xdd6600, bellyCol = 0xffcc88;
+        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
+        const tail = this.add.circle(-13, -10, 4, bodyCol);
+        const s4 = this.add.circle(-18, -3, 6, bodyCol);
+        const s3 = this.add.circle(-17, 7, 7, bodyCol);
+        const s2 = this.add.circle(-11, 13, 8, bodyCol);
+        const s1 = this.add.circle(-4, 9, 9, bodyCol);
+        const head = this.add.ellipse(0, 0, 20, 14, headCol);
+        const belly = this.add.ellipse(0, 1, 12, 7, bellyCol, 0.80);
+        const eyeL = this.add.circle(-5, -4, 2.5, 0xffffff);
+        const pupL = this.add.circle(-5, -4, 1.5, 0x111111);
+        const eyeR = this.add.circle(4, -4, 2.5, 0xffffff);
+        const pupR = this.add.circle(4, -4, 1.5, 0x111111);
+        const visual = this.add.container(0, 0, [danger, tail, s4, s3, s2, s1, head, belly, eyeL, pupL, eyeR, pupR]);
+        const outer = this.add.container(x, y, [visual]).setDepth(4);
+        this.tweens.add({ targets: visual, angle: { from: -7, to: 7 }, yoyo: true, repeat: -1, duration: 1300, ease: 'Sine.easeInOut' });
+        return outer;
+    }
+
+    private buildTutFox(x: number, y: number): Phaser.GameObjects.Container {
+        const orange = 0xdd5500, light = 0xee8833, cream = 0xffd090, dark = 0x221100;
+        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
+        const tail = this.add.ellipse(0, 17, 18, 14, light, 0.9);
+        const tailTip = this.add.circle(0, 23, 6, cream, 0.9);
+        const body = this.add.ellipse(0, 3, 18, 22, orange);
+        const belly = this.add.ellipse(0, 4, 10, 15, cream, 0.5);
+        const head = this.add.ellipse(0, -8, 16, 14, orange);
+        const snout = this.add.ellipse(0, -17, 8, 10, light);
+        const nose = this.add.circle(0, -21, 3, dark);
+        const earL = this.add.ellipse(-10, -13, 8, 12, orange);
+        const earR = this.add.ellipse(10, -13, 8, 12, orange);
+        const earLi = this.add.ellipse(-10, -13, 4, 7, dark, 0.45);
+        const earRi = this.add.ellipse(10, -13, 4, 7, dark, 0.45);
+        const eyeL = this.add.circle(-6, -10, 2.5, 0xdd9900);
+        const eyeR = this.add.circle(6, -10, 2.5, 0xdd9900);
+        const pupL = this.add.circle(-6, -10, 1.5, dark);
+        const pupR = this.add.circle(6, -10, 1.5, dark);
+        const visual = this.add.container(0, 0, [danger, tail, tailTip, body, belly, head, snout, nose, earL, earR, earLi, earRi, eyeL, eyeR, pupL, pupR]);
+        const outer = this.add.container(x, y, [visual]).setDepth(4);
+        this.tweens.add({ targets: [tail, tailTip], angle: { from: -13, to: 13 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
+        this.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+        return outer;
+    }
+
+    private buildTutOwl(x: number, y: number): Phaser.GameObjects.Container {
+        const brown = 0x6b4520, light = 0x9a6840, cream = 0xe8dcc8;
+        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
+        const body = this.add.circle(0, 5, 18, brown);
+        const wingL = this.add.ellipse(-14, 6, 12, 22, light, 0.75);
+        const wingR = this.add.ellipse(14, 6, 12, 22, light, 0.75);
+        const tail = this.add.ellipse(0, 19, 18, 10, light, 0.9);
+        const face = this.add.circle(0, -4, 13, cream);
+        const tuftL = this.add.ellipse(-8, -18, 7, 13, brown);
+        const tuftR = this.add.ellipse(8, -18, 7, 13, brown);
+        const eyeL = this.add.circle(-6, -6, 6, 0xffe060);
+        const eyeR = this.add.circle(6, -6, 6, 0xffe060);
+        const pupL = this.add.circle(-6, -6, 3.5, 0x111111);
+        const pupR = this.add.circle(6, -6, 3.5, 0x111111);
+        const beak = this.add.ellipse(0, -1, 9, 6, 0xcc8800);
+        const visual = this.add.container(0, 0, [danger, body, wingL, wingR, tail, face, tuftL, tuftR, eyeL, eyeR, pupL, pupR, beak]);
+        const outer = this.add.container(x, y, [visual]).setDepth(4);
+        this.tweens.add({ targets: visual, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 2600, ease: 'Sine.easeInOut' });
+        return outer;
+    }
+
     // ── Scenery obstacle drawing ─────────────────────────────────────────────
     private drawSceneryBlock(col: number, row: number) {
         const st = this.activeTheme();
@@ -741,13 +945,8 @@ export default class TutorialScene extends Phaser.Scene {
 
         const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
         const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
-        const danger = this.add.circle(0, 0, 18, st.enemyColor, 0.15);
-        const ebody = this.add.circle(0, 0, 10, st.enemyColor, 0.9);
-        const eye1 = this.add.circle(-4, -3, 2.5, 0xffffff, 0.9);
-        const eye2 = this.add.circle(4, -3, 2.5, 0xffffff, 0.9);
-        this.enemySprite = this.add.container(ex, ey, [danger, ebody, eye1, eye2]).setDepth(4);
+        this.enemySprite = this.buildTutEnemy(ex, ey, 'Spring');
         this.stepGroup.add(this.enemySprite);
-        this.tweens.add({ targets: danger, alpha: { from: 0.1, to: 0.3 }, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
         this.scheduleEnemyMove();
 
         this.showSkillHint('Press SPACE to use STING');
