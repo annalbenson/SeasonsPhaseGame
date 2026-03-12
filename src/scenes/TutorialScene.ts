@@ -84,18 +84,152 @@ const SEASON_THEMES: Record<string, SeasonThemeT> = {
 interface StepConfig {
     cols: number; rows: number; hint: string;
     season?: string;  // if set, uses season theme + teaches that skill
+    hardcoded?: number[][];  // optional pre-built maze (wall bitmasks)
 }
 
+const ALL_WALLS = 1 | 2 | 4 | 8; // TOP|RIGHT|BOTTOM|LEFT — cell with all walls = isolated
+
+/** Build a maze from a list of edges (col,row → col,row). Starts fully walled. */
+function carveMaze(cols: number, rows: number, edges: [number, number, number, number][]): number[][] {
+    const ALL = ALL_WALLS;
+    const grid = Array.from({ length: rows }, () => Array(cols).fill(ALL));
+    for (const [c1, r1, c2, r2] of edges) {
+        const dc = c2 - c1, dr = r2 - r1;
+        if (dc === 1)  { grid[r1][c1] &= ~2; grid[r2][c2] &= ~8; } // remove RIGHT / LEFT
+        if (dc === -1) { grid[r1][c1] &= ~8; grid[r2][c2] &= ~2; }
+        if (dr === 1)  { grid[r1][c1] &= ~4; grid[r2][c2] &= ~1; } // remove BOTTOM / TOP
+        if (dr === -1) { grid[r1][c1] &= ~1; grid[r2][c2] &= ~4; }
+    }
+    return grid;
+}
+
+/*
+ * Hardcoded tutorial mazes — small, simple, designed for each lesson.
+ * All use carveMaze(cols, rows, edges) where edges are [c1,r1, c2,r2].
+ */
+
+/*
+ * Step 1 (3×2): Basic movement — L-shaped, just move and reach the flower.
+ *   [S]→[.]→[.]
+ *             ↓
+ *            [G]
+ */
+const MAZE_STEP1 = carveMaze(3, 2, [
+    [0,0, 1,0], [1,0, 2,0], [2,0, 2,1],
+]);
+
+/*
+ * Step 2 (4×2): Key + gate — key is down a side branch.
+ *   [S]→[.]→[gate]→[.]
+ *         ↓          ↓
+ *       [key]  .   [G]
+ *   Gate blocks (2,0)→(3,0), key at (1,1)
+ */
+const MAZE_STEP2 = carveMaze(4, 2, [
+    [0,0, 1,0], [1,0, 2,0], [2,0, 3,0],  // main corridor
+    [1,0, 1,1],                            // branch down to key
+    [3,0, 3,1],                            // down to goal
+]);
+
+/*
+ * Step 3 (4×3): Hiding + enemy — bush between player and enemy, room to roam.
+ *   [S]→[bush]→[enemy]→[.]
+ *                  ↓      ↓
+ *           .     [.]   [.]
+ *                  ↓      ↓
+ *           .     [.]→ [G]
+ */
+const MAZE_STEP3 = carveMaze(4, 3, [
+    [0,0, 1,0], [1,0, 2,0], [2,0, 3,0],  // top corridor
+    [2,0, 2,1], [2,1, 2,2], [2,2, 3,2],  // down left side + across to goal
+    [3,0, 3,1], [3,1, 3,2],              // down right side for enemy to roam
+]);
+
+/*
+ * Step 4 (5×3): Objectives — one branch up, one branch down, goal at end.
+ *         [obj1]
+ *           ↑
+ *   [S]→[.]→[.]→[.]→[G]
+ *                ↓
+ *              [obj2]
+ */
+const MAZE_STEP4 = carveMaze(5, 3, [
+    [0,0, 0,1],                                         // start down to corridor
+    [0,1, 1,1], [1,1, 2,1], [2,1, 3,1], [3,1, 4,1],  // main corridor (row 1)
+    [4,1, 4,2],                                         // down to goal
+    [2,1, 2,0],                                         // branch up to obj1
+    [3,1, 3,2],                                         // branch down to obj2
+]);
+
+/*
+ * Step 5 (3×3): Fog — same shape as step 3 but with fog.
+ */
+const MAZE_STEP5 = carveMaze(3, 3, [
+    [0,0, 1,0], [1,0, 2,0],
+    [2,0, 2,1], [2,1, 2,2],
+    [0,0, 0,1], [0,1, 0,2], [0,2, 1,2], [1,2, 2,2],
+]);
+
+/*
+ * Step 6 (4×3, Winter): HOP — corridor bends, rock blocks the way.
+ *   [S]→[.]
+ *         ↓
+ *       [rock]   ← must hop over
+ *         ↓
+ *       [.]→[G]
+ */
+const MAZE_WINTER = carveMaze(4, 3, [
+    [0,0, 1,0],              // right
+    [1,0, 1,1],              // down into rock at (1,1)
+    [1,1, 1,2],              // down past rock
+    [1,2, 2,2], [2,2, 3,2],  // right to goal
+]);
+
+/*
+ * Step 7 (3×2, Spring): STING — enemy patrols, bush to hide in.
+ *   [S]→[enemy]→[.]
+ *    ↓            ↓
+ *  [bush]  .    [G]
+ */
+const MAZE_SPRING = carveMaze(3, 2, [
+    [0,0, 1,0], [1,0, 2,0],  // top corridor
+    [2,0, 2,1],               // down to goal
+    [0,0, 0,1],               // down to bush alcove
+]);
+
+/*
+ * Step 8 (3×2, Summer): GLOW — fog + objectives, L-shape.
+ *   [S]→[obj]→[.]
+ *               ↓
+ *         .   [G]
+ *   Objective at (1,0), goal at (2,1). Fog hides everything.
+ */
+const MAZE_SUMMER = carveMaze(3, 2, [
+    [0,0, 1,0], [1,0, 2,0],  // top corridor
+    [2,0, 2,1],               // bend to goal
+]);
+
+/*
+ * Step 9 (5×2, Fall): DASH — long corridor with a bend, perfect for dashing.
+ *   [S]→[.]→[.]→[.]
+ *                  ↓
+ *                [G]
+ */
+const MAZE_FALL = carveMaze(4, 2, [
+    [0,0, 1,0], [1,0, 2,0], [2,0, 3,0],  // long straight
+    [3,0, 3,1],                            // bend to goal
+]);
+
 const STEPS: StepConfig[] = [
-    { cols: 4, rows: 4, hint: 'Use arrow keys or WASD to move.\nReach the yellow flower!' },
-    { cols: 4, rows: 4, hint: 'Collect the key to open the gate.' },
-    { cols: 5, rows: 5, hint: 'Hide in bushes when the creature is near!\nReach the flower to continue.' },
-    { cols: 5, rows: 5, hint: 'Collect all treasures before\nthe exit unlocks.' },
-    { cols: 5, rows: 5, hint: 'Fog hides the maze! Explore to reveal tiles.\nFog returns over time — move quickly!' },
-    { cols: 5, rows: 5, hint: 'Bunny can HOP over obstacles!\nPress SPACE then an arrow key.', season: 'Winter' },
-    { cols: 5, rows: 5, hint: 'Bee can STING the nearest enemy!\nPress SPACE to stun it.', season: 'Spring' },
-    { cols: 5, rows: 5, hint: 'Fairy can GLOW to reveal the map!\nPress SPACE to light up the fog.', season: 'Summer' },
-    { cols: 6, rows: 5, hint: 'Squirrel can DASH 3 cells!\nPress SPACE then an arrow key.', season: 'Fall' },
+    { cols: 3, rows: 2, hint: 'Use arrow keys or WASD to move.\nReach the yellow flower!', hardcoded: MAZE_STEP1 },
+    { cols: 4, rows: 2, hint: 'Collect the key to open the gate.', hardcoded: MAZE_STEP2 },
+    { cols: 4, rows: 3, hint: 'Hide in bushes when the creature is near!\nReach the flower to continue.', hardcoded: MAZE_STEP3 },
+    { cols: 5, rows: 3, hint: 'Collect all treasures before\nthe exit unlocks.', hardcoded: MAZE_STEP4 },
+    { cols: 3, rows: 3, hint: 'Fog hides the maze! Explore to reveal tiles.\nFog returns over time — move quickly!', hardcoded: MAZE_STEP5 },
+    { cols: 4, rows: 3, hint: 'Bunny can HOP over obstacles!\nPress SPACE then an arrow key.', season: 'Winter', hardcoded: MAZE_WINTER },
+    { cols: 3, rows: 2, hint: 'Bee can STING the nearest enemy!\nPress SPACE to stun it.', season: 'Spring', hardcoded: MAZE_SPRING },
+    { cols: 3, rows: 2, hint: 'Fairy can GLOW to reveal the map!\nPress SPACE to light up the fog.', season: 'Summer', hardcoded: MAZE_SUMMER },
+    { cols: 4, rows: 2, hint: 'Squirrel can DASH 3 cells!\nPress SPACE then an arrow key.', season: 'Fall', hardcoded: MAZE_FALL },
 ];
 
 export default class TutorialScene extends Phaser.Scene {
@@ -239,8 +373,10 @@ export default class TutorialScene extends Phaser.Scene {
         this.hintText.setText(cfg.hint);
         this.hintText.setColor(st ? st.textColor : T.textColor);
 
-        // Generate maze
-        this.cells = ALGORITHMS.dfs.generate(cfg.cols, cfg.rows);
+        // Generate maze (or use hardcoded layout)
+        this.cells = cfg.hardcoded
+            ? cfg.hardcoded.map(row => [...row])
+            : ALGORITHMS.dfs.generate(cfg.cols, cfg.rows);
 
         // Player starts top-left, goal bottom-right
         this.gridX = 0;
@@ -313,6 +449,7 @@ export default class TutorialScene extends Phaser.Scene {
 
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
+                if (this.cells[row][col] === ALL_WALLS) continue; // skip isolated cells
                 const light = (row + col) % 2 === 0;
                 const r = this.add.rectangle(
                     ox + col * TILE + TILE / 2, oy + row * TILE + TILE / 2,
@@ -326,6 +463,7 @@ export default class TutorialScene extends Phaser.Scene {
         g.lineStyle(4, st?.wallColor ?? T.wallColor, 1);
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
+                if (this.cells[row][col] === ALL_WALLS) continue; // skip isolated cells
                 const x = ox + col * TILE, y = oy + row * TILE;
                 const walls = this.cells[row][col];
                 if (walls & WALLS.TOP)    g.strokeLineShape(new Phaser.Geom.Line(x, y, x + TILE, y));
@@ -472,54 +610,29 @@ export default class TutorialScene extends Phaser.Scene {
 
     // ── Step 2: Keys + Gates ─────────────────────────────────────────────────
     private buildStep2() {
-        // Find solution path, place gate at midpoint, key before it
-        const path = this.solvePath();
-        if (path.length < 4) return;
-
-        const gateIdx = Math.floor(path.length * 0.5);
-        const from = path[gateIdx], to = path[gateIdx + 1];
-        if (!to) return;
-
-        // Key somewhere before the gate
-        const keyIdx = 1 + Math.floor(Math.random() * (gateIdx - 1));
-        const keyCell = path[keyIdx];
-        const kx = this.offsetX + keyCell.col * TILE + TILE / 2;
-        const ky = this.offsetY + keyCell.row * TILE + TILE / 2;
+        // Hardcoded: key down the branch at (1,1), gate between (1,0)→(2,0)
+        const kx = this.offsetX + 1 * TILE + TILE / 2;
+        const ky = this.offsetY + 1 * TILE + TILE / 2;
         const rect = this.add.rectangle(kx, ky, 18, 18, T.keyColor).setRotation(Math.PI / 4);
         this.stepGroup.add(rect);
-        this.keyItems.set(`${keyCell.col},${keyCell.row}`, rect);
+        this.keyItems.set('1,1', rect);
 
-        // Gate
-        const dc = to.col - from.col, dr = to.row - from.row;
-        let gx: number, gy: number, gw: number, gh: number;
-        if      (dc ===  1) { gx = from.col * TILE + TILE;     gy = from.row * TILE + TILE / 2; gw = 10; gh = TILE - 10; }
-        else if (dc === -1) { gx = from.col * TILE;             gy = from.row * TILE + TILE / 2; gw = 10; gh = TILE - 10; }
-        else if (dr ===  1) { gx = from.col * TILE + TILE / 2; gy = from.row * TILE + TILE;     gw = TILE - 10; gh = 10; }
-        else                { gx = from.col * TILE + TILE / 2; gy = from.row * TILE;            gw = TILE - 10; gh = 10; }
-
-        const graphic = this.add.rectangle(this.offsetX + gx, this.offsetY + gy, gw, gh, T.gateColor);
+        // Gate on the right edge of (1,0), blocking passage to (2,0)
+        const gx = 1 * TILE + TILE;           // right edge of col 1
+        const gy = 0 * TILE + TILE / 2;       // vertical center of row 0
+        const graphic = this.add.rectangle(this.offsetX + gx, this.offsetY + gy, 10, TILE - 10, T.gateColor);
         this.stepGroup.add(graphic);
-        this.gates.push({ fromCol: from.col, fromRow: from.row, toCol: to.col, toRow: to.row, graphic, open: false });
+        this.gates.push({ fromCol: 1, fromRow: 0, toCol: 2, toRow: 0, graphic, open: false });
     }
 
     // ── Step 3: Hiding + Enemy ───────────────────────────────────────────────
     private buildStep3() {
-        // Place bushes along solution path
-        const path = this.solvePath();
-        for (let i = 2; i < path.length - 1; i += 2) {
-            const { col, row } = path[i];
-            const key = `${col},${row}`;
-            if (key === `${this.goalCol},${this.goalRow}`) continue;
-            this.bushCells.add(key);
-            this.drawBush(col, row);
-        }
+        // Hardcoded: bush at (1,0) between player and enemy, enemy at (2,0)
+        this.bushCells.add('1,0');
+        this.drawBush(1, 0);
 
-        // Spawn enemy on the solution path, roughly halfway
-        const midIdx = Math.floor(path.length * 0.5);
-        const enemyCell = path[midIdx];
-        this.enemyCol = enemyCell.col;
-        this.enemyRow = enemyCell.row;
-
+        this.enemyCol = 2;
+        this.enemyRow = 0;
         const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
         const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
         this.enemySprite = this.buildTutEnemy(ex, ey);
@@ -637,17 +750,8 @@ export default class TutorialScene extends Phaser.Scene {
         this.goalLockOverlay = this.add.circle(gcx, gcy, TILE / 2 - 2, 0x000000, 0.45).setDepth(2);
         this.stepGroup.add(this.goalLockOverlay);
 
-        // Place 2 objectives on non-start/goal cells
-        const path = this.solvePath();
-        const candidates = path.filter(c =>
-            !(c.col === 0 && c.row === 0) &&
-            !(c.col === this.goalCol && c.row === this.goalRow)
-        );
-        // Pick 2 spread-out positions
-        const i1 = Math.floor(candidates.length * 0.3);
-        const i2 = Math.floor(candidates.length * 0.7);
-        for (const idx of [i1, i2]) {
-            const { col, row } = candidates[idx];
+        // Hardcoded: objectives at (2,0) up and (3,2) down — the branch ends
+        for (const [col, row] of [[2, 0], [3, 2]] as [number, number][]) {
             const cx = this.offsetX + col * TILE + TILE / 2;
             const cy = this.offsetY + row * TILE + TILE / 2;
             const glow = this.add.circle(0, 0, 14, T.goalColor, 0.2);
@@ -701,6 +805,7 @@ export default class TutorialScene extends Phaser.Scene {
             for (let col = 0; col < this.tutCols; col++) {
                 const fx = this.offsetX + col * TILE + TILE / 2;
                 const fy = this.offsetY + row * TILE + TILE / 2;
+                if (this.cells[row][col] === ALL_WALLS) { this.fogTiles[row][col] = null as any; continue; }
                 const fog = this.add.rectangle(fx, fy, TILE, TILE, T.bgColor, 1.0).setDepth(8);
                 this.stepGroup.add(fog);
                 this.fogTiles[row][col] = fog;
@@ -727,7 +832,7 @@ export default class TutorialScene extends Phaser.Scene {
                 this.fogRevealed.add(key);
                 this.fogLastLit.set(key, now);
                 // Immediately make fully visible
-                this.fogTiles[r][c].setAlpha(0);
+                this.fogTiles[r]?.[c]?.setAlpha(0);
             }
         }
 
@@ -735,7 +840,7 @@ export default class TutorialScene extends Phaser.Scene {
         for (const key of prevLit) {
             if (!this.fogLit.has(key)) {
                 const [c, r] = key.split(',').map(Number);
-                this.fogTiles[r][c].setAlpha(0.52);
+                this.fogTiles[r]?.[c]?.setAlpha(0.52);
             }
         }
     }
@@ -753,7 +858,7 @@ export default class TutorialScene extends Phaser.Scene {
             const [c, r] = key.split(',').map(Number);
             // Fade from dim (0.52) back to fully hidden (1.0)
             const alpha = 0.52 + t * 0.48;
-            this.fogTiles[r][c].setAlpha(alpha);
+            this.fogTiles[r]?.[c]?.setAlpha(alpha);
             if (t >= 1) {
                 this.fogRevealed.delete(key);
                 this.fogLastLit.delete(key);
@@ -912,37 +1017,20 @@ export default class TutorialScene extends Phaser.Scene {
 
     // ── Step 6: Winter — Bunny HOP ─────────────────────────────────────────
     private buildWinterSkill() {
-        // Place a scenery obstacle on the solution path so the player must hop over it
-        const path = this.solvePath();
-        if (path.length < 4) return;
-
-        // Find a mid-path cell with a valid landing beyond the obstacle
-        const midIdx = Math.floor(path.length * 0.5);
-        const blockCell = path[midIdx];
-        this.drawSceneryBlock(blockCell.col, blockCell.row);
-
+        // Hardcoded rock at (1,1) — blocks the vertical corridor.
+        // Player approaches from (1,0) and hops south over the rock to (1,2).
+        this.drawSceneryBlock(1, 1);
         this.showSkillHint('Press SPACE to use HOP');
     }
 
     // ── Step 7: Spring — Bee STING ─────────────────────────────────────────
     private buildSpringSkill() {
-        const st = SEASON_THEMES.Spring;
+        // Hardcoded: bush at (0,1) for hiding, enemy starts at (1,0)
+        this.bushCells.add('0,1');
+        this.drawBush(0, 1);
 
-        // Place bushes along solution path for hiding
-        const path = this.solvePath();
-        for (let i = 2; i < path.length - 1; i += 2) {
-            const { col, row } = path[i];
-            if (col === this.goalCol && row === this.goalRow) continue;
-            this.bushCells.add(`${col},${row}`);
-            this.drawBush(col, row);
-        }
-
-        // Spawn enemy near middle of path
-        const midIdx = Math.floor(path.length * 0.5);
-        const enemyCell = path[midIdx];
-        this.enemyCol = enemyCell.col;
-        this.enemyRow = enemyCell.row;
-
+        this.enemyCol = 1;
+        this.enemyRow = 0;
         const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
         const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
         this.enemySprite = this.buildTutEnemy(ex, ey, 'Spring');
@@ -1006,16 +1094,7 @@ export default class TutorialScene extends Phaser.Scene {
 
     // ── Step 9: Fall — Squirrel DASH ───────────────────────────────────────
     private buildFallSkill() {
-        // Just a maze to reach the goal — DASH helps cover ground faster
-        // Place a bush along the way so player can see it
-        const path = this.solvePath();
-        for (let i = 3; i < path.length - 1; i += 3) {
-            const { col, row } = path[i];
-            if (col === this.goalCol && row === this.goalRow) continue;
-            this.bushCells.add(`${col},${row}`);
-            this.drawBush(col, row);
-        }
-
+        // Straight corridor — DASH lets squirrel sprint 3 cells at once
         this.showSkillHint('Press SPACE to use DASH');
     }
 
