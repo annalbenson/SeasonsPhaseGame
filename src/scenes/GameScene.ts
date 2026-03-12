@@ -4,18 +4,9 @@ import { ALGORITHMS, AlgorithmKey, WALLS, OPPOSITE, widenCorridors } from '../ma
 import { MONTHS, MonthConfig, SeasonTheme } from '../seasons';
 import { addWeather } from '../weather';
 import { Hazard } from '../hazard';
+import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUtils';
 
 const W = COLS * TILE;
-
-// ── Path-finding ──────────────────────────────────────────────────────────────
-const MOVE_DIRS = [
-    { dc:  0, dr: -1, wall: WALLS.TOP    },
-    { dc:  1, dr:  0, wall: WALLS.RIGHT  },
-    { dc:  0, dr:  1, wall: WALLS.BOTTOM },
-    { dc: -1, dr:  0, wall: WALLS.LEFT   },
-];
-
-type Cell = { col: number; row: number };
 
 // Returns the first month of the season that contains `month`
 // Jan–Feb → 1 (Winter),  Mar–May → 3 (Spring),
@@ -26,56 +17,6 @@ function seasonStart(month: number): number {
     if (month <= 8)  return 6;
     if (month <= 11) return 9;
     return 12;
-}
-
-function solvePath(
-    cells: number[][], cols: number, rows: number,
-    startCol = 0, startRow = 0, endCol = cols - 1, endRow = rows - 1,
-): Cell[] {
-    const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
-    const prev: (Cell | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
-    const queue: Cell[] = [{ col: startCol, row: startRow }];
-    visited[startRow][startCol] = true;
-
-    while (queue.length > 0) {
-        const { col, row } = queue.shift()!;
-        if (col === endCol && row === endRow) break;
-        for (const { dc, dr, wall } of MOVE_DIRS) {
-            const nc = col + dc, nr = row + dr;
-            if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
-            if (visited[nr][nc] || (cells[row][col] & wall)) continue;
-            visited[nr][nc] = true;
-            prev[nr][nc] = { col, row };
-            queue.push({ col: nc, row: nr });
-        }
-    }
-
-    if (!visited[endRow][endCol]) return [];   // unreachable
-    const path: Cell[] = [];
-    let cur: Cell | null = { col: endCol, row: endRow };
-    while (cur) { path.unshift(cur); cur = prev[cur.row][cur.col]; }
-    return path;
-}
-
-// BFS flood-fill: returns all reachable cells from (startCol,startRow) in the given maze.
-// `blocked` is an optional set of "col,row" keys the fill cannot enter (scenery obstacles).
-function floodFill(cells: number[][], cols: number, rows: number, startCol: number, startRow: number, blocked?: Set<string>): Set<string> {
-    const visited = new Set<string>();
-    const queue: Cell[] = [{ col: startCol, row: startRow }];
-    visited.add(`${startCol},${startRow}`);
-    while (queue.length > 0) {
-        const { col, row } = queue.shift()!;
-        for (const { dc, dr, wall } of MOVE_DIRS) {
-            const nc = col + dc, nr = row + dr;
-            const key = `${nc},${nr}`;
-            if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
-            if (visited.has(key) || (cells[row][col] & wall)) continue;
-            if (blocked?.has(key)) continue;
-            visited.add(key);
-            queue.push({ col: nc, row: nr });
-        }
-    }
-    return visited;
 }
 
 // ── Gate data ─────────────────────────────────────────────────────────────────
@@ -137,6 +78,15 @@ export default class GameScene extends Phaser.Scene {
     private fogTiles: Phaser.GameObjects.Image[][] = [];
     private revealed = new Set<string>();
     private lit      = new Set<string>();
+    private lastLitTime = new Map<string, number>();  // key → timestamp of last lit
+    private static FOG_DECAY_START = 30000;  // ms before fog starts returning
+    private static FOG_DECAY_DURATION = 15000;  // ms to fade from dim to fully hidden
+
+    // Skill system — one-use seasonal ability
+    private skillUsed   = false;
+    private skillArmed  = false;  // true for directional skills (hop, dash) awaiting arrow key
+    private skillText!: Phaser.GameObjects.Text;
+    private skillKey!: Phaser.Input.Keyboard.Key;
 
     private startCol = 0;
     private startRow = 0;
@@ -167,6 +117,9 @@ export default class GameScene extends Phaser.Scene {
         this.fogTiles     = [];
         this.revealed     = new Set();
         this.lit          = new Set();
+        this.lastLitTime  = new Map();
+        this.skillUsed    = false;
+        this.skillArmed   = false;
 
         // Pick two distinct random corners for start and goal
         const corners = [
@@ -217,8 +170,25 @@ export default class GameScene extends Phaser.Scene {
             this.cells[to.row][to.col]     |= OPPOSITE[fw];
         }
 
+        // Compute zone map so widening only connects cells within the same zone
+        // (prevents creating bypass paths around gates)
+        let zoneMap: Map<string, number> | undefined;
+        if (this.gateEdges.length > 0) {
+            zoneMap = new Map();
+            const zone1 = floodFill(this.cells, COLS, ROWS, this.startCol, this.startRow);
+            for (const k of zone1) zoneMap.set(k, 0);
+            const g1To = this.gateEdges[0].to;
+            const zone2 = floodFill(this.cells, COLS, ROWS, g1To.col, g1To.row);
+            for (const k of zone2) zoneMap.set(k, 1);
+            if (this.gateEdges.length >= 2) {
+                const g2To = this.gateEdges[1].to;
+                const zone3 = floodFill(this.cells, COLS, ROWS, g2To.col, g2To.row);
+                for (const k of zone3) zoneMap.set(k, 2);
+            }
+        }
+
         // Widen some corridors — creates occasional 2-tile-wide sections
-        const widenedCells = widenCorridors(this.cells, COLS, ROWS);
+        const widenedCells = widenCorridors(this.cells, COLS, ROWS, 0.13, zoneMap);
 
         // Re-open gate passages (the gate objects will block the player, not walls)
         for (const { from, to } of this.gateEdges) {
@@ -281,6 +251,9 @@ export default class GameScene extends Phaser.Scene {
         // Keys + gates (also added to mazeLayer inside placePuzzleItems)
         this.placePuzzleItems(season);
 
+        // Verify all keys are reachable from start (respecting scenery and gates)
+        this.verifyKeyReachability();
+
         // Season objectives — placed after puzzle items so we can avoid their cells
         this.placeObjectives(season);
 
@@ -339,6 +312,7 @@ export default class GameScene extends Phaser.Scene {
             this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this.fromScene));
         });
         this.input.keyboard!.addKey('E').on('down', () => this.goToEnd());
+        this.skillKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
         // ── Side panel ────────────────────────────────────────────────────────
         this.buildSidePanel(season);
@@ -440,6 +414,18 @@ export default class GameScene extends Phaser.Scene {
         }).setOrigin(0.5, 0).setDepth(depth);
         this.updateInventory();
 
+        y += 40;
+        // ── SKILL section ───────────────────────────────────────────────────
+        this.add.text(cx, y, 'SKILL', {
+            fontSize: '14px', color: dimH, letterSpacing: 4,
+        }).setOrigin(0.5).setDepth(depth);
+
+        y += 24;
+        this.skillText = this.add.text(cx, y, '', {
+            fontSize: '16px', color: accentH, align: 'center',
+        }).setOrigin(0.5, 0).setDepth(depth);
+        this.updateSkillText();
+
         // ── Divider ───────────────────────────────────────────────────────────
         y += 44;
         this.add.rectangle(cx, y, pw - 32, 1, accent, 0.2).setDepth(depth);
@@ -535,11 +521,32 @@ export default class GameScene extends Phaser.Scene {
                 draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.8); g.fillEllipse(lx + 7, ly + 1, 12, 9); g.fillStyle(0x7a5a3a, 0.7); g.fillEllipse(lx + 7, ly - 1, 8, 6); },
             },
             Winter: {
-                label: 'drift — go around!',
-                draw: (g, ly) => { g.fillStyle(0xddeeff, 0.6); g.fillEllipse(lx + 7, ly + 1, 14, 8); g.fillStyle(0xeef4ff, 0.5); g.fillEllipse(lx + 5, ly - 1, 9, 5); },
+                label: 'rock — go around!',
+                draw: (g, ly) => { g.fillStyle(0x556666, 0.8); g.fillEllipse(lx + 7, ly + 1, 14, 8); g.fillStyle(0x6a7a7a, 0.7); g.fillEllipse(lx + 5, ly - 1, 9, 5); },
             },
         };
         const scenery = sceneryMap[season.name] ?? sceneryMap.Summer;
+
+        // Season-specific skill legend entry
+        const skillMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
+            Winter: {
+                label: 'hop — jump obstacle!',
+                draw: (g, ly) => { g.fillStyle(0xc8e4f4, 0.9); g.fillTriangle(lx + 2, ly + 5, lx + 7, ly - 6, lx + 12, ly + 5); },
+            },
+            Spring: {
+                label: 'sting — stun enemy!',
+                draw: (g, ly) => { g.fillStyle(0xffee22, 0.9); g.fillTriangle(lx + 3, ly - 6, lx + 7, ly + 6, lx + 11, ly - 6); },
+            },
+            Summer: {
+                label: 'glow — reveal fog!',
+                draw: (g, ly) => { g.fillStyle(0xaaffaa, 0.7); g.fillCircle(lx + 7, ly, 8); g.fillStyle(0xffffcc, 0.9); g.fillCircle(lx + 7, ly, 4); },
+            },
+            Fall: {
+                label: 'dash — sprint 3!',
+                draw: (g, ly) => { g.fillStyle(0xffcc88, 0.9); g.fillRect(lx, ly - 2, 4, 4); g.fillRect(lx + 5, ly - 2, 4, 4); g.fillRect(lx + 10, ly - 2, 4, 4); },
+            },
+        };
+        const skill = skillMap[season.name] ?? skillMap.Summer;
 
         const legendItems: { draw: (g: Phaser.GameObjects.Graphics, ly: number) => void; label: string }[] = [
             {
@@ -553,6 +560,7 @@ export default class GameScene extends Phaser.Scene {
             hide,
             scenery,
             obj,
+            skill,
             {
                 label: 'key — collect!',
                 draw: (g, ly) => {
@@ -585,7 +593,7 @@ export default class GameScene extends Phaser.Scene {
 
         // ── Controls hint ─────────────────────────────────────────────────────
         y += 18;
-        for (const line of ['R  new maze', 'M  menu', 'E  end screen', '↑↓←→  move', 'hold  slide']) {
+        for (const line of ['SPACE  skill', 'R  new maze', 'M  menu', '↑↓←→  move', 'hold  slide']) {
             this.add.text(cx, y, line, {
                 fontSize: '14px', color: `#ffffff55`,
             }).setOrigin(0.5, 0).setDepth(depth);
@@ -781,10 +789,12 @@ export default class GameScene extends Phaser.Scene {
         // Build sets of solution-path cells to avoid for key placement
         const pathCells = new Set<string>();
         const solPath = solvePath(this.cells, COLS, ROWS,
-            this.startCol, this.startRow, this.goalCol, this.goalRow);
+            this.startCol, this.startRow, this.goalCol, this.goalRow,
+            this.sceneryBlocked);
         for (const c of solPath) pathCells.add(`${c.col},${c.row}`);
 
-        // Pick key locations OFF the solution path to encourage exploration
+        // Pick key locations far from the solution path to force real detours
+        const distFromPath = bfsDistanceMap(this.cells, COLS, ROWS, pathCells, this.sceneryBlocked);
         const pickOffPath = (zone: Set<string>): Cell | null => {
             const offPath = [...zone].filter(k =>
                 !pathCells.has(k) &&
@@ -792,7 +802,11 @@ export default class GameScene extends Phaser.Scene {
                 k !== `${this.goalCol},${this.goalRow}`
             );
             if (offPath.length > 0) {
-                const key = offPath[Math.floor(Math.random() * offPath.length)];
+                // Sort by distance from solution path (descending)
+                offPath.sort((a, b) => (distFromPath.get(b) ?? 0) - (distFromPath.get(a) ?? 0));
+                // Pick randomly from top 25% most distant
+                const topN = Math.max(1, Math.floor(offPath.length * 0.25));
+                const key = offPath[Math.floor(Math.random() * topN)];
                 const [c, r] = key.split(',').map(Number);
                 return { col: c, row: r };
             }
@@ -809,6 +823,16 @@ export default class GameScene extends Phaser.Scene {
 
         const key1Pos = pickOffPath(zone1);
         const key2Pos = pickOffPath(zone2);
+
+        // Safety: if either key couldn't be placed, skip gates entirely
+        // (the level becomes gate-free rather than unwinnable)
+        if (!key1Pos || !key2Pos) {
+            console.warn('[PhaseGame] Could not place keys — skipping gates.',
+                'zone1:', zone1.size, 'zone2:', zone2.size,
+                'sceneryBlocked:', this.sceneryBlocked.size);
+            this.gateEdges = [];
+            return;
+        }
 
         // Place keys
         for (const pos of [key1Pos, key2Pos]) {
@@ -837,11 +861,301 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
+    // ── Post-placement reachability check ─────────────────────────────────────
+    // Simulates player progression: start → key1 → gate1 → key2 → gate2 → goal.
+    // If any key is unreachable, removes all gates and keys so the level is still
+    // winnable (just gate-free).
+    private verifyKeyReachability() {
+        if (this.gates.length === 0 || this.keyItems.size === 0) return;
+
+        // Build a blocked set that includes scenery AND closed gate edges
+        const gateBlocked = new Set<string>();
+        for (const g of this.gates) {
+            // Store the edge as "fromCol,fromRow>toCol,toRow" for lookup
+            gateBlocked.add(`${g.fromCol},${g.fromRow}>${g.toCol},${g.toRow}`);
+            gateBlocked.add(`${g.toCol},${g.toRow}>${g.fromCol},${g.fromRow}`);
+        }
+
+        // BFS that respects scenery blocks and optionally gate edges
+        const bfs = (sc: number, sr: number, closedGates: Set<string>): Set<string> => {
+            const visited = new Set<string>();
+            const queue: Cell[] = [{ col: sc, row: sr }];
+            visited.add(`${sc},${sr}`);
+            while (queue.length > 0) {
+                const { col, row } = queue.shift()!;
+                for (const { dc, dr, wall } of MOVE_DIRS) {
+                    const nc = col + dc, nr = row + dr;
+                    const key = `${nc},${nr}`;
+                    if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
+                    if (visited.has(key) || (this.cells[row][col] & wall)) continue;
+                    if (this.sceneryBlocked.has(key)) continue;
+                    // Check gate edges
+                    const edge = `${col},${row}>${nc},${nr}`;
+                    if (closedGates.has(edge)) continue;
+                    visited.add(key);
+                    queue.push({ col: nc, row: nr });
+                }
+            }
+            return visited;
+        };
+
+        // Check key1 reachable from start (all gates closed)
+        const reachable1 = bfs(this.startCol, this.startRow, gateBlocked);
+        let ok = true;
+        for (const keyCoord of this.keyItems.keys()) {
+            if (!reachable1.has(keyCoord)) {
+                // Check if it's key2 (should be behind gate1, that's fine)
+                // We just need at least one key reachable to open gate1
+                continue;
+            }
+        }
+
+        // Verify: at least one key is in the initial reachable zone
+        const keysInZone1 = [...this.keyItems.keys()].filter(k => reachable1.has(k));
+        if (keysInZone1.length === 0) {
+            console.warn('[PhaseGame] No key reachable from start! Removing gates.');
+            ok = false;
+        }
+
+        // After collecting first key and opening gate1, check key2
+        if (ok && this.gateEdges.length >= 1) {
+            const gate1edge1 = `${this.gateEdges[0].from.col},${this.gateEdges[0].from.row}>${this.gateEdges[0].to.col},${this.gateEdges[0].to.row}`;
+            const gate1edge2 = `${this.gateEdges[0].to.col},${this.gateEdges[0].to.row}>${this.gateEdges[0].from.col},${this.gateEdges[0].from.row}`;
+            const afterGate1 = new Set(gateBlocked);
+            afterGate1.delete(gate1edge1);
+            afterGate1.delete(gate1edge2);
+
+            const reachable2 = bfs(this.startCol, this.startRow, afterGate1);
+            const keysInZone2 = [...this.keyItems.keys()].filter(k => reachable2.has(k));
+            if (keysInZone2.length < 2) {
+                console.warn('[PhaseGame] Second key unreachable after gate1! Removing gates.');
+                ok = false;
+            }
+        }
+
+        if (!ok) {
+            // Remove all gates and keys — level becomes gate-free
+            for (const g of this.gates) g.graphic.destroy();
+            this.gates = [];
+            this.gateEdges = [];
+            for (const [, rect] of this.keyItems) rect.destroy();
+            this.keyItems.clear();
+        }
+    }
+
     // ── Inventory display ─────────────────────────────────────────────────────
     private updateInventory() {
         const filled = '\u25C6'.repeat(this.keyCount);
         const empty  = '\u25C7'.repeat(Math.max(0, 2 - this.keyCount));
         this.inventoryText.setText(`${filled}${empty}  KEY`);
+    }
+
+    // ── Skill system ─────────────────────────────────────────────────────────
+    private get skillName(): string {
+        switch (this.monthConfig.season.name) {
+            case 'Winter': return 'HOP';
+            case 'Spring': return 'STING';
+            case 'Summer': return 'GLOW';
+            case 'Fall':   return 'DASH';
+            default:       return 'GLOW';
+        }
+    }
+
+    private updateSkillText() {
+        if (!this.skillText) return;
+        if (this.skillUsed) {
+            this.skillText.setText(`${this.skillName}  (used)`);
+            this.skillText.setAlpha(0.35);
+        } else if (this.skillArmed) {
+            this.skillText.setText(`${this.skillName}  ▸▸`);
+        } else {
+            this.skillText.setText(`${this.skillName}  [SPACE]`);
+        }
+    }
+
+    private activateSkill() {
+        if (this.skillUsed || this.skillArmed || this.moving) return;
+
+        const season = this.monthConfig.season.name;
+
+        if (season === 'Spring') {
+            // Bee Sting — stun nearest enemy for 5 seconds
+            this.skillUsed = true;
+            let nearest: Hazard | null = null;
+            let bestDist = Infinity;
+            for (const h of this.hazards) {
+                const d = Math.abs(h.gridX - this.gridX) + Math.abs(h.gridY - this.gridY);
+                if (d < bestDist) { bestDist = d; nearest = h; }
+            }
+            if (nearest) {
+                nearest.stun(5000);
+                // Flash effect on player
+                this.tweens.add({ targets: this.player, scaleX: 1.3, scaleY: 1.3, yoyo: true, duration: 200 });
+            }
+            this.updateSkillText();
+        } else if (season === 'Summer') {
+            // Fairy Glow — reveal large fog area (radius 4 Chebyshev)
+            this.skillUsed = true;
+            const now = this.time.now;
+            for (let dr = -4; dr <= 4; dr++) {
+                for (let dc = -4; dc <= 4; dc++) {
+                    const nc = this.gridX + dc, nr = this.gridY + dr;
+                    if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
+                    const key = `${nc},${nr}`;
+                    this.revealed.add(key);
+                    this.lit.add(key);
+                    this.lastLitTime.set(key, now);
+                    if (this.fogTiles[nr]?.[nc]) this.fogTiles[nr][nc].setAlpha(0);
+                }
+            }
+            // Bright flash effect
+            const flash = this.add.circle(
+                this.player.x, this.player.y, TILE * 4,
+                this.monthConfig.season.uiAccent, 0.4,
+            ).setDepth(2.8);
+            this.tweens.add({ targets: flash, alpha: 0, scale: 1.5, duration: 600, onComplete: () => flash.destroy() });
+            this.updateSkillText();
+        } else {
+            // Winter (Hop) and Fall (Dash) — arm directional mode
+            this.skillArmed = true;
+            this.updateSkillText();
+        }
+    }
+
+    /** Bunny Hop: jump over one scenery obstacle to the cell beyond it. */
+    private tryHop(dx: number, dy: number): boolean {
+        const adjX = this.gridX + dx, adjY = this.gridY + dy;
+
+        // Must have a wall-free passage to the adjacent cell
+        const walls = this.cells[this.gridY][this.gridX];
+        if (dx ===  1 && (walls & WALLS.RIGHT))  return false;
+        if (dx === -1 && (walls & WALLS.LEFT))   return false;
+        if (dy ===  1 && (walls & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (walls & WALLS.TOP))    return false;
+
+        // Adjacent cell must be scenery-blocked (that's what we hop over)
+        if (!this.sceneryBlocked.has(`${adjX},${adjY}`)) return false;
+
+        // Landing cell must be in bounds
+        const landX = this.gridX + dx * 2, landY = this.gridY + dy * 2;
+        if (landX < 0 || landX >= COLS || landY < 0 || landY >= ROWS) return false;
+
+        // Must have wall-free passage from adj to landing
+        const adjWalls = this.cells[adjY][adjX];
+        if (dx ===  1 && (adjWalls & WALLS.RIGHT))  return false;
+        if (dx === -1 && (adjWalls & WALLS.LEFT))   return false;
+        if (dy ===  1 && (adjWalls & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (adjWalls & WALLS.TOP))    return false;
+
+        // Landing can't be scenery or a closed gate
+        if (this.sceneryBlocked.has(`${landX},${landY}`)) return false;
+        if (this.findGate(adjX, adjY, landX, landY)) return false;
+
+        // Execute the hop
+        this.skillUsed = true;
+        this.skillArmed = false;
+        this.gridX = landX;
+        this.gridY = landY;
+        this.moving = true;
+        this.slideDir = null;
+
+        // Arc tween — jump up then down
+        this.tweens.add({
+            targets: this.player,
+            x: landX * TILE + TILE / 2,
+            y: landY * TILE + TILE / 2 + HEADER,
+            duration: 300,
+            ease: 'Sine.easeInOut',
+            onComplete: () => {
+                this.moving = false;
+                this.revealAround(this.gridX, this.gridY);
+                this.collectKey();
+                this.checkObjective();
+                this.checkGoal();
+            },
+        });
+        // Bounce scale for hop feel
+        this.tweens.add({ targets: this.player, scaleY: 1.3, yoyo: true, duration: 150 });
+        this.updateSkillText();
+        return true;
+    }
+
+    /** Squirrel Dash: sprint 3 cells in one direction. */
+    private tryDash(dx: number, dy: number): boolean {
+        // Check we can move at least 1 cell in this direction
+        const walls0 = this.cells[this.gridY][this.gridX];
+        if (dx ===  1 && (walls0 & WALLS.RIGHT))  return false;
+        if (dx === -1 && (walls0 & WALLS.LEFT))   return false;
+        if (dy ===  1 && (walls0 & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (walls0 & WALLS.TOP))    return false;
+
+        const nx = this.gridX + dx, ny = this.gridY + dy;
+        if (this.sceneryBlocked.has(`${nx},${ny}`)) return false;
+
+        this.skillUsed = true;
+        this.skillArmed = false;
+        this.moving = true;
+        this.slideDir = null;
+
+        // Collect up to 3 cells we can dash through
+        const steps: { x: number; y: number }[] = [];
+        let cx = this.gridX, cy = this.gridY;
+        for (let s = 0; s < 3; s++) {
+            const w = this.cells[cy][cx];
+            if (dx ===  1 && (w & WALLS.RIGHT))  break;
+            if (dx === -1 && (w & WALLS.LEFT))   break;
+            if (dy ===  1 && (w & WALLS.BOTTOM)) break;
+            if (dy === -1 && (w & WALLS.TOP))    break;
+            const nsx = cx + dx, nsy = cy + dy;
+            if (nsx < 0 || nsx >= COLS || nsy < 0 || nsy >= ROWS) break;
+            if (this.sceneryBlocked.has(`${nsx},${nsy}`)) break;
+            // Open gate if we have a key
+            const gate = this.findGate(cx, cy, nsx, nsy);
+            if (gate) {
+                if (this.keyCount === 0) break;
+                this.keyCount--;
+                gate.open = true;
+                gate.graphic.destroy();
+                this.updateInventory();
+            }
+            cx = nsx;
+            cy = nsy;
+            steps.push({ x: cx, y: cy });
+        }
+
+        if (steps.length === 0) {
+            this.skillUsed = false;
+            this.skillArmed = true;
+            this.moving = false;
+            return false;
+        }
+
+        this.gridX = steps[steps.length - 1].x;
+        this.gridY = steps[steps.length - 1].y;
+
+        this.tweens.add({
+            targets: this.player,
+            x: this.gridX * TILE + TILE / 2,
+            y: this.gridY * TILE + TILE / 2 + HEADER,
+            duration: 100 * steps.length,
+            ease: 'Power3',
+            onComplete: () => {
+                this.moving = false;
+                // Reveal and collect along entire path
+                for (const s of steps) this.revealAround(s.x, s.y);
+                this.collectKey();
+                this.checkObjective();
+                this.checkGoal();
+            },
+        });
+        // Stretch effect for dash feel
+        if (dx !== 0) {
+            this.tweens.add({ targets: this.player, scaleX: 1.4, scaleY: 0.7, yoyo: true, duration: 100 });
+        } else {
+            this.tweens.add({ targets: this.player, scaleX: 0.7, scaleY: 1.4, yoyo: true, duration: 100 });
+        }
+        this.updateSkillText();
+        return true;
     }
 
     // ── Gate lookup ───────────────────────────────────────────────────────────
@@ -857,6 +1171,7 @@ export default class GameScene extends Phaser.Scene {
     // ── Update loop ───────────────────────────────────────────────────────────
     update() {
         this.emitter.setPosition(this.player.x, this.player.y);
+        this.updateFogDecay();
 
         // Hiding state — fade fairy when inside a bush cell
         const nowHiding = this.bushCells.has(`${this.gridX},${this.gridY}`);
@@ -869,6 +1184,13 @@ export default class GameScene extends Phaser.Scene {
         if (this.moving) return;
 
         const K = Phaser.Input.Keyboard;
+
+        // SPACE activates skill
+        if (K.JustDown(this.skillKey)) {
+            this.activateSkill();
+            return;
+        }
+
         let dx = 0, dy = 0;
 
         if      (K.JustDown(this.cursors.left)  || K.JustDown(this.wasd.left))  dx = -1;
@@ -877,6 +1199,16 @@ export default class GameScene extends Phaser.Scene {
         else if (K.JustDown(this.cursors.down)  || K.JustDown(this.wasd.down))  dy =  1;
 
         if (dx === 0 && dy === 0) return;
+
+        // If skill is armed, intercept the arrow for the directional skill
+        if (this.skillArmed) {
+            const season = this.monthConfig.season.name;
+            if (season === 'Winter' && this.tryHop(dx, dy)) return;
+            if (season === 'Fall'   && this.tryDash(dx, dy)) return;
+            // If directional skill couldn't fire (blocked), disarm and do normal move
+            this.skillArmed = false;
+            this.updateSkillText();
+        }
 
         this.slideDir = { dx, dy };
         this.tryStep(dx, dy);
@@ -1125,6 +1457,39 @@ export default class GameScene extends Phaser.Scene {
             this.sceneryBlocked.add(key);
             this.drawScenery(col, row, season);
         }
+
+        // Second pass: place scenery on dead-end cells (3 walls) across the grid
+        // so every level gets landmarks even when few widened cells exist.
+        const targetCount = 4;
+        const deadEnds: string[] = [];
+        for (let row = 0; row < ROWS; row++) {
+            for (let col = 0; col < COLS; col++) {
+                const key = `${col},${row}`;
+                if (this.sceneryBlocked.has(key)) continue;
+                if (this.bushCells.has(key)) continue;
+                if (pathSet.has(key)) continue;
+                if (gateProtected.has(key)) continue;
+                if (col === this.startCol && row === this.startRow) continue;
+                if (col === this.goalCol  && row === this.goalRow)  continue;
+                const w = this.cells[row][col];
+                const wallCount = ((w & WALLS.TOP) ? 1 : 0) + ((w & WALLS.RIGHT) ? 1 : 0)
+                    + ((w & WALLS.BOTTOM) ? 1 : 0) + ((w & WALLS.LEFT) ? 1 : 0);
+                if (wallCount >= 3) deadEnds.push(key);
+            }
+        }
+        // Shuffle and pick up to targetCount minus what we already placed
+        for (let i = deadEnds.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [deadEnds[i], deadEnds[j]] = [deadEnds[j], deadEnds[i]];
+        }
+        const needed = Math.max(0, targetCount - this.sceneryBlocked.size);
+        for (let i = 0; i < Math.min(needed, deadEnds.length); i++) {
+            const key = deadEnds[i];
+            const [col, row] = key.split(',').map(Number);
+            this.sceneryBlocked.add(key);
+            this.drawScenery(col, row, season);
+        }
+
         const step = 5;
         for (let i = step; i < path.length - step; i += step) {
             this.guaranteeBushNear(path[i].col, path[i].row, season);
@@ -1214,30 +1579,30 @@ export default class GameScene extends Phaser.Scene {
                 this.mazeLayer.add(this.add.ellipse(cx + 12, cy + 2, 3, 6, 0x338822, 0.65));
             }
         } else {
-            // Winter
+            // Winter — grey rocks (distinct from white snow-pile hiding spots)
             if (variant === 0) {
-                // Frozen pond
-                this.mazeLayer.add(this.add.ellipse(cx, cy, 46, 36, 0x88bbdd, 0.35));
-                this.mazeLayer.add(this.add.ellipse(cx - 4, cy - 3, 30, 20, 0xaaddff, 0.3));
-                this.mazeLayer.add(this.add.ellipse(cx + 8, cy + 4, 14, 8, 0xcceeFF, 0.25));
-                // Crack lines
-                this.mazeLayer.add(this.add.ellipse(cx - 6, cy, 18, 1.5, 0xffffff, 0.35).setAngle(20));
-                this.mazeLayer.add(this.add.ellipse(cx + 4, cy + 3, 12, 1.5, 0xffffff, 0.3).setAngle(-30));
+                // Large boulder
+                this.mazeLayer.add(this.add.ellipse(cx + 2, cy + 4, 42, 30, 0x556666, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx - 2, cy - 2, 34, 24, 0x6a7a7a, 0.75));
+                this.mazeLayer.add(this.add.ellipse(cx + 6, cy - 8, 16, 10, 0x7a8a8a, 0.6));
+                // Snow dusting
+                this.mazeLayer.add(this.add.ellipse(cx - 4, cy - 10, 18, 5, 0xddeeff, 0.4));
             } else if (variant === 1) {
-                // Dead tree trunk with snow
-                this.mazeLayer.add(this.add.ellipse(cx, cy + 6, 14, 36, 0x554433, 0.7));
-                this.mazeLayer.add(this.add.ellipse(cx - 12, cy - 8, 10, 20, 0x554433, 0.6).setAngle(35));
-                this.mazeLayer.add(this.add.ellipse(cx + 10, cy - 10, 8, 16, 0x554433, 0.6).setAngle(-25));
-                // Snow on top
-                this.mazeLayer.add(this.add.ellipse(cx, cy - 12, 20, 8, 0xeef4ff, 0.7));
-                this.mazeLayer.add(this.add.ellipse(cx - 10, cy - 16, 12, 6, 0xddeeff, 0.6));
+                // Rock cluster
+                this.mazeLayer.add(this.add.ellipse(cx - 8, cy + 4, 26, 22, 0x4a5a5a, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 2, 22, 18, 0x5a6a6a, 0.75));
+                this.mazeLayer.add(this.add.ellipse(cx + 2, cy - 6, 18, 16, 0x6a7a7a, 0.7));
+                // Snow in crevice
+                this.mazeLayer.add(this.add.ellipse(cx, cy + 8, 14, 4, 0xddeeff, 0.35));
             } else {
-                // Large snowdrift
-                this.mazeLayer.add(this.add.ellipse(cx, cy + 4, 44, 28, 0xddeeff, 0.6));
-                this.mazeLayer.add(this.add.ellipse(cx - 6, cy - 4, 30, 18, 0xeef4ff, 0.55));
-                this.mazeLayer.add(this.add.circle(cx - 12, cy - 8, 2, 0xffffff, 0.7));
-                this.mazeLayer.add(this.add.circle(cx + 10, cy - 2, 1.5, 0xffffff, 0.6));
-                this.mazeLayer.add(this.add.circle(cx + 4, cy - 10, 1.5, 0xffffff, 0.65));
+                // Flat stone slab
+                this.mazeLayer.add(this.add.ellipse(cx, cy + 2, 44, 24, 0x4a5858, 0.8));
+                this.mazeLayer.add(this.add.ellipse(cx - 2, cy - 2, 36, 18, 0x5a6868, 0.7));
+                // Crack detail
+                this.mazeLayer.add(this.add.ellipse(cx - 6, cy, 16, 1.5, 0x3a4a4a, 0.5).setAngle(15));
+                this.mazeLayer.add(this.add.ellipse(cx + 8, cy + 2, 10, 1.5, 0x3a4a4a, 0.45).setAngle(-25));
+                // Snow dusting
+                this.mazeLayer.add(this.add.ellipse(cx + 4, cy - 6, 14, 4, 0xddeeff, 0.35));
             }
         }
     }
@@ -1376,14 +1741,72 @@ export default class GameScene extends Phaser.Scene {
             const [col, row] = key.split(',').map(Number);
             candidates.push({ col, row });
         }
-        // Fisher-Yates shuffle
-        for (let i = candidates.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+
+        // Compute zone membership (flood fill with gate walls blocked)
+        const zoneOf = new Map<string, number>();
+        if (this.gateEdges.length >= 1) {
+            const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
+            for (const { from, to } of this.gateEdges) {
+                const dc = to.col - from.col, dr = to.row - from.row;
+                const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+                wallOps.push({ from, to, fw });
+                this.cells[from.row][from.col] |= fw;
+                this.cells[to.row][to.col] |= OPPOSITE[fw];
+            }
+            const z0 = floodFill(this.cells, COLS, ROWS, this.startCol, this.startRow, this.sceneryBlocked);
+            for (const k of z0) zoneOf.set(k, 0);
+            const g1To = this.gateEdges[0].to;
+            const z1 = floodFill(this.cells, COLS, ROWS, g1To.col, g1To.row, this.sceneryBlocked);
+            for (const k of z1) zoneOf.set(k, 1);
+            if (this.gateEdges.length >= 2) {
+                const g2To = this.gateEdges[1].to;
+                const z2 = floodFill(this.cells, COLS, ROWS, g2To.col, g2To.row, this.sceneryBlocked);
+                for (const k of z2) zoneOf.set(k, 2);
+            }
+            for (const { from, to, fw } of wallOps) {
+                this.cells[from.row][from.col] &= ~fw;
+                this.cells[to.row][to.col] &= ~OPPOSITE[fw];
+            }
         }
 
-        for (let i = 0; i < Math.min(count, candidates.length); i++) {
-            const { col, row } = candidates[i];
+        // Distance from solution path for ranking candidates
+        const solPath = solvePath(this.cells, COLS, ROWS,
+            this.startCol, this.startRow, this.goalCol, this.goalRow,
+            this.sceneryBlocked);
+        const pathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
+        const distFromPath = bfsDistanceMap(this.cells, COLS, ROWS, pathSet, this.sceneryBlocked);
+
+        // Group candidates by zone
+        const numZones = this.gateEdges.length >= 2 ? 3 : this.gateEdges.length >= 1 ? 2 : 1;
+        const byZone: Cell[][] = Array.from({ length: numZones }, () => []);
+        for (const c of candidates) {
+            const z = zoneOf.get(`${c.col},${c.row}`) ?? 0;
+            byZone[z].push(c);
+        }
+        // Sort each zone's candidates by distance from path (descending)
+        for (const arr of byZone) {
+            arr.sort((a, b) =>
+                (distFromPath.get(`${b.col},${b.row}`) ?? 0) -
+                (distFromPath.get(`${a.col},${a.row}`) ?? 0));
+        }
+
+        // Place at least 1 objective per zone (pick most distant), fill remaining
+        const placed: Cell[] = [];
+        const usedZones = byZone.filter(z => z.length > 0);
+        for (const zoneCands of usedZones) {
+            if (placed.length >= count) break;
+            placed.push(zoneCands.shift()!);
+        }
+        // Fill remaining slots from whichever zone has the most candidates
+        while (placed.length < count) {
+            // Pick from the zone with the most remaining candidates
+            let best = usedZones.filter(z => z.length > 0)
+                .sort((a, b) => b.length - a.length)[0];
+            if (!best || best.length === 0) break;
+            placed.push(best.shift()!);
+        }
+
+        for (const { col, row } of placed) {
             const cx = col * TILE + TILE / 2;
             const cy = row * TILE + TILE / 2 + HEADER;
             let container: Phaser.GameObjects.Container;
@@ -1595,6 +2018,10 @@ export default class GameScene extends Phaser.Scene {
     }
 
     private revealAround(col: number, row: number) {
+        const now = this.time.now;
+        const prevLit = new Set(this.lit);
+        this.lit.clear();
+
         for (let dr = -2; dr <= 2; dr++) {
             for (let dc = -2; dc <= 2; dc++) {
                 const nc = col + dc, nr = row + dr;
@@ -1608,12 +2035,52 @@ export default class GameScene extends Phaser.Scene {
                     // Fully lit — clear the fog tile
                     this.lit.add(key);
                     this.revealed.add(key);
+                    this.lastLitTime.set(key, now);
                     tile.setAlpha(0);
-                } else if (!this.lit.has(key)) {
-                    // Revealed but outside current light radius — dim overlay
+                } else if (!this.revealed.has(key)) {
+                    // First reveal — dim overlay
                     this.revealed.add(key);
+                    this.lastLitTime.set(key, now);
                     tile.setAlpha(0.52);
                 }
+            }
+        }
+
+        // Cells that left the lit radius get stamped with current time for decay
+        for (const key of prevLit) {
+            if (!this.lit.has(key)) {
+                this.lastLitTime.set(key, now);
+                const [c, r] = key.split(',').map(Number);
+                if (this.fogTiles[r]?.[c]) this.fogTiles[r][c].setAlpha(0.52);
+            }
+        }
+    }
+
+    // Called every frame — gradually fade revealed-but-not-lit cells back to hidden
+    private updateFogDecay() {
+        const now = this.time.now;
+        const start = GameScene.FOG_DECAY_START;
+        const dur   = GameScene.FOG_DECAY_DURATION;
+
+        for (const key of this.revealed) {
+            if (this.lit.has(key)) continue; // currently visible, no decay
+
+            const lastLit = this.lastLitTime.get(key) ?? 0;
+            const elapsed = now - lastLit;
+
+            if (elapsed < start) continue; // grace period
+
+            const progress = Math.min((elapsed - start) / dur, 1.0);
+            // Fade from 0.52 (dim) to 1.0 (hidden)
+            const alpha = 0.52 + progress * 0.48;
+
+            const [c, r] = key.split(',').map(Number);
+            if (this.fogTiles[r]?.[c]) this.fogTiles[r][c].setAlpha(alpha);
+
+            if (progress >= 1.0) {
+                // Fully hidden again
+                this.revealed.delete(key);
+                this.lastLitTime.delete(key);
             }
         }
     }

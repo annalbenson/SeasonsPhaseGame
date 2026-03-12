@@ -41,6 +41,7 @@ export class Hazard {
     private fairyRow     = 0;
     private fairyHiding  = false;
     private retreatMoves = 5;  // first N wander moves go away from (0,0)
+    private stunned      = false;
 
     constructor(
         scene:      Phaser.Scene,
@@ -72,6 +73,8 @@ export class Hazard {
         this.fairyCol    = col;
         this.fairyRow    = row;
         this.fairyHiding = hiding;
+
+        if (this.stunned) return; // don't change behaviour while stunned
 
         const dist = Math.abs(col - this.gridX) + Math.abs(row - this.gridY);
         const next: typeof this.state =
@@ -109,6 +112,31 @@ export class Hazard {
         });
     }
 
+    /** Stun this hazard for `ms` milliseconds — it stops moving and turns grey. */
+    stun(ms: number) {
+        if (this.dead || this.stunned) return;
+        this.stunned = true;
+        this.timer?.remove();
+
+        // Visual: grey tint + spin
+        this.sprite.setAlpha(0.5);
+        const spin = this.scene.tweens.add({
+            targets: this.sprite.list[0],  // inner visual container
+            angle: { from: 0, to: 360 },
+            duration: 600,
+            repeat: -1,
+        });
+
+        this.scene.time.delayedCall(ms, () => {
+            if (this.dead) return;
+            this.stunned = false;
+            this.sprite.setAlpha(1.0);
+            spin.stop();
+            (this.sprite.list[0] as Phaser.GameObjects.Container).setAngle(0);
+            this.scheduleMove();
+        });
+    }
+
     destroy() {
         this.dead = true;
         this.timer?.remove();
@@ -123,7 +151,7 @@ export class Hazard {
     }
 
     private move() {
-        if (this.dead || this.moving) { this.scheduleMove(); return; }
+        if (this.dead || this.moving || this.stunned) { if (!this.stunned) this.scheduleMove(); return; }
 
         let dir;
         if (this.state === 'hunting') {

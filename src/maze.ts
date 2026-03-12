@@ -189,10 +189,20 @@ export function widenCorridors(
     cols:   number,
     rows:   number,
     chance: number = 0.13,
+    zoneMap?: Map<string, number>,
 ): Set<string> {
     // Returns "col,row" keys for every cell that gained an extra opening —
     // GameScene uses these to decide where to place bushes.
+    // If zoneMap is provided, only widen between cells in the same zone
+    // (prevents creating bypasses around gates).
     const widened = new Set<string>();
+
+    const sameZone = (c1: number, r1: number, c2: number, r2: number): boolean => {
+        if (!zoneMap) return true;
+        const z1 = zoneMap.get(`${c1},${r1}`);
+        const z2 = zoneMap.get(`${c2},${r2}`);
+        return z1 !== undefined && z1 === z2;
+    };
 
     // Horizontal 2-wide sections (remove vertical wall between two rows)
     for (let row = 0; row < rows - 1; row++) {
@@ -200,6 +210,7 @@ export function widenCorridors(
             if (
                 !(cells[row][col]     & WALLS.RIGHT) &&
                 !(cells[row + 1][col] & WALLS.RIGHT) &&
+                sameZone(col, row, col, row + 1) &&
                 Math.random() < chance
             ) {
                 cells[row][col]     &= ~WALLS.BOTTOM;
@@ -216,6 +227,7 @@ export function widenCorridors(
             if (
                 !(cells[row][col]     & WALLS.BOTTOM) &&
                 !(cells[row][col + 1] & WALLS.BOTTOM) &&
+                sameZone(col, row, col + 1, row) &&
                 Math.random() < chance
             ) {
                 cells[row][col]     &= ~WALLS.RIGHT;

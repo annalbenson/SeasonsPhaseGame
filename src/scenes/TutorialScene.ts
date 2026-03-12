@@ -39,12 +39,63 @@ interface Gate {
     open: boolean;
 }
 
+// ── Season color themes for skill tutorials ─────────────────────────────────
+interface SeasonThemeT {
+    floorLight: number; floorDark: number; wallColor: number;
+    goalColor: number; bgColor: number; accent: number; accentHex: string;
+    dimHex: string; textColor: string; bushColor: number; bushLight: number;
+    playerColor: number; playerGlow: number; enemyColor: number;
+    sceneryColor: number; sceneryLight: number;
+    skillName: string;
+}
+
+const SEASON_THEMES: Record<string, SeasonThemeT> = {
+    Winter: {
+        floorLight: 0xb0ccdf, floorDark: 0x7a9db8, wallColor: 0x0e1c28,
+        goalColor: 0x7ec8e8, bgColor: 0x080e18, accent: 0xc8e4f4, accentHex: '#c8e4f4',
+        dimHex: '#7a9db8', textColor: '#b0ccdf', bushColor: 0xccddee, bushLight: 0xeef4ff,
+        playerColor: 0xffffff, playerGlow: 0xc8e4f4, enemyColor: 0x6b4520,
+        sceneryColor: 0x556666, sceneryLight: 0x6a7a7a, skillName: 'HOP',
+    },
+    Spring: {
+        floorLight: 0xf5b8cc, floorDark: 0xe088a8, wallColor: 0x5a1828,
+        goalColor: 0xff80c0, bgColor: 0x1a0810, accent: 0xffccdd, accentHex: '#ffccdd',
+        dimHex: '#e088a8', textColor: '#f5b8cc', bushColor: 0x55aa22, bushLight: 0x77cc44,
+        playerColor: 0xffdd44, playerGlow: 0xffccdd, enemyColor: 0x44aa22,
+        sceneryColor: 0x778877, sceneryLight: 0x99aa99, skillName: 'STING',
+    },
+    Summer: {
+        floorLight: 0x7ab87a, floorDark: 0x4e8a4e, wallColor: 0x0a2a0a,
+        goalColor: 0xf5e040, bgColor: 0x041408, accent: 0xaaffaa, accentHex: '#aaffaa',
+        dimHex: '#4e8a4e', textColor: '#7ab87a', bushColor: 0x336622, bushLight: 0x448833,
+        playerColor: 0xffffaa, playerGlow: 0xaaffaa, enemyColor: 0xcc5500,
+        sceneryColor: 0x5a3a1a, sceneryLight: 0x6a4a2a, skillName: 'GLOW',
+    },
+    Fall: {
+        floorLight: 0xf09838, floorDark: 0xc06818, wallColor: 0x200a02,
+        goalColor: 0xffd020, bgColor: 0x120602, accent: 0xffcc88, accentHex: '#ffcc88',
+        dimHex: '#c06818', textColor: '#f09838', bushColor: 0xcc6622, bushLight: 0xdd8844,
+        playerColor: 0x8b5e3c, playerGlow: 0xffcc88, enemyColor: 0xdd5500,
+        sceneryColor: 0x5a3a1a, sceneryLight: 0x7a5a3a, skillName: 'DASH',
+    },
+};
+
 // ── Tutorial steps ───────────────────────────────────────────────────────────
-const STEPS = [
+interface StepConfig {
+    cols: number; rows: number; hint: string;
+    season?: string;  // if set, uses season theme + teaches that skill
+}
+
+const STEPS: StepConfig[] = [
     { cols: 4, rows: 4, hint: 'Use arrow keys or WASD to move.\nReach the yellow flower!' },
     { cols: 4, rows: 4, hint: 'Collect the key to open the gate.' },
     { cols: 5, rows: 5, hint: 'Hide in bushes when the creature is near!\nReach the flower to continue.' },
     { cols: 5, rows: 5, hint: 'Collect all treasures before\nthe exit unlocks.' },
+    { cols: 5, rows: 5, hint: 'Fog hides the maze! Explore to reveal tiles.\nFog returns over time — move quickly!' },
+    { cols: 5, rows: 5, hint: 'Bunny can HOP over obstacles!\nPress SPACE then an arrow key.', season: 'Winter' },
+    { cols: 5, rows: 5, hint: 'Bee can STING the nearest enemy!\nPress SPACE to stun it.', season: 'Spring' },
+    { cols: 5, rows: 5, hint: 'Fairy can GLOW to reveal the map!\nPress SPACE to light up the fog.', season: 'Summer' },
+    { cols: 6, rows: 5, hint: 'Squirrel can DASH 3 cells!\nPress SPACE then an arrow key.', season: 'Fall' },
 ];
 
 export default class TutorialScene extends Phaser.Scene {
@@ -94,6 +145,25 @@ export default class TutorialScene extends Phaser.Scene {
     private goalRow = 0;
     private completed = false;
 
+    // Skill tutorial state
+    private skillUsed = false;
+    private skillArmed = false;
+    private sceneryBlocked = new Set<string>();
+    private spaceKey!: Phaser.Input.Keyboard.Key;
+    private skillHintText: Phaser.GameObjects.Text | null = null;
+
+    // Stun state for enemy
+    private enemyStunned = false;
+
+    // Fog of war (step 5 + Summer skill)
+    private fogEnabled = false;
+    private fogTiles: Phaser.GameObjects.Rectangle[][] = [];
+    private fogRevealed = new Set<string>();
+    private fogLit      = new Set<string>();
+    private fogLastLit  = new Map<string, number>();
+    private static FOG_DECAY_START = 15000;    // shorter for tutorial
+    private static FOG_DECAY_DURATION = 10000;
+
     constructor() { super('TutorialScene'); }
 
     create() {
@@ -106,6 +176,8 @@ export default class TutorialScene extends Phaser.Scene {
             left:  this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
             right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
         };
+
+        this.spaceKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
         // Title
         this.add.text(W / 2, 30, 'H O W   T O   P L A Y', {
@@ -136,6 +208,12 @@ export default class TutorialScene extends Phaser.Scene {
         this.cameras.main.fadeIn(600, 0, 0, 0);
     }
 
+    /** Active theme — switches to season theme for skill tutorial steps. */
+    private activeTheme(): SeasonThemeT | null {
+        const cfg = STEPS[this.step];
+        return cfg?.season ? SEASON_THEMES[cfg.season] : null;
+    }
+
     // ── Step builder ─────────────────────────────────────────────────────────
     private buildStep() {
         this.clearStep();
@@ -148,12 +226,18 @@ export default class TutorialScene extends Phaser.Scene {
         this.tutCols = cfg.cols;
         this.tutRows = cfg.rows;
 
+        // Apply season bg if this is a skill tutorial
+        const st = this.activeTheme();
+        this.cameras.main.setBackgroundColor(st ? st.bgColor : T.bgColor);
+
         // Center the small grid
         this.offsetX = Math.floor((W - cfg.cols * TILE) / 2);
         this.offsetY = Math.floor(90 + (H - 90 - 80 - cfg.rows * TILE) / 2);
 
         this.stepLabel.setText(`Step ${this.step + 1} of ${STEPS.length}`);
+        this.stepLabel.setColor(st ? st.dimHex : T.dimHex);
         this.hintText.setText(cfg.hint);
+        this.hintText.setColor(st ? st.textColor : T.textColor);
 
         // Generate maze
         this.cells = ALGORITHMS.dfs.generate(cfg.cols, cfg.rows);
@@ -172,6 +256,17 @@ export default class TutorialScene extends Phaser.Scene {
             case 1: this.buildStep2(); break;
             case 2: this.buildStep3(); break;
             case 3: this.buildStep4(); break;
+            case 4: this.buildStep5(); break;
+        }
+
+        // Skill tutorials (seasonal steps)
+        if (cfg.season) {
+            switch (cfg.season) {
+                case 'Winter': this.buildWinterSkill(); break;
+                case 'Spring': this.buildSpringSkill(); break;
+                case 'Summer': this.buildSummerSkill(); break;
+                case 'Fall':   this.buildFallSkill();   break;
+            }
         }
 
         this.spawnPlayer();
@@ -194,10 +289,25 @@ export default class TutorialScene extends Phaser.Scene {
         if (this.enemyTimer) { this.enemyTimer.remove(); this.enemyTimer = null; }
         if (this.enemySprite) { this.enemySprite.destroy(); this.enemySprite = null; }
         this.enemyState = 'wander';
+
+        // Fog
+        this.fogEnabled = false;
+        this.fogTiles = [];
+        this.fogRevealed.clear();
+        this.fogLit.clear();
+        this.fogLastLit.clear();
+
+        // Skill
+        this.skillUsed = false;
+        this.skillArmed = false;
+        this.sceneryBlocked.clear();
+        this.skillHintText = null;
+        this.enemyStunned = false;
     }
 
     // ── Maze rendering ───────────────────────────────────────────────────────
     private drawMaze() {
+        const st = this.activeTheme();
         const ox = this.offsetX, oy = this.offsetY;
         const cols = this.tutCols, rows = this.tutRows;
 
@@ -206,14 +316,14 @@ export default class TutorialScene extends Phaser.Scene {
                 const light = (row + col) % 2 === 0;
                 const r = this.add.rectangle(
                     ox + col * TILE + TILE / 2, oy + row * TILE + TILE / 2,
-                    TILE, TILE, light ? T.floorLight : T.floorDark
+                    TILE, TILE, light ? (st?.floorLight ?? T.floorLight) : (st?.floorDark ?? T.floorDark)
                 );
                 this.stepGroup.add(r);
             }
         }
 
         const g = this.add.graphics();
-        g.lineStyle(4, T.wallColor, 1);
+        g.lineStyle(4, st?.wallColor ?? T.wallColor, 1);
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 const x = ox + col * TILE, y = oy + row * TILE;
@@ -228,16 +338,18 @@ export default class TutorialScene extends Phaser.Scene {
     }
 
     private drawGoal() {
+        const st = this.activeTheme();
+        const goalColor = st?.goalColor ?? T.goalColor;
         const cx = this.offsetX + this.goalCol * TILE + TILE / 2;
         const cy = this.offsetY + this.goalRow * TILE + TILE / 2;
-        const bg = this.add.rectangle(cx, cy, TILE, TILE, T.goalColor, 0.35);
+        const bg = this.add.rectangle(cx, cy, TILE, TILE, goalColor, 0.35);
         this.stepGroup.add(bg);
 
         // Simple flower
         const petals = 5;
         for (let i = 0; i < petals; i++) {
             const a = (i / petals) * Math.PI * 2;
-            const p = this.add.ellipse(cx + Math.cos(a) * 10, cy + Math.sin(a) * 10, 10, 14, T.goalColor, 0.8)
+            const p = this.add.ellipse(cx + Math.cos(a) * 10, cy + Math.sin(a) * 10, 10, 14, goalColor, 0.8)
                 .setAngle((a * 180 / Math.PI) + 90);
             this.stepGroup.add(p);
         }
@@ -247,10 +359,11 @@ export default class TutorialScene extends Phaser.Scene {
     }
 
     private spawnPlayer() {
+        const st = this.activeTheme();
         const px = this.offsetX + this.gridX * TILE + TILE / 2;
         const py = this.offsetY + this.gridY * TILE + TILE / 2;
-        const glow = this.add.circle(0, 0, 20, T.playerGlow, 0.25);
-        const body = this.add.circle(0, 0, 12, T.playerColor, 0.95);
+        const glow = this.add.circle(0, 0, 20, st?.playerGlow ?? T.playerGlow, 0.25);
+        const body = this.add.circle(0, 0, 12, st?.playerColor ?? T.playerColor, 0.95);
         const inner = this.add.circle(0, -2, 5, 0xffffff, 0.7);
         this.player = this.add.container(px, py, [glow, body, inner]).setDepth(5);
         this.stepGroup.add(this.player);
@@ -301,14 +414,14 @@ export default class TutorialScene extends Phaser.Scene {
             this.drawBush(col, row);
         }
 
-        // Spawn enemy far from player
-        const startCol = this.tutCols - 1;
-        const startRow = this.tutRows - 1 > 1 ? 1 : 0;
-        this.enemyCol = startCol;
-        this.enemyRow = startRow;
+        // Spawn enemy on the solution path, roughly halfway
+        const midIdx = Math.floor(path.length * 0.5);
+        const enemyCell = path[midIdx];
+        this.enemyCol = enemyCell.col;
+        this.enemyRow = enemyCell.row;
 
-        const ex = this.offsetX + startCol * TILE + TILE / 2;
-        const ey = this.offsetY + startRow * TILE + TILE / 2;
+        const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
+        const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
         const danger = this.add.circle(0, 0, 18, T.enemyColor, 0.15);
         const ebody = this.add.circle(0, 0, 10, T.enemyColor, 0.9);
         const eye1 = this.add.circle(-4, -3, 2.5, 0xffffff, 0.9);
@@ -321,11 +434,12 @@ export default class TutorialScene extends Phaser.Scene {
     }
 
     private drawBush(col: number, row: number) {
+        const st = this.activeTheme();
         const cx = this.offsetX + col * TILE + TILE / 2;
         const cy = this.offsetY + row * TILE + TILE / 2;
-        const b1 = this.add.circle(cx - 9, cy + 5, 11, T.bushColor, 0.85);
-        const b2 = this.add.circle(cx + 9, cy + 5, 11, T.bushColor, 0.85);
-        const b3 = this.add.circle(cx, cy - 3, 13, T.bushLight, 0.9);
+        const b1 = this.add.circle(cx - 9, cy + 5, 11, st?.bushColor ?? T.bushColor, 0.85);
+        const b2 = this.add.circle(cx + 9, cy + 5, 11, st?.bushColor ?? T.bushColor, 0.85);
+        const b3 = this.add.circle(cx, cy - 3, 13, st?.bushLight ?? T.bushLight, 0.9);
         this.stepGroup.add(b1);
         this.stepGroup.add(b2);
         this.stepGroup.add(b3);
@@ -339,8 +453,8 @@ export default class TutorialScene extends Phaser.Scene {
     }
 
     private moveEnemy() {
-        if (!this.enemySprite || this.enemyMoving || this.completed) {
-            this.scheduleEnemyMove();
+        if (!this.enemySprite || this.enemyMoving || this.completed || this.enemyStunned) {
+            if (!this.enemyStunned) this.scheduleEnemyMove();
             return;
         }
 
@@ -453,6 +567,259 @@ export default class TutorialScene extends Phaser.Scene {
         }
     }
 
+    // ── Step 5: Fog of War ──────────────────────────────────────────────────
+    private buildStep5() {
+        this.fogEnabled = true;
+        this.fogTiles = [];
+
+        // Place 2 objectives (same as step 4) so there's a reason to explore
+        this.goalLocked = true;
+        this.objTotal = 2;
+        const gcx = this.offsetX + this.goalCol * TILE + TILE / 2;
+        const gcy = this.offsetY + this.goalRow * TILE + TILE / 2;
+        this.goalLockOverlay = this.add.circle(gcx, gcy, TILE / 2 - 2, 0x000000, 0.45).setDepth(2);
+        this.stepGroup.add(this.goalLockOverlay);
+
+        const path = this.solvePath();
+        const candidates = path.filter(c =>
+            !(c.col === 0 && c.row === 0) &&
+            !(c.col === this.goalCol && c.row === this.goalRow)
+        );
+        const i1 = Math.floor(candidates.length * 0.3);
+        const i2 = Math.floor(candidates.length * 0.7);
+        for (const idx of [i1, i2]) {
+            const { col, row } = candidates[idx];
+            const cx = this.offsetX + col * TILE + TILE / 2;
+            const cy = this.offsetY + row * TILE + TILE / 2;
+            const glow = this.add.circle(0, 0, 14, T.goalColor, 0.2);
+            const gem = this.add.circle(0, 0, 8, T.goalColor, 0.9);
+            const sparkle = this.add.circle(0, -3, 3, 0xffffff, 0.7);
+            const c = this.add.container(cx, cy, [glow, gem, sparkle]).setDepth(1.5);
+            this.tweens.add({ targets: glow, alpha: { from: 0.1, to: 0.35 }, yoyo: true, repeat: -1, duration: 1000, ease: 'Sine.easeInOut' });
+            this.tweens.add({ targets: c, y: cy + 3, yoyo: true, repeat: -1, duration: 1300, ease: 'Sine.easeInOut' });
+            this.stepGroup.add(c);
+            this.objectives.set(`${col},${row}`, c);
+        }
+
+        // Create fog overlay — one opaque rectangle per cell
+        for (let row = 0; row < this.tutRows; row++) {
+            this.fogTiles[row] = [];
+            for (let col = 0; col < this.tutCols; col++) {
+                const fx = this.offsetX + col * TILE + TILE / 2;
+                const fy = this.offsetY + row * TILE + TILE / 2;
+                const fog = this.add.rectangle(fx, fy, TILE, TILE, T.bgColor, 1.0).setDepth(8);
+                this.stepGroup.add(fog);
+                this.fogTiles[row][col] = fog;
+            }
+        }
+
+        // Reveal around starting position
+        this.revealTutorialFog(0, 0);
+    }
+
+    private revealTutorialFog(centerCol: number, centerRow: number) {
+        const now = this.time.now;
+        const prevLit = new Set(this.fogLit);
+        this.fogLit.clear();
+
+        // Reveal in a 1-cell radius (the cell itself + orthogonal neighbours)
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                if (Math.abs(dr) + Math.abs(dc) > 1) continue; // skip diagonals
+                const c = centerCol + dc, r = centerRow + dr;
+                if (c < 0 || c >= this.tutCols || r < 0 || r >= this.tutRows) continue;
+                const key = `${c},${r}`;
+                this.fogLit.add(key);
+                this.fogRevealed.add(key);
+                this.fogLastLit.set(key, now);
+                // Immediately make fully visible
+                this.fogTiles[r][c].setAlpha(0);
+            }
+        }
+
+        // Cells that just left the lit radius → dim them
+        for (const key of prevLit) {
+            if (!this.fogLit.has(key)) {
+                const [c, r] = key.split(',').map(Number);
+                this.fogTiles[r][c].setAlpha(0.52);
+            }
+        }
+    }
+
+    private updateTutorialFogDecay() {
+        const now = this.time.now;
+        for (const key of this.fogRevealed) {
+            if (this.fogLit.has(key)) continue; // currently visible
+            const lastLit = this.fogLastLit.get(key);
+            if (lastLit === undefined) continue;
+            const elapsed = now - lastLit;
+            if (elapsed < TutorialScene.FOG_DECAY_START) continue; // grace period
+            const decay = elapsed - TutorialScene.FOG_DECAY_START;
+            const t = Math.min(decay / TutorialScene.FOG_DECAY_DURATION, 1);
+            const [c, r] = key.split(',').map(Number);
+            // Fade from dim (0.52) back to fully hidden (1.0)
+            const alpha = 0.52 + t * 0.48;
+            this.fogTiles[r][c].setAlpha(alpha);
+            if (t >= 1) {
+                this.fogRevealed.delete(key);
+                this.fogLastLit.delete(key);
+            }
+        }
+    }
+
+    // ── Scenery obstacle drawing ─────────────────────────────────────────────
+    private drawSceneryBlock(col: number, row: number) {
+        const st = this.activeTheme();
+        const cx = this.offsetX + col * TILE + TILE / 2;
+        const cy = this.offsetY + row * TILE + TILE / 2;
+        const c1 = st?.sceneryColor ?? 0x556666;
+        const c2 = st?.sceneryLight ?? 0x6a7a7a;
+        const r1 = this.add.ellipse(cx, cy + 4, 44, 32, c1, 0.85);
+        const r2 = this.add.ellipse(cx - 2, cy - 2, 36, 26, c2, 0.8);
+        this.stepGroup.add(r1);
+        this.stepGroup.add(r2);
+        this.sceneryBlocked.add(`${col},${row}`);
+    }
+
+    // ── Skill hint text (below the maze, above the main hint) ─────────────
+    private showSkillHint(text: string) {
+        const st = this.activeTheme()!;
+        if (this.skillHintText) this.skillHintText.destroy();
+        this.skillHintText = this.add.text(W / 2, this.offsetY - 18, text, {
+            fontSize: '16px', fontStyle: 'bold', color: st.accentHex, align: 'center',
+        }).setOrigin(0.5).setDepth(10);
+        this.stepGroup.add(this.skillHintText);
+    }
+
+    private updateSkillHint() {
+        if (!this.skillHintText) return;
+        const cfg = STEPS[this.step];
+        if (!cfg?.season) return;
+        const st = SEASON_THEMES[cfg.season];
+        if (this.skillUsed) {
+            this.skillHintText.setText(`${st.skillName} used!`);
+            this.skillHintText.setAlpha(0.4);
+        } else if (this.skillArmed) {
+            this.skillHintText.setText(`${st.skillName} ready — press an arrow!`);
+        } else {
+            this.skillHintText.setText(`Press SPACE to use ${st.skillName}`);
+        }
+    }
+
+    // ── Step 6: Winter — Bunny HOP ─────────────────────────────────────────
+    private buildWinterSkill() {
+        // Place a scenery obstacle on the solution path so the player must hop over it
+        const path = this.solvePath();
+        if (path.length < 4) return;
+
+        // Find a mid-path cell with a valid landing beyond the obstacle
+        const midIdx = Math.floor(path.length * 0.5);
+        const blockCell = path[midIdx];
+        this.drawSceneryBlock(blockCell.col, blockCell.row);
+
+        this.showSkillHint('Press SPACE to use HOP');
+    }
+
+    // ── Step 7: Spring — Bee STING ─────────────────────────────────────────
+    private buildSpringSkill() {
+        const st = SEASON_THEMES.Spring;
+
+        // Place bushes along solution path for hiding
+        const path = this.solvePath();
+        for (let i = 2; i < path.length - 1; i += 2) {
+            const { col, row } = path[i];
+            if (col === this.goalCol && row === this.goalRow) continue;
+            this.bushCells.add(`${col},${row}`);
+            this.drawBush(col, row);
+        }
+
+        // Spawn enemy near middle of path
+        const midIdx = Math.floor(path.length * 0.5);
+        const enemyCell = path[midIdx];
+        this.enemyCol = enemyCell.col;
+        this.enemyRow = enemyCell.row;
+
+        const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
+        const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
+        const danger = this.add.circle(0, 0, 18, st.enemyColor, 0.15);
+        const ebody = this.add.circle(0, 0, 10, st.enemyColor, 0.9);
+        const eye1 = this.add.circle(-4, -3, 2.5, 0xffffff, 0.9);
+        const eye2 = this.add.circle(4, -3, 2.5, 0xffffff, 0.9);
+        this.enemySprite = this.add.container(ex, ey, [danger, ebody, eye1, eye2]).setDepth(4);
+        this.stepGroup.add(this.enemySprite);
+        this.tweens.add({ targets: danger, alpha: { from: 0.1, to: 0.3 }, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
+        this.scheduleEnemyMove();
+
+        this.showSkillHint('Press SPACE to use STING');
+    }
+
+    // ── Step 8: Summer — Fairy GLOW ────────────────────────────────────────
+    private buildSummerSkill() {
+        this.fogEnabled = true;
+        this.fogTiles = [];
+
+        // Place 2 objectives so there's reason to use glow
+        this.goalLocked = true;
+        this.objTotal = 2;
+        const gcx = this.offsetX + this.goalCol * TILE + TILE / 2;
+        const gcy = this.offsetY + this.goalRow * TILE + TILE / 2;
+        this.goalLockOverlay = this.add.circle(gcx, gcy, TILE / 2 - 2, 0x000000, 0.45).setDepth(2);
+        this.stepGroup.add(this.goalLockOverlay);
+
+        const path = this.solvePath();
+        const candidates = path.filter(c =>
+            !(c.col === 0 && c.row === 0) &&
+            !(c.col === this.goalCol && c.row === this.goalRow)
+        );
+        const i1 = Math.floor(candidates.length * 0.3);
+        const i2 = Math.floor(candidates.length * 0.7);
+        const st = SEASON_THEMES.Summer;
+        for (const idx of [i1, i2]) {
+            const { col, row } = candidates[idx];
+            const cx = this.offsetX + col * TILE + TILE / 2;
+            const cy = this.offsetY + row * TILE + TILE / 2;
+            const glow = this.add.circle(0, 0, 14, st.goalColor, 0.2);
+            const gem = this.add.circle(0, 0, 8, st.goalColor, 0.9);
+            const sparkle = this.add.circle(0, -3, 3, 0xffffff, 0.7);
+            const c = this.add.container(cx, cy, [glow, gem, sparkle]).setDepth(1.5);
+            this.tweens.add({ targets: glow, alpha: { from: 0.1, to: 0.35 }, yoyo: true, repeat: -1, duration: 1000, ease: 'Sine.easeInOut' });
+            this.tweens.add({ targets: c, y: cy + 3, yoyo: true, repeat: -1, duration: 1300, ease: 'Sine.easeInOut' });
+            this.stepGroup.add(c);
+            this.objectives.set(`${col},${row}`, c);
+        }
+
+        // Create fog overlay
+        const bgColor = st.bgColor;
+        for (let row = 0; row < this.tutRows; row++) {
+            this.fogTiles[row] = [];
+            for (let col = 0; col < this.tutCols; col++) {
+                const fx = this.offsetX + col * TILE + TILE / 2;
+                const fy = this.offsetY + row * TILE + TILE / 2;
+                const fog = this.add.rectangle(fx, fy, TILE, TILE, bgColor, 1.0).setDepth(8);
+                this.stepGroup.add(fog);
+                this.fogTiles[row][col] = fog;
+            }
+        }
+        this.revealTutorialFog(0, 0);
+
+        this.showSkillHint('Press SPACE to use GLOW');
+    }
+
+    // ── Step 9: Fall — Squirrel DASH ───────────────────────────────────────
+    private buildFallSkill() {
+        // Just a maze to reach the goal — DASH helps cover ground faster
+        // Place a bush along the way so player can see it
+        const path = this.solvePath();
+        for (let i = 3; i < path.length - 1; i += 3) {
+            const { col, row } = path[i];
+            if (col === this.goalCol && row === this.goalRow) continue;
+            this.bushCells.add(`${col},${row}`);
+            this.drawBush(col, row);
+        }
+
+        this.showSkillHint('Press SPACE to use DASH');
+    }
+
     // ── Path solving (BFS) ───────────────────────────────────────────────────
     private solvePath(): { col: number; row: number }[] {
         const cols = this.tutCols, rows = this.tutRows;
@@ -485,8 +852,12 @@ export default class TutorialScene extends Phaser.Scene {
     update() {
         if (this.completed) return;
 
-        // Hiding check
-        if (this.step === 2) {
+        // Fog decay
+        if (this.fogEnabled) this.updateTutorialFogDecay();
+
+        // Hiding check (step 3 enemy or Spring skill)
+        const cfg = STEPS[this.step];
+        if (this.step === 2 || cfg?.season === 'Spring') {
             const nowHiding = this.bushCells.has(`${this.gridX},${this.gridY}`);
             if (nowHiding !== this.isHiding) {
                 this.isHiding = nowHiding;
@@ -497,6 +868,13 @@ export default class TutorialScene extends Phaser.Scene {
         if (this.moving) return;
 
         const K = Phaser.Input.Keyboard;
+
+        // SPACE activates skill in seasonal tutorial steps
+        if (cfg?.season && K.JustDown(this.spaceKey)) {
+            this.activateTutorialSkill();
+            return;
+        }
+
         let dx = 0, dy = 0;
         if      (K.JustDown(this.cursors.left)  || K.JustDown(this.wasd.left))  dx = -1;
         else if (K.JustDown(this.cursors.right) || K.JustDown(this.wasd.right)) dx =  1;
@@ -504,6 +882,16 @@ export default class TutorialScene extends Phaser.Scene {
         else if (K.JustDown(this.cursors.down)  || K.JustDown(this.wasd.down))  dy =  1;
 
         if (dx === 0 && dy === 0) return;
+
+        // Handle armed directional skills
+        if (this.skillArmed && cfg?.season) {
+            if (cfg.season === 'Winter' && this.tryTutorialHop(dx, dy)) return;
+            if (cfg.season === 'Fall'   && this.tryTutorialDash(dx, dy)) return;
+            // If couldn't fire, disarm and do normal move
+            this.skillArmed = false;
+            this.updateSkillHint();
+        }
+
         this.slideDir = { dx, dy };
         this.tryStep(dx, dy);
     }
@@ -517,6 +905,9 @@ export default class TutorialScene extends Phaser.Scene {
 
         const newX = this.gridX + dx;
         const newY = this.gridY + dy;
+
+        // Scenery blocks movement
+        if (this.sceneryBlocked.has(`${newX},${newY}`)) { this.slideDir = null; return; }
 
         // Gate check
         const gate = this.findGate(this.gridX, this.gridY, newX, newY);
@@ -539,6 +930,7 @@ export default class TutorialScene extends Phaser.Scene {
             ease: 'Power2',
             onComplete: () => {
                 this.moving = false;
+                if (this.fogEnabled) this.revealTutorialFog(this.gridX, this.gridY);
                 this.collectKey();
                 this.checkObjective();
                 this.checkGoal();
@@ -557,6 +949,167 @@ export default class TutorialScene extends Phaser.Scene {
             (dy ===  1 && (this.cursors.down.isDown  || this.wasd.down.isDown));
         if (!stillHeld) { this.slideDir = null; return; }
         this.tryStep(dx, dy);
+    }
+
+    // ── Tutorial skill activation ─────────────────────────────────────────────
+    private activateTutorialSkill() {
+        if (this.skillUsed || this.skillArmed) return;
+        const cfg = STEPS[this.step];
+        if (!cfg?.season) return;
+
+        if (cfg.season === 'Spring') {
+            // Sting: stun the enemy
+            this.skillUsed = true;
+            if (this.enemySprite && !this.enemyStunned) {
+                this.enemyStunned = true;
+                if (this.enemyTimer) { this.enemyTimer.remove(); this.enemyTimer = null; }
+                this.enemySprite.setAlpha(0.4);
+                const inner = this.enemySprite.list[0] as Phaser.GameObjects.Arc;
+                const spin = this.tweens.add({ targets: inner, angle: { from: 0, to: 360 }, duration: 600, repeat: -1 });
+                this.time.delayedCall(5000, () => {
+                    if (!this.enemySprite) return;
+                    this.enemyStunned = false;
+                    this.enemySprite.setAlpha(1.0);
+                    spin.stop();
+                    inner.setAngle(0);
+                    this.scheduleEnemyMove();
+                });
+            }
+            this.tweens.add({ targets: this.player, scaleX: 1.3, scaleY: 1.3, yoyo: true, duration: 200 });
+            this.updateSkillHint();
+        } else if (cfg.season === 'Summer') {
+            // Glow: reveal large fog area
+            this.skillUsed = true;
+            const now = this.time.now;
+            for (let dr = -3; dr <= 3; dr++) {
+                for (let dc = -3; dc <= 3; dc++) {
+                    const nc = this.gridX + dc, nr = this.gridY + dr;
+                    if (nc < 0 || nc >= this.tutCols || nr < 0 || nr >= this.tutRows) continue;
+                    const key = `${nc},${nr}`;
+                    this.fogRevealed.add(key);
+                    this.fogLit.add(key);
+                    this.fogLastLit.set(key, now);
+                    if (this.fogTiles[nr]?.[nc]) this.fogTiles[nr][nc].setAlpha(0);
+                }
+            }
+            // Flash effect
+            const flash = this.add.circle(
+                this.player.x, this.player.y, TILE * 3,
+                SEASON_THEMES.Summer.accent, 0.4,
+            ).setDepth(9);
+            this.tweens.add({ targets: flash, alpha: 0, scale: 1.5, duration: 600, onComplete: () => flash.destroy() });
+            this.updateSkillHint();
+        } else {
+            // Winter (Hop) and Fall (Dash) — arm directional mode
+            this.skillArmed = true;
+            this.updateSkillHint();
+        }
+    }
+
+    private tryTutorialHop(dx: number, dy: number): boolean {
+        const adjX = this.gridX + dx, adjY = this.gridY + dy;
+        const walls = this.cells[this.gridY][this.gridX];
+        if (dx ===  1 && (walls & WALLS.RIGHT))  return false;
+        if (dx === -1 && (walls & WALLS.LEFT))   return false;
+        if (dy ===  1 && (walls & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (walls & WALLS.TOP))    return false;
+        if (!this.sceneryBlocked.has(`${adjX},${adjY}`)) return false;
+
+        const landX = this.gridX + dx * 2, landY = this.gridY + dy * 2;
+        if (landX < 0 || landX >= this.tutCols || landY < 0 || landY >= this.tutRows) return false;
+        const adjWalls = this.cells[adjY][adjX];
+        if (dx ===  1 && (adjWalls & WALLS.RIGHT))  return false;
+        if (dx === -1 && (adjWalls & WALLS.LEFT))   return false;
+        if (dy ===  1 && (adjWalls & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (adjWalls & WALLS.TOP))    return false;
+        if (this.sceneryBlocked.has(`${landX},${landY}`)) return false;
+
+        this.skillUsed = true;
+        this.skillArmed = false;
+        this.gridX = landX;
+        this.gridY = landY;
+        this.moving = true;
+        this.slideDir = null;
+
+        this.tweens.add({
+            targets: this.player,
+            x: this.offsetX + landX * TILE + TILE / 2,
+            y: this.offsetY + landY * TILE + TILE / 2,
+            duration: 300,
+            ease: 'Sine.easeInOut',
+            onComplete: () => {
+                this.moving = false;
+                if (this.fogEnabled) this.revealTutorialFog(this.gridX, this.gridY);
+                this.collectKey();
+                this.checkObjective();
+                this.checkGoal();
+            },
+        });
+        this.tweens.add({ targets: this.player, scaleY: 1.3, yoyo: true, duration: 150 });
+        this.updateSkillHint();
+        return true;
+    }
+
+    private tryTutorialDash(dx: number, dy: number): boolean {
+        const walls0 = this.cells[this.gridY][this.gridX];
+        if (dx ===  1 && (walls0 & WALLS.RIGHT))  return false;
+        if (dx === -1 && (walls0 & WALLS.LEFT))   return false;
+        if (dy ===  1 && (walls0 & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (walls0 & WALLS.TOP))    return false;
+        const nx = this.gridX + dx, ny = this.gridY + dy;
+        if (this.sceneryBlocked.has(`${nx},${ny}`)) return false;
+
+        this.skillUsed = true;
+        this.skillArmed = false;
+        this.moving = true;
+        this.slideDir = null;
+
+        const steps: { x: number; y: number }[] = [];
+        let cx = this.gridX, cy = this.gridY;
+        for (let s = 0; s < 3; s++) {
+            const w = this.cells[cy][cx];
+            if (dx ===  1 && (w & WALLS.RIGHT))  break;
+            if (dx === -1 && (w & WALLS.LEFT))   break;
+            if (dy ===  1 && (w & WALLS.BOTTOM)) break;
+            if (dy === -1 && (w & WALLS.TOP))    break;
+            const nsx = cx + dx, nsy = cy + dy;
+            if (nsx < 0 || nsx >= this.tutCols || nsy < 0 || nsy >= this.tutRows) break;
+            if (this.sceneryBlocked.has(`${nsx},${nsy}`)) break;
+            cx = nsx; cy = nsy;
+            steps.push({ x: cx, y: cy });
+        }
+
+        if (steps.length === 0) {
+            this.skillUsed = false;
+            this.skillArmed = true;
+            this.moving = false;
+            return false;
+        }
+
+        this.gridX = steps[steps.length - 1].x;
+        this.gridY = steps[steps.length - 1].y;
+
+        this.tweens.add({
+            targets: this.player,
+            x: this.offsetX + this.gridX * TILE + TILE / 2,
+            y: this.offsetY + this.gridY * TILE + TILE / 2,
+            duration: 100 * steps.length,
+            ease: 'Power3',
+            onComplete: () => {
+                this.moving = false;
+                if (this.fogEnabled) this.revealTutorialFog(this.gridX, this.gridY);
+                this.collectKey();
+                this.checkObjective();
+                this.checkGoal();
+            },
+        });
+        if (dx !== 0) {
+            this.tweens.add({ targets: this.player, scaleX: 1.4, scaleY: 0.7, yoyo: true, duration: 100 });
+        } else {
+            this.tweens.add({ targets: this.player, scaleX: 0.7, scaleY: 1.4, yoyo: true, duration: 100 });
+        }
+        this.updateSkillHint();
+        return true;
     }
 
     private findGate(fromCol: number, fromRow: number, toCol: number, toRow: number): Gate | null {
@@ -599,13 +1152,15 @@ export default class TutorialScene extends Phaser.Scene {
         this.completed = true;
         this.hintText.setColor('#66ff88');
 
-        const checkmark = this.step < STEPS.length - 1 ? '✓' : '✓  Tutorial complete!';
+        const isLast = this.step >= STEPS.length - 1;
+        const checkmark = isLast ? '✓  Tutorial complete!' : '✓';
         this.hintText.setText(checkmark);
 
         this.time.delayedCall(1200, () => {
             this.step++;
             this.completed = false;
-            this.hintText.setColor(T.textColor);
+            const st = this.activeTheme();
+            this.hintText.setColor(st ? st.textColor : T.textColor);
             this.buildStep();
         });
     }
@@ -613,6 +1168,9 @@ export default class TutorialScene extends Phaser.Scene {
     private showComplete() {
         this.hintText.setText('');
         this.stepLabel.setText('');
+
+        // Reset to generic tutorial theme for completion screen
+        this.cameras.main.setBackgroundColor(T.bgColor);
 
         const done = this.add.text(W / 2, H / 2 - 20, 'You\'re ready!', {
             fontSize: '36px', fontStyle: 'bold', color: T.accentHex,
