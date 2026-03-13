@@ -1,11 +1,6 @@
-import { WALLS } from './maze';
+import { WALLS, MOVE_DIRS } from './maze';
 
-export const MOVE_DIRS = [
-    { dc:  0, dr: -1, wall: WALLS.TOP    },
-    { dc:  1, dr:  0, wall: WALLS.RIGHT  },
-    { dc:  0, dr:  1, wall: WALLS.BOTTOM },
-    { dc: -1, dr:  0, wall: WALLS.LEFT   },
-] as const;
+export { MOVE_DIRS };
 
 export type Cell = { col: number; row: number };
 

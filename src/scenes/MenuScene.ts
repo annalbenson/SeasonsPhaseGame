@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS } from '../constants';
+import { TILE, MAX_COLS, MAX_ROWS } from '../constants';
 import { ALGORITHMS, AlgorithmKey } from '../maze';
 
 export default class MenuScene extends Phaser.Scene {
@@ -22,8 +22,8 @@ export default class MenuScene extends Phaser.Scene {
         if (!this.scene.isActive('UIScene')) {
             this.scene.launch('UIScene');
         }
-        const W = COLS * TILE;
-        const H = ROWS * TILE;
+        const W = MAX_COLS * TILE;
+        const H = MAX_ROWS * TILE;
 
         // Background
         this.add.rectangle(W / 2, H / 2, W, H, 0x1a1a2e);

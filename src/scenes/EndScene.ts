@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS, HEADER, PANEL } from '../constants';
+import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 
-const W = COLS * TILE + PANEL;
-const H = ROWS * TILE + HEADER;
+const W = MAX_COLS * TILE + PANEL;
+const H = MAX_ROWS * TILE + HEADER;
 
 export default class EndScene extends Phaser.Scene {
     constructor() { super('EndScene'); }

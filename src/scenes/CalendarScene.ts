@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS } from '../constants';
+import { TILE, MAX_COLS, MAX_ROWS } from '../constants';
 import { MONTHS, MonthConfig } from '../seasons';
 
-const W = COLS * TILE;   // 640
-const H = ROWS * TILE;   // 640
+const W = MAX_COLS * TILE;
+const H = MAX_ROWS * TILE;
 
 // Grid layout constants
 const COLS_GRID = 4;
@@ -80,9 +80,7 @@ export default class CalendarScene extends Phaser.Scene {
         // Month name — centred, bold
         this.add.text(cx, cy - 16, month.name, {
             fontSize: '14px', fontStyle: 'bold',
-            color: Phaser.Display.Color.IntegerToRGB(season.textColor)
-                ? `#${season.textColor.toString(16).padStart(6, '0')}`
-                : '#111111',
+            color: season.textHex,
         }).setOrigin(0.5);
 
         // Season name — small, in the dark band

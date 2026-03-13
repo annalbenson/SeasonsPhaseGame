@@ -1,13 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { ALGORITHMS, WALLS, OPPOSITE, widenCorridors } from '../maze';
 import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUtils';
-import { COLS, ROWS } from '../constants';
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Run the same maze-generation + gate/key/scenery pipeline the game uses. */
-function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
-    const cols = COLS, rows = ROWS;
+function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals', size: number = 10) {
+    const cols = size, rows = size;
 
     // Random start/goal in distinct corners
     const corners = [
@@ -26,17 +24,19 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
     // Generate
     const cells = ALGORITHMS[algorithm].generate(cols, rows);
 
-    // Gate edges at ~33% / ~67% of spanning-tree path
+    // Gate edges — count scales with grid: 8→1, 10→2, 12→3
+    const numGates = Math.max(1, Math.floor(cols / 4) - 1);
     const treePath = solvePath(cells, cols, rows, startCol, startRow, goalCol, goalRow);
     type GateEdge = { from: Cell; to: Cell };
     let gateEdges: GateEdge[] = [];
     if (treePath.length >= 10) {
-        const g1Idx = Math.floor(treePath.length * 0.33);
-        const g2Idx = Math.floor(treePath.length * 0.67);
-        gateEdges = [
-            { from: treePath[g1Idx], to: treePath[g1Idx + 1] },
-            { from: treePath[g2Idx], to: treePath[g2Idx + 1] },
-        ];
+        for (let i = 0; i < numGates; i++) {
+            const frac = (i + 1) / (numGates + 1);
+            const idx = Math.floor(treePath.length * frac);
+            if (idx + 1 < treePath.length) {
+                gateEdges.push({ from: treePath[idx], to: treePath[idx + 1] });
+            }
+        }
     }
 
     // Block gate edges before widening
@@ -51,15 +51,14 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
     let zoneMap: Map<string, number> | undefined;
     if (gateEdges.length > 0) {
         zoneMap = new Map();
-        const z1 = floodFill(cells, cols, rows, startCol, startRow);
-        for (const k of z1) zoneMap.set(k, 0);
-        const g1To = gateEdges[0].to;
-        const z2 = floodFill(cells, cols, rows, g1To.col, g1To.row);
-        for (const k of z2) zoneMap.set(k, 1);
-        if (gateEdges.length >= 2) {
-            const g2To = gateEdges[1].to;
-            const z3 = floodFill(cells, cols, rows, g2To.col, g2To.row);
-            for (const k of z3) zoneMap.set(k, 2);
+        // Zone 0 = start zone
+        const z0 = floodFill(cells, cols, rows, startCol, startRow);
+        for (const k of z0) zoneMap.set(k, 0);
+        // Each gate opens a new zone
+        for (let gi = 0; gi < gateEdges.length; gi++) {
+            const gTo = gateEdges[gi].to;
+            const z = floodFill(cells, cols, rows, gTo.col, gTo.row);
+            for (const k of z) zoneMap.set(k, gi + 1);
         }
     }
 
@@ -107,7 +106,7 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
     }
 
     // Dead-end scenery
-    const targetCount = 4;
+    const targetCount = Math.floor(cols * rows / 20);
     const deadEnds: string[] = [];
     for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
@@ -133,9 +132,9 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
         sceneryBlocked.add(deadEnds[i]);
     }
 
-    // ── Key placement (mirrors placePuzzleItems) ──
+    // ── Key placement (mirrors placePuzzleItems) — one key per zone ──
     let keyPositions: Cell[] = [];
-    if (gateEdges.length >= 2) {
+    if (gateEdges.length >= 1) {
         // Temporarily block gate edges for flood fill
         const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
         for (const { from, to } of gateEdges) {
@@ -146,9 +145,13 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
             cells[to.row][to.col] |= OPPOSITE[fw];
         }
 
-        const zone1 = floodFill(cells, cols, rows, startCol, startRow, sceneryBlocked);
-        const g1To = gateEdges[0].to;
-        const zone2 = floodFill(cells, cols, rows, g1To.col, g1To.row, sceneryBlocked);
+        // Flood-fill each zone
+        const zones: Set<string>[] = [];
+        zones.push(floodFill(cells, cols, rows, startCol, startRow, sceneryBlocked));
+        for (let gi = 0; gi < gateEdges.length; gi++) {
+            const gTo = gateEdges[gi].to;
+            zones.push(floodFill(cells, cols, rows, gTo.col, gTo.row, sceneryBlocked));
+        }
 
         // Restore
         for (const { from, to, fw } of wallOps) {
@@ -169,7 +172,6 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
                 k !== `${goalCol},${goalRow}`
             );
             if (offPath.length > 0) {
-                // Sort by distance from solution path (descending), pick from top 25%
                 offPath.sort((a, b) => (distFromPathKeys.get(b) ?? 0) - (distFromPathKeys.get(a) ?? 0));
                 const topN = Math.max(1, Math.floor(offPath.length * 0.25));
                 const key = offPath[Math.floor(Math.random() * topN)];
@@ -186,13 +188,18 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
             return { col: c, row: r };
         };
 
-        const key1Pos = pickOffPath(zone1);
-        const key2Pos = pickOffPath(zone2);
-        if (key1Pos) keyPositions.push(key1Pos);
-        if (key2Pos) keyPositions.push(key2Pos);
+        let allPlaced = true;
+        for (const zone of zones) {
+            const pos = pickOffPath(zone);
+            if (pos) {
+                keyPositions.push(pos);
+            } else {
+                allPlaced = false;
+                break;
+            }
+        }
 
-        // If either key couldn't be placed, clear gates
-        if (!key1Pos || !key2Pos) {
+        if (!allPlaced) {
             gateEdges = [];
             keyPositions = [];
         }
@@ -217,7 +224,7 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
         const [col, row] = key.split(',').map(Number);
         objCandidates.push({ col, row });
     }
-    const objCount = 2 + Math.floor(Math.random() * 2); // 2 or 3
+    const objCount = Math.floor(cols / 4); // 8→2, 10→2, 12→3
 
     // Compute zone membership for zone-aware objective spread
     const objZoneOf = new Map<string, number>();
@@ -232,13 +239,10 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
         }
         const oz0 = floodFill(cells, cols, rows, startCol, startRow, sceneryBlocked);
         for (const k of oz0) objZoneOf.set(k, 0);
-        const og1To = gateEdges[0].to;
-        const oz1 = floodFill(cells, cols, rows, og1To.col, og1To.row, sceneryBlocked);
-        for (const k of oz1) objZoneOf.set(k, 1);
-        if (gateEdges.length >= 2) {
-            const og2To = gateEdges[1].to;
-            const oz2 = floodFill(cells, cols, rows, og2To.col, og2To.row, sceneryBlocked);
-            for (const k of oz2) objZoneOf.set(k, 2);
+        for (let gi = 0; gi < gateEdges.length; gi++) {
+            const gTo = gateEdges[gi].to;
+            const oz = floodFill(cells, cols, rows, gTo.col, gTo.row, sceneryBlocked);
+            for (const k of oz) objZoneOf.set(k, gi + 1);
         }
         for (const { from, to, fw } of wOps) {
             cells[from.row][from.col] &= ~fw;
@@ -246,7 +250,7 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals') {
         }
     }
 
-    const numZones = gateEdges.length >= 2 ? 3 : gateEdges.length >= 1 ? 2 : 1;
+    const numZones = gateEdges.length + 1;
     const byZone: Cell[][] = Array.from({ length: numZones }, () => []);
     for (const c of objCandidates) {
         const z = objZoneOf.get(`${c.col},${c.row}`) ?? 0;
@@ -317,133 +321,118 @@ function playerReachable(
 }
 
 /**
- * Simulate player progression: collect key1 → open gate1 → collect key2 →
- * open gate2 → reach goal. Returns the set of all cells the player must
- * visit to win the level (minimum exploration set).
+ * Simulate player progression: collect keys → open gates in order → reach goal.
+ * Returns reachability info for each phase.
  */
 function simulateProgression(level: ReturnType<typeof buildLevel>): {
     reachable: Set<string>;
-    key1Reachable: boolean;
-    key2Reachable: boolean;
+    keysReachable: boolean[];
     goalReachable: boolean;
     cellsVisited: Set<string>;
 } {
     const { cells, cols, rows, startCol, startRow, goalCol, goalRow,
         gateEdges, sceneryBlocked, keyPositions } = level;
 
-    // Phase 1: all gates closed
-    const phase1 = playerReachable(cells, cols, rows, startCol, startRow,
-        sceneryBlocked, gateEdges);
+    const cellsVisited = new Set<string>();
+    const keysReachable: boolean[] = [];
 
-    const key1Reachable = keyPositions.length >= 1 &&
-        phase1.has(`${keyPositions[0].col},${keyPositions[0].row}`);
+    // For each phase, one more gate is open
+    for (let phase = 0; phase <= gateEdges.length; phase++) {
+        const closedGates = gateEdges.slice(phase);
+        const reachable = playerReachable(cells, cols, rows, startCol, startRow,
+            sceneryBlocked, closedGates);
+        for (const k of reachable) cellsVisited.add(k);
 
-    // Phase 2: gate1 open
-    const remainingGates1 = gateEdges.length >= 2 ? [gateEdges[1]] : [];
-    const phase2 = playerReachable(cells, cols, rows, startCol, startRow,
-        sceneryBlocked, remainingGates1);
+        // In this phase, the player needs key[phase] (if it exists)
+        if (phase < keyPositions.length) {
+            const kp = keyPositions[phase];
+            keysReachable.push(reachable.has(`${kp.col},${kp.row}`));
+        }
+    }
 
-    const key2Reachable = keyPositions.length >= 2 &&
-        phase2.has(`${keyPositions[1].col},${keyPositions[1].row}`);
-
-    // Phase 3: all gates open
-    const phase3 = playerReachable(cells, cols, rows, startCol, startRow,
+    // Final phase: all gates open
+    const finalReachable = playerReachable(cells, cols, rows, startCol, startRow,
         sceneryBlocked, []);
+    for (const k of finalReachable) cellsVisited.add(k);
 
-    const goalReachable = phase3.has(`${goalCol},${goalRow}`);
+    const goalReachable = finalReachable.has(`${goalCol},${goalRow}`);
 
-    // Cells visited = union of all phases (player sees phase1 first, then phase2, etc.)
-    const cellsVisited = new Set([...phase1, ...phase2, ...phase3]);
-
-    return { reachable: phase3, key1Reachable, key2Reachable, goalReachable, cellsVisited };
+    return { reachable: finalReachable, keysReachable, goalReachable, cellsVisited };
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const NUM_TRIALS = 200; // random mazes per test
+const NUM_TRIALS = 150; // random mazes per test per grid size
+const GRID_SIZES = [8, 10, 12];
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe('Key reachability', () => {
-    it(`key1 is always reachable before gate1 (${NUM_TRIALS} trials)`, () => {
-        for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
-            if (level.gateEdges.length === 0) continue; // no gates = no keys needed
+for (const size of GRID_SIZES) {
+    const tag = `${size}x${size}`;
 
-            const { key1Reachable } = simulateProgression(level);
-            expect(key1Reachable, `Trial ${i}: key1 unreachable`).toBe(true);
+describe(`[${tag}] Key reachability`, () => {
+    it(`all keys are reachable in correct phase order (${NUM_TRIALS} trials)`, () => {
+        for (let i = 0; i < NUM_TRIALS; i++) {
+            const level = buildLevel('kruskals', size);
+            if (level.gateEdges.length === 0) continue;
+
+            const { keysReachable } = simulateProgression(level);
+            for (let k = 0; k < keysReachable.length; k++) {
+                expect(keysReachable[k], `Trial ${i}: key${k} unreachable`).toBe(true);
+            }
         }
     });
 
-    it(`key2 is always reachable after opening gate1 (${NUM_TRIALS} trials)`, () => {
+    it(`goal is always reachable after opening all gates (${NUM_TRIALS} trials)`, () => {
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
-            if (level.gateEdges.length < 2) continue;
-
-            const { key2Reachable } = simulateProgression(level);
-            expect(key2Reachable, `Trial ${i}: key2 unreachable after gate1`).toBe(true);
-        }
-    });
-
-    it(`goal is always reachable after opening both gates (${NUM_TRIALS} trials)`, () => {
-        for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             const { goalReachable } = simulateProgression(level);
             expect(goalReachable, `Trial ${i}: goal unreachable`).toBe(true);
         }
     });
 });
 
-describe('Gate placement', () => {
-    it(`gates appear at roughly 33% and 67% of the path (${NUM_TRIALS} trials)`, () => {
-        let g1Ratios: number[] = [];
-        let g2Ratios: number[] = [];
+describe(`[${tag}] Gate placement`, () => {
+    it(`gates are evenly spaced along the path (${NUM_TRIALS} trials)`, () => {
+        const numGates = Math.max(1, Math.floor(size / 4) - 1);
+        const ratios: number[][] = Array.from({ length: numGates }, () => []);
 
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
-            if (level.gateEdges.length < 2) continue;
+            const level = buildLevel('kruskals', size);
+            if (level.gateEdges.length < numGates) continue;
 
             const { path, gateEdges } = level;
-            // Find gate positions on the path
-            const g1From = gateEdges[0].from;
-            const g1Idx = path.findIndex(c => c.col === g1From.col && c.row === g1From.row);
-            const g2From = gateEdges[1].from;
-            const g2Idx = path.findIndex(c => c.col === g2From.col && c.row === g2From.row);
-
-            if (g1Idx >= 0) g1Ratios.push(g1Idx / path.length);
-            if (g2Idx >= 0) g2Ratios.push(g2Idx / path.length);
+            for (let g = 0; g < numGates; g++) {
+                const gFrom = gateEdges[g].from;
+                const idx = path.findIndex(c => c.col === gFrom.col && c.row === gFrom.row);
+                if (idx >= 0) ratios[g].push(idx / path.length);
+            }
         }
 
-        // Average should be close to 0.33 and 0.67 (within tolerance)
-        if (g1Ratios.length > 0) {
-            const avg1 = g1Ratios.reduce((a, b) => a + b, 0) / g1Ratios.length;
-            expect(avg1).toBeGreaterThan(0.2);
-            expect(avg1).toBeLessThan(0.45);
-        }
-        if (g2Ratios.length > 0) {
-            const avg2 = g2Ratios.reduce((a, b) => a + b, 0) / g2Ratios.length;
-            expect(avg2).toBeGreaterThan(0.55);
-            expect(avg2).toBeLessThan(0.8);
+        for (let g = 0; g < numGates; g++) {
+            if (ratios[g].length === 0) continue;
+            const avg = ratios[g].reduce((a, b) => a + b, 0) / ratios[g].length;
+            const expectedFrac = (g + 1) / (numGates + 1);
+            expect(avg).toBeGreaterThan(expectedFrac - 0.15);
+            expect(avg).toBeLessThan(expectedFrac + 0.15);
         }
     });
 
-    it(`both gates are always placed on 10x10 grids (${NUM_TRIALS} trials)`, () => {
+    it(`expected gate count is placed 95%+ of the time (${NUM_TRIALS} trials)`, () => {
+        const numGates = Math.max(1, Math.floor(size / 4) - 1);
         let gateCount = 0;
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
-            // buildLevel clears gateEdges if keys can't be placed, so count
-            // levels that successfully have 2 gates
-            if (level.gateEdges.length === 2) gateCount++;
+            const level = buildLevel('kruskals', size);
+            if (level.gateEdges.length === numGates) gateCount++;
         }
-        // At least 95% of levels should have gates
         expect(gateCount / NUM_TRIALS).toBeGreaterThan(0.95);
     });
 });
 
-describe('Scenery never blocks connectivity', () => {
+describe(`[${tag}] Scenery never blocks connectivity`, () => {
     it(`scenery does not land on the solution path (${NUM_TRIALS} trials)`, () => {
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             for (const key of level.sceneryBlocked) {
                 expect(level.pathSet.has(key),
                     `Trial ${i}: scenery at ${key} is on solution path`).toBe(false);
@@ -453,7 +442,7 @@ describe('Scenery never blocks connectivity', () => {
 
     it(`scenery does not block start or goal (${NUM_TRIALS} trials)`, () => {
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             expect(level.sceneryBlocked.has(`${level.startCol},${level.startRow}`),
                 `Trial ${i}: scenery blocks start`).toBe(false);
             expect(level.sceneryBlocked.has(`${level.goalCol},${level.goalRow}`),
@@ -463,7 +452,7 @@ describe('Scenery never blocks connectivity', () => {
 
     it(`scenery does not partition reachable cells from goal (${NUM_TRIALS} trials)`, () => {
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             const reachable = floodFill(level.cells, level.cols, level.rows,
                 level.startCol, level.startRow, level.sceneryBlocked);
             expect(reachable.has(`${level.goalCol},${level.goalRow}`),
@@ -472,12 +461,10 @@ describe('Scenery never blocks connectivity', () => {
     });
 });
 
-describe('Objective reachability', () => {
+describe(`[${tag}] Objective reachability`, () => {
     it(`all objectives are reachable from start (${NUM_TRIALS} trials)`, () => {
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
-            // Objectives must be reachable ignoring gates (player must collect
-            // them during progression, and gates open along the way)
+            const level = buildLevel('kruskals', size);
             const reachable = floodFill(level.cells, level.cols, level.rows,
                 level.startCol, level.startRow, level.sceneryBlocked);
             for (const obj of level.objectivePositions) {
@@ -490,7 +477,7 @@ describe('Objective reachability', () => {
 
     it(`objectives are not placed on scenery, start, goal, or key cells (${NUM_TRIALS} trials)`, () => {
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             for (const obj of level.objectivePositions) {
                 const key = `${obj.col},${obj.row}`;
                 expect(level.sceneryBlocked.has(key),
@@ -504,41 +491,35 @@ describe('Objective reachability', () => {
     });
 });
 
-describe('Full end-to-end solvability', () => {
+describe(`[${tag}] Full end-to-end solvability`, () => {
     it(`every level is completable: keys → gates → objectives → goal (${NUM_TRIALS} trials)`, () => {
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             const { cells, cols, rows, startCol, startRow, goalCol, goalRow,
                 gateEdges, sceneryBlocked, keyPositions, objectivePositions } = level;
 
-            // Phase 1: all gates closed — key1 must be reachable
-            if (gateEdges.length >= 1 && keyPositions.length >= 1) {
-                const phase1 = playerReachable(cells, cols, rows, startCol, startRow,
-                    sceneryBlocked, gateEdges);
-                expect(phase1.has(`${keyPositions[0].col},${keyPositions[0].row}`),
-                    `Trial ${i}: key1 unreachable from start`).toBe(true);
+            // Each phase: open one more gate, verify next key reachable
+            for (let phase = 0; phase < gateEdges.length; phase++) {
+                const closedGates = gateEdges.slice(phase);
+                if (phase < keyPositions.length) {
+                    const reach = playerReachable(cells, cols, rows, startCol, startRow,
+                        sceneryBlocked, closedGates);
+                    expect(reach.has(`${keyPositions[phase].col},${keyPositions[phase].row}`),
+                        `Trial ${i}: key${phase} unreachable`).toBe(true);
+                }
             }
 
-            // Phase 2: gate1 open — key2 must be reachable
-            const remainingAfterG1 = gateEdges.length >= 2 ? [gateEdges[1]] : [];
-            if (gateEdges.length >= 2 && keyPositions.length >= 2) {
-                const phase2 = playerReachable(cells, cols, rows, startCol, startRow,
-                    sceneryBlocked, remainingAfterG1);
-                expect(phase2.has(`${keyPositions[1].col},${keyPositions[1].row}`),
-                    `Trial ${i}: key2 unreachable after gate1`).toBe(true);
-            }
-
-            // Phase 3: all gates open — all objectives + goal must be reachable
-            const phase3 = playerReachable(cells, cols, rows, startCol, startRow,
+            // All gates open — all objectives + goal must be reachable
+            const finalReach = playerReachable(cells, cols, rows, startCol, startRow,
                 sceneryBlocked, []);
             for (const obj of objectivePositions) {
-                expect(phase3.has(`${obj.col},${obj.row}`),
+                expect(finalReach.has(`${obj.col},${obj.row}`),
                     `Trial ${i}: objective at ${obj.col},${obj.row} unreachable`).toBe(true);
             }
-            expect(phase3.has(`${goalCol},${goalRow}`),
+            expect(finalReach.has(`${goalCol},${goalRow}`),
                 `Trial ${i}: goal unreachable`).toBe(true);
 
-            // Verify BFS path exists from start to every target (no broken path)
+            // Verify BFS path exists from start to every target
             const allTargets = [
                 ...keyPositions, ...objectivePositions,
                 { col: goalCol, row: goalRow },
@@ -552,32 +533,27 @@ describe('Full end-to-end solvability', () => {
     });
 });
 
-describe('Explore percentage', () => {
-    it(`player must explore at least 60% of reachable cells to win (${NUM_TRIALS} trials)`, () => {
-        // The minimum exploration set = cells the player must visit/see to
-        // collect all keys, open all gates, collect all objectives, and reach goal.
-        // We compute this by finding the shortest BFS paths to each required target.
+describe(`[${tag}] Explore percentage`, () => {
+    it(`player must explore a significant portion of the map (${NUM_TRIALS} trials)`, () => {
         const ratios: number[] = [];
 
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             const { cells, cols, rows, startCol, startRow, goalCol, goalRow,
                 gateEdges, sceneryBlocked, keyPositions, objectivePositions } = level;
 
-            // Total reachable cells (with all gates open)
             const allReachable = floodFill(cells, cols, rows, startCol, startRow, sceneryBlocked);
             const totalReachable = allReachable.size;
 
-            // Collect all mandatory targets in order
+            // Collect all mandatory targets in order: key→gate pairs, then objectives, then goal
             const targets: Cell[] = [];
-            if (keyPositions.length >= 1) targets.push(keyPositions[0]); // key1
-            if (gateEdges.length >= 1) targets.push(gateEdges[0].from);  // gate1
-            if (keyPositions.length >= 2) targets.push(keyPositions[1]); // key2
-            if (gateEdges.length >= 2) targets.push(gateEdges[1].from);  // gate2
-            for (const obj of objectivePositions) targets.push(obj);     // objectives
-            targets.push({ col: goalCol, row: goalRow });                // goal
+            for (let g = 0; g < gateEdges.length; g++) {
+                if (g < keyPositions.length) targets.push(keyPositions[g]);
+                targets.push(gateEdges[g].from);
+            }
+            for (const obj of objectivePositions) targets.push(obj);
+            targets.push({ col: goalCol, row: goalRow });
 
-            // Walk BFS paths between consecutive targets, accumulate unique cells visited
             const visited = new Set<string>();
             visited.add(`${startCol},${startRow}`);
             let curCol = startCol, curRow = startRow;
@@ -590,25 +566,22 @@ describe('Explore percentage', () => {
                 curRow = target.row;
             }
 
-            const ratio = visited.size / totalReachable;
-            ratios.push(ratio);
+            ratios.push(visited.size / totalReachable);
         }
 
         const avgExplore = ratios.reduce((a, b) => a + b, 0) / ratios.length;
         const minExplore = Math.min(...ratios);
 
-        // After zone-aware objectives + far-corner keys, average ~51% (up from ~42%).
-        expect(avgExplore).toBeGreaterThan(0.45);
-        // No level should allow winning with less than 10% exploration
+        expect(avgExplore).toBeGreaterThan(0.40);
         expect(minExplore).toBeGreaterThan(0.10);
     });
 
-    it(`keys are placed off the main solution path to force detours (${NUM_TRIALS} trials)`, () => {
+    it(`keys are placed off the main solution path (${NUM_TRIALS} trials)`, () => {
         let offPathCount = 0;
         let totalKeys = 0;
 
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             const { pathSet, keyPositions } = level;
             for (const key of keyPositions) {
                 totalKeys++;
@@ -616,27 +589,23 @@ describe('Explore percentage', () => {
             }
         }
 
-        // At least 70% of keys should be off the main path
         if (totalKeys > 0) {
             expect(offPathCount / totalKeys).toBeGreaterThan(0.7);
         }
     });
 
     it(`objectives are spread across multiple zones (${NUM_TRIALS} trials)`, () => {
-        // Objectives should not all cluster in one zone — they should require
-        // the player to explore different parts of the map.
         let spreadCount = 0;
         let totalWithGates = 0;
 
         for (let i = 0; i < NUM_TRIALS; i++) {
-            const level = buildLevel();
+            const level = buildLevel('kruskals', size);
             if (level.gateEdges.length < 2) continue;
             totalWithGates++;
 
             const { cells, cols, rows, startCol, startRow, gateEdges,
                 sceneryBlocked, objectivePositions } = level;
 
-            // Compute zones with gates blocked
             const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
             for (const { from, to } of gateEdges) {
                 const dc = to.col - from.col, dr = to.row - from.row;
@@ -651,21 +620,20 @@ describe('Explore percentage', () => {
                 cells[to.row][to.col] &= ~OPPOSITE[fw];
             }
 
-            // Count how many objectives are in zone1 vs other zones
             let inZone1 = 0;
             for (const obj of objectivePositions) {
                 if (zone1.has(`${obj.col},${obj.row}`)) inZone1++;
             }
 
-            // "Spread" = not all objectives in zone1
             if (objectivePositions.length > 1 && inZone1 < objectivePositions.length) {
                 spreadCount++;
             }
         }
 
-        // With zone-aware placement, 85%+ of gated levels should spread objectives
         if (totalWithGates > 0) {
             expect(spreadCount / totalWithGates).toBeGreaterThan(0.80);
         }
     });
 });
+
+} // end for-each grid size

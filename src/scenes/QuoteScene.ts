@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS, HEADER, PANEL } from '../constants';
+import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { MONTHS, MonthConfig } from '../seasons';
 import { AlgorithmKey } from '../maze';
 
-const W = COLS * TILE + PANEL;
-const H = ROWS * TILE + HEADER;
+const W = MAX_COLS * TILE + PANEL;
+const H = MAX_ROWS * TILE + HEADER;
 
 // Two sequential cards on season boundaries:
 //   Card 1 — season name only (big, typographic)
@@ -20,8 +20,8 @@ export default class QuoteScene extends Phaser.Scene {
 
         this.cameras.main.setBackgroundColor(season.bgColor);
 
-        const accentHex = `#${season.uiAccent.toString(16).padStart(6, '0')}`;
-        const dimHex    = `#${Math.floor(season.uiAccent * 0.65).toString(16).padStart(6, '0')}`;
+        const accentHex = season.accentHex;
+        const dimHex    = season.dimHex;
 
         const goToGame = () => {
             this.cameras.main.fadeOut(900, 0, 0, 0);

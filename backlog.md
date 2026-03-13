@@ -1,160 +1,150 @@
 # PhaseGame Backlog
 
-## Current features
-- 4 maze generation algorithms (DFS, Prim's, Binary Tree, Kruskal's) selectable from menu
-- Keys and gates: collect gold keys to unlock red gates blocking the solution path
-- Inventory HUD (top-right)
-- R = new maze, M = back to menu
-
----
-
-## Idea: Seasons & Weather — 12-Month Maze Journey
-
-### Concept
-A 12-maze game with a continuous time-of-year theme. Each maze represents one month.
-The player progresses through the full calendar year, with visual palette and weather events
-matching the real season. Weather acts as **active hindrances** — not just decoration.
-
-### Month → Season mapping
-| Month | Season | Weather event | Hindrance mechanic |
-|-------|--------|---------------|--------------------|
-| Jan   | Deep winter  | Blizzard        | Periodic whiteout (canvas dims, reduced visibility) |
-| Feb   | Winter       | Ice storm       | Random cell floors become "ice" — directional drift on step |
-| Mar   | Early spring | Rain showers    | Puddles block cells temporarily |
-| Apr   | Spring       | Heavy rain      | Paths occasionally flood and close for N seconds |
-| May   | Late spring  | Mild / clear    | No hindrance — "breather" month |
-| Jun   | Early summer | Heat haze       | Shimmer effect warps the minimap / makes far tiles hard to read |
-| Jul   | High summer  | Heat wave       | Move cooldown increases (sluggish movement) |
-| Aug   | Late summer  | Thunderstorm    | Lightning strikes random cells, blocking them briefly |
-| Sep   | Early autumn | Wind gusts      | Gusts push the player one cell in gust direction after each step |
-| Oct   | Autumn       | Cold wind       | Every ~8 steps, a gust phase: player must "fight" for 2 moves |
-| Nov   | Late autumn  | First frost     | Key icons become partially hidden under frost overlay |
-| Dec   | Winter       | Snowstorm       | Snowdrift tiles accumulate — stepping on one costs 2 moves |
-
-### Visual palette per season
-- **Winter (Dec–Feb)**: icy blues and whites (`#a8d8ea`, `#cce5ff`)
-- **Spring (Mar–May)**: sage greens, soft yellows (`#6b9e8a`, `#d4edaf`)
-- **Summer (Jun–Aug)**: warm amber and gold (`#f5c842`, `#e07b39`)
-- **Autumn (Sep–Nov)**: terracotta, rust, deep orange (`#c07850`, `#8b3a1e`)
-
-### Progression
-- Completing month N unlocks month N+1
-- Difficulty scales: maze size grows from 8×8 (Jan) to 14×14 (Dec)
-- Keys/gates count increases from 1 each → 3 each over the year
-- Best time per month tracked on a "Year Record" screen
-
-### New scenes needed
-- `YearMapScene` — 12-month calendar grid showing completion status
-- `SeasonScene` extends `GameScene` — adds weather overlay and hindrance update loop
-- `WeatherSystem` — pluggable class; each month gets its own `WeatherSystem` implementation
+## Current features (shipped)
+- 12-month maze journey through all four seasons with distinct palettes and weather
+- 4 season-specific characters, hazards, hiding spots, and objectives
+- Kruskal's maze generation with keys/gates on bridge edges
+- Fog of war with visibility decay (revealed cells fade back to hidden over time)
+- Hard mode with faster fog decay (10s start / 8s duration vs 30s / 15s)
+- 9-step hardcoded tutorial teaching movement, keys/gates, enemies, objectives, fog, and all 4 seasonal skills
+- Seasonal skills with 15s cooldown: HOP (Winter), BUZZ (Spring), GLOW (Summer), DASH (Fall)
+- Scenic obstacles (3 variants per season) shown in legend
+- Side panel with objectives, lives, keys, and colour-coded legend
+- Quote cards between levels; season title cards at season boundaries
+- End screen after completing December
+- Enemy collision check on both player move and enemy move (no fast-click evasion; dash still allows evasion)
+- Title screen with New Game, New Hard Game, and How to Play
+- Version tag in bottom-right corner
 
 ---
 
 ## ✅ Season-specific level objectives (shipped)
 
-Each season requires a short task before the exit opens.
-
 | Season | Player | Hazard | Hiding | Objective |
 |--------|--------|--------|--------|-----------|
-| Spring | Bee    | Frog   | Tall grass  | Pollinate 3 flowers (visit dim buds; they bloom on contact) |
-| Summer | Fairy  | Snake  | Bush        | Water 2 potted plants |
+| Spring | Bee    | Frog   | Tall grass  | Pollinate 3 flowers |
+| Summer | Fairy  | Snake  | Bush        | Water 2 plants |
 | Fall   | Squirrel | Fox  | Leaf pile   | Plant 2 acorns |
-| Winter | Bunny  | Owl    | Snow pile   | None — exit open immediately |
-
-HUD: `◆◇◇  POLLINATE` style counter (top-right). Goal tile has a dim overlay that fades when unlocked.
-
-### Ideas for next iteration
-- Animate the bloom/water effect more elaborately (particle burst matching season palette)
-- Add a brief "objective unlocked" banner text when the last one is collected
-- Winter objective: collect snowflakes (5 drifting sparkle items)?
+| Winter | Bunny  | Owl    | Snow pile   | Collect 2 snowflakes |
 
 ---
 
-## Idea: Fog of War
+## ✅ Fog of war with decay (shipped)
 
-The maze starts completely hidden (black overlay). As the player explores, tiles they've visited are revealed and stay visible. Tiles in the player's immediate vicinity (1-2 cells) are "lit"; previously-visited tiles outside that radius show dimly.
-
-### Behaviour
-- On level load: all tiles black/hidden except the starting cell and its immediate neighbours
-- Each step reveals cells within radius R (suggest R=2 tiles) and permanently "clears" those cells
-- Cleared cells render at ~50% brightness; "lit" cells (current vicinity) at full brightness
-- Hazard only visible when in a lit or cleared cell (adds tension — you hear it but can't always see it)
-- Keys/gates/objectives visible only once their cell is revealed
-
-### Implementation sketch
-- Track a `revealed: Set<string>` of `"col,row"` cells (persists for the level duration)
-- Render a dark `Graphics` overlay over the mazeLayer that cuts out revealed cells using `fillRect` with `blendMode: ERASE`
-- Two layers: full-black mask for unrevealed, dim mask for revealed-but-not-lit
-- Update the mask in the movement `onComplete` callback (same place `checkObjective` runs)
-
-### Open questions
-- Does full fog apply to all months, or only some (e.g. deeper winter = denser fog)?
-- Should the hazard have a faint glow visible through the fog as a hint?
+Tiles fade back toward hidden after ~30s (normal) or ~10s (hard) of not being in the player's vicinity. Encourages quick movement and re-exploration.
 
 ---
 
-## ✅ Landmark sprites (shipped — now blocking scenic obstacles)
+## ✅ Tutorial (shipped)
 
-Scatter a few season-appropriate static sprites around the maze as visual landmarks / atmosphere. These don't block movement, don't interact with the player, and are purely decorative — but they make the maze feel like a world rather than a grid.
-
-### Season → landmark ideas
-| Season | Landmarks |
-|--------|-----------|
-| Spring | Pond (blue ellipse + lily pads), bird nest on a stick, flowering stump |
-| Summer | Old windmill (sail arms), tall sunflower cluster, beehive hanging from a post |
-| Fall   | Hollow tree trunk (dark opening), mushroom cluster, hay bale |
-| Winter | Frozen pond (icy circle), snowman (three stacked circles), bare branch with snow |
-
-### Notes
-- 2–4 landmarks per maze, placed on non-path, non-bush, non-objective cells
-- Drawn using the same Graphics/Shape primitive approach as hiding spots and objectives
-- Depth: ~0.5 (above floor, below walls) so they sit "on" the floor
-- No collision, no interaction — just scenery
+9 hardcoded steps with jagged, purpose-built maps. Teaches movement, keys/gates, enemies/hiding, objectives, fog, and one skill per season. Accessible from title screen via "How to Play".
 
 ---
 
----
+## ✅ Scenic obstacles / landmarks (shipped)
 
-## Bug: Color contrast / accessibility
-
-- [x] **Text readability audit** — review all seasonal color schemes to ensure text meets WCAG AA contrast ratios (4.5:1 for normal text, 3:1 for large text). Current palettes cause hard-to-read text in some seasons.
+3 season-appropriate scenic obstacles per season, shown in legend. Non-blocking, decorative sprites placed on non-path cells.
 
 ---
 
-## Visual: Winter scenic obstacle
+## ✅ Winter scenic obstacle fix (shipped)
 
-- [ ] Winter scenic obstacle (snowdrift) looks too similar to the snow pile hiding spots. Replace with a **grey rock** formation so the two are visually distinct.
-
----
-
-## Feature: Tutorial level
-
-- [ ] A guided tutorial before the main game begins, using a **purple/yellow color scheme** to visually distinguish it from the seasonal levels. Played on smaller grids (e.g. 5×5, then 6×6) to teach mechanics one at a time:
-  - **Step 1**: Movement + reach the goal (tiny maze, no hazards, no fog)
-  - **Step 2**: Introduce keys and gates (small maze with 1 key + 1 gate)
-  - **Step 3**: Introduce hiding spots and the enemy (small maze, 1 hazard, bushes highlighted)
-  - **Step 4**: Introduce objectives / collectibles (small maze with 1-2 objectives before goal unlocks)
-  - **Step 5**: Introduce fog of war (repeat a small maze but with fog enabled)
-- Brief text prompts or speech-bubble hints at the start of each step (e.g. "Collect the key to open the gate!")
-- Accessible from the title screen ("New Game" starts tutorial on first play, "Continue" skips to season 1)
-- Could track a `tutorialComplete` flag in localStorage to auto-skip on return visits
+Replaced snowdrift with grey rock/boulder formations to distinguish from snow pile hiding spots.
 
 ---
 
-## Feature: Fog of war timeout / visibility decay
+## ✅ Color contrast / accessibility (shipped)
 
-- [ ] After a timeout (e.g. 30–60 seconds of a cell not being in the player's vicinity), previously revealed cells should start fading back toward hidden. Encourages the player to move quickly and discourages slow, methodical exploration. The player loses map knowledge over time and must rely on landmarks to re-orient.
+Text readability audit — reviewed all seasonal color schemes for contrast.
 
 ---
 
-### Weather system interface (sketch)
-```ts
-interface WeatherSystem {
-    month: number;
-    name: string;
-    update(delta: number, player: {col: number, row: number}): void;
-    onPlayerStep?(from: {col, row}, to: {col, row}): { blocked: boolean; drift?: {dc, dr} };
-    onRender?(scene: Phaser.Scene): void;
-    destroy(): void;
-}
-```
+## Idea: Raise explore percentage
+
+Players currently only visit ~42% of reachable cells. Place keys farther from the solution path (top 25% most BFS-distant candidates) and spread objectives across all zones so the player must explore laterally.
+
+---
+
+## Idea: Seasons & Weather — active hindrances
+
+Weather currently visual-only. Could add active hindrances per month:
+
+| Month | Weather event | Hindrance mechanic |
+|-------|---------------|--------------------|
+| Jan   | Blizzard      | Periodic whiteout (reduced visibility) |
+| Feb   | Ice storm     | Ice cells cause directional drift |
+| Mar   | Rain showers  | Puddles block cells temporarily |
+| Apr   | Heavy rain    | Paths flood and close for N seconds |
+| May   | Mild / clear  | No hindrance — breather month |
+| Jun   | Heat haze     | Shimmer warps far tiles |
+| Jul   | Heat wave     | Move cooldown increases |
+| Aug   | Thunderstorm  | Lightning blocks random cells |
+| Sep   | Wind gusts    | Gusts push player one cell |
+| Oct   | Cold wind     | Gust phase every ~8 steps |
+| Nov   | First frost   | Key icons partially hidden under frost |
+| Dec   | Snowstorm     | Snowdrift tiles cost 2 moves |
+
+---
+
+## Idea: Difficulty scaling
+
+- Maze size grows from 8×8 (Jan) to 14×14 (Dec)
+- Keys/gates count increases from 1 → 3 over the year
+- Best time per month tracked on a "Year Record" screen
+
+---
+
+## Idea: Year map scene
+
+`YearMapScene` — 12-month calendar grid showing completion status and best times.
+
+---
+
+## Idea: Objective animations
+
+- Animate bloom/water/plant effects more elaborately (particle burst matching season palette)
+- Brief "objective unlocked" banner text when last objective collected
+
+---
+
+## Idea: Winter objective variant
+
+Winter currently has 2 snowflakes. Could try 5 drifting sparkle items for variety.
+
+---
+
+## Idea: localStorage persistence
+
+- Track `tutorialComplete` to auto-skip tutorial on return visits
+- Save progress (current month, lives) so player can resume
+
+---
+
+## Code quality
+
+### ✅ Deduplicate DIRS constant
+DIRS/MOVE_DIRS defined identically in 4 files (maze.ts, mazeUtils.ts, hazard.ts, TutorialScene.ts). Single source of truth needed.
+
+### ✅ Extract fog-of-war system
+~150 lines of fog logic in GameScene (tile creation, reveal, decay timer, respawn reveal). Clean boundary, easy to extract into its own class.
+
+### ✅ Extract skill system
+Season-specific skill logic (HOP, STING, GLOW, DASH) scattered across GameScene methods. Strategy pattern would isolate each skill cleanly.
+
+### ✅ Pre-compute color hex strings in seasons.ts
+Stop doing bit-shifting at runtime to convert integer colors to hex strings. Season themes should include ready-to-use hex strings.
+
+### GameScene god object (2,200+ lines)
+Beyond fog and skills, the side panel, puzzle placement, and maze rendering could be extracted into focused classes.
+
+### Sprite construction is verbose
+~800 lines of `add.circle(...magic numbers...)` across GameScene and hazard.ts for procedural sprites. Data-driven definitions would be cleaner.
+
+### String-based cell keys
+`"col,row"` strings used as map keys everywhere. Works but is not type-safe and easy to typo.
+
+### Missing depth management system
+Manual `setDepth()` calls with magic numbers (1.4, 1.5, 2, 100) scattered throughout. No documentation of layer order.
+
+### No ESLint / Prettier
+No automated code style enforcement configured.

@@ -1,13 +1,6 @@
 import Phaser from 'phaser';
 import { TILE, HEADER } from './constants';
-import { WALLS } from './maze';
-
-const DIRS = [
-    { dc:  0, dr: -1, wall: WALLS.TOP    },
-    { dc:  1, dr:  0, wall: WALLS.RIGHT  },
-    { dc:  0, dr:  1, wall: WALLS.BOTTOM },
-    { dc: -1, dr:  0, wall: WALLS.LEFT   },
-] as const;
+import { WALLS, MOVE_DIRS as DIRS } from './maze';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hazard — a season-specific predator that hunts the player.
@@ -42,6 +35,9 @@ export class Hazard {
     private fairyHiding  = false;
     private retreatMoves = 5;  // first N wander moves go away from (0,0)
     stunned      = false;
+    private ox = 0;  // world-space x offset (centering)
+    private oy = 0;  // world-space y offset (centering)
+    private siblings: Hazard[] = [];  // other hazards to avoid
 
     constructor(
         scene:      Phaser.Scene,
@@ -51,6 +47,8 @@ export class Hazard {
         seasonName: string,
         onCatch:    () => void,
         blocked:    Set<string> = new Set(),
+        offsetX     = 0,
+        offsetY     = 0,
     ) {
         this.scene   = scene;
         this.cells   = cells;
@@ -58,10 +56,12 @@ export class Hazard {
         this.gridX   = startCol;
         this.gridY   = startRow;
         this.onCatch = onCatch;
+        this.ox      = offsetX;
+        this.oy      = offsetY;
 
         this.sprite = this.buildSprite(
-            startCol * TILE + TILE / 2,
-            startRow * TILE + TILE / 2 + HEADER,
+            startCol * TILE + TILE / 2 + this.ox,
+            startRow * TILE + TILE / 2 + HEADER + this.oy,
             seasonName,
         );
 
@@ -107,8 +107,8 @@ export class Hazard {
         this.moving = true;
         this.scene.tweens.add({
             targets:    this.sprite,
-            x:          this.gridX * TILE + TILE / 2,
-            y:          this.gridY * TILE + TILE / 2 + HEADER,
+            x:          this.gridX * TILE + TILE / 2 + this.ox,
+            y:          this.gridY * TILE + TILE / 2 + HEADER + this.oy,
             duration:   450,
             ease:       'Back.easeOut',
             onComplete: () => { this.moving = false; },
@@ -138,6 +138,11 @@ export class Hazard {
             (this.sprite.list[0] as Phaser.GameObjects.Container).setAngle(0);
             this.scheduleMove();
         });
+    }
+
+    /** Tell this hazard about its siblings so it avoids clustering. */
+    setSiblings(others: Hazard[]) {
+        this.siblings = others.filter(h => h !== this);
     }
 
     destroy() {
@@ -178,8 +183,8 @@ export class Hazard {
 
         this.scene.tweens.add({
             targets:  this.sprite,
-            x:        this.gridX * TILE + TILE / 2,
-            y:        this.gridY * TILE + TILE / 2 + HEADER,
+            x:        this.gridX * TILE + TILE / 2 + this.ox,
+            y:        this.gridY * TILE + TILE / 2 + HEADER + this.oy,
             duration: this.state === 'hunting' ? 820 : 1400,
             ease:     'Sine.easeInOut',
             onComplete: () => {
@@ -197,10 +202,18 @@ export class Hazard {
 
     private validDirs() {
         const walls = this.cells[this.gridY][this.gridX];
-        return DIRS.filter(d =>
-            !(walls & d.wall) &&
-            !this.blocked.has(`${this.gridX + d.dc},${this.gridY + d.dr}`)
-        );
+        return DIRS.filter(d => {
+            if (walls & d.wall) return false;
+            const nx = this.gridX + d.dc, ny = this.gridY + d.dr;
+            if (this.blocked.has(`${nx},${ny}`)) return false;
+            // Avoid moving onto or adjacent to a sibling (within Manhattan 2)
+            for (const s of this.siblings) {
+                if (s.dead) continue;
+                const dist = Math.abs(nx - s.gridX) + Math.abs(ny - s.gridY);
+                if (dist <= 2) return false;
+            }
+            return true;
+        });
     }
 
     private retreatDir() {

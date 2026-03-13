@@ -1,16 +1,10 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS, HEADER, PANEL } from '../constants';
+import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { ALGORITHMS, WALLS } from '../maze';
+import { MOVE_DIRS } from '../mazeUtils';
 
-const W = COLS * TILE + PANEL;
-const H = ROWS * TILE + HEADER;
-
-const MOVE_DIRS = [
-    { dc:  0, dr: -1, wall: WALLS.TOP    },
-    { dc:  1, dr:  0, wall: WALLS.RIGHT  },
-    { dc:  0, dr:  1, wall: WALLS.BOTTOM },
-    { dc: -1, dr:  0, wall: WALLS.LEFT   },
-];
+const W = MAX_COLS * TILE + PANEL;
+const H = MAX_ROWS * TILE + HEADER;
 
 // ── Tutorial color theme (purple / yellow) ───────────────────────────────────
 const T = {

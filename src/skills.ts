@@ -1,0 +1,324 @@
+import Phaser from 'phaser';
+import { TILE } from './constants';
+import { WALLS } from './maze';
+import { Hazard } from './hazard';
+import { FogOfWar } from './fog';
+
+// ── Skill system ─────────────────────────────────────────────────────────────
+// Each season has a unique active ability with a shared cooldown timer.
+//
+//   Winter (HOP)   — directional: jump over one scenery obstacle
+//   Spring (STING) — immediate: stun an adjacent enemy for 5s
+//   Summer (GLOW)  — immediate: reveal a large fog area
+//   Fall   (DASH)  — directional: sprint 3 cells in one direction
+
+const COOLDOWN = 15_000; // 15 seconds shared across all skills
+
+/** Shared state and scene references needed by all skills. */
+export interface SkillContext {
+    scene: Phaser.Scene;
+    gridX: number;
+    gridY: number;
+    cols: number;
+    rows: number;
+    cells: number[][];
+    sceneryBlocked: Set<string>;
+    hazards: Hazard[];
+    fog: FogOfWar;
+    player: Phaser.GameObjects.Container;
+    worldX(col: number): number;
+    worldY(row: number): number;
+    findGate(fromCol: number, fromRow: number, toCol: number, toRow: number): { open: boolean; graphic: Phaser.GameObjects.GameObject } | null;
+    keyCount: number;
+    updateInventory(): void;
+    collectKey(): void;
+    checkObjective(): void;
+    checkGoal(): void;
+    checkHazardCollision(): void;
+    setGrid(x: number, y: number): void;
+    setMoving(m: boolean): void;
+}
+
+export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall';
+
+export interface Skill {
+    readonly name: string;
+    readonly label: string;
+    readonly isDirectional: boolean;
+    /** Attempt immediate activation. Returns true if consumed. */
+    activate(ctx: SkillContext): boolean;
+    /** Attempt directional activation. Returns true if consumed. */
+    tryDirectional(dx: number, dy: number, ctx: SkillContext): boolean;
+}
+
+// ── Skill state (managed by SkillManager) ────────────────────────────────────
+
+export class SkillManager {
+    used   = false;
+    armed  = false;
+    cooldownEnd = 0;
+    text!: Phaser.GameObjects.Text;
+
+    private readonly skill: Skill;
+
+    constructor(season: SeasonName) {
+        this.skill = SKILLS[season];
+    }
+
+    get name() { return this.skill.name; }
+    get label() { return this.skill.label; }
+
+    activate(ctx: SkillContext, now: number): boolean {
+        if (this.used || this.armed) return false;
+
+        if (this.skill.isDirectional) {
+            this.armed = true;
+            this.updateText(now);
+            return true;
+        }
+
+        const consumed = this.skill.activate(ctx);
+        if (consumed) this.startCooldown(now);
+        this.updateText(now);
+        return consumed;
+    }
+
+    tryDirectional(dx: number, dy: number, ctx: SkillContext, now: number): boolean {
+        if (!this.armed) return false;
+        const consumed = this.skill.tryDirectional(dx, dy, ctx);
+        if (consumed) {
+            this.armed = false;
+            this.startCooldown(now);
+        }
+        this.updateText(now);
+        return consumed;
+    }
+
+    /** Cancel armed mode without consuming. */
+    cancelArm(now: number) {
+        this.armed = false;
+        this.updateText(now);
+    }
+
+    /** Call each frame to check if cooldown expired. */
+    tick(now: number) {
+        if (this.used && now >= this.cooldownEnd) {
+            this.used = false;
+            this.updateText(now);
+        }
+    }
+
+    updateText(now: number) {
+        if (!this.text) return;
+        if (this.used) {
+            const remain = Math.max(0, Math.ceil((this.cooldownEnd - now) / 1000));
+            this.text.setText(`${this.skill.name}  (${remain}s)`);
+            this.text.setAlpha(0.35);
+        } else if (this.armed) {
+            this.text.setText(`${this.skill.name}  ▸▸`);
+            this.text.setAlpha(1);
+        } else {
+            this.text.setText(`${this.skill.name}  [SPACE]`);
+            this.text.setAlpha(1);
+        }
+    }
+
+    reset() {
+        this.used = false;
+        this.armed = false;
+        this.cooldownEnd = 0;
+    }
+
+    private startCooldown(now: number) {
+        this.used = true;
+        this.cooldownEnd = now + COOLDOWN;
+    }
+}
+
+// ── Individual skill implementations ─────────────────────────────────────────
+
+const HOP: Skill = {
+    name: 'HOP',
+    label: 'hop — jump obstacle!',
+    isDirectional: true,
+
+    activate: () => false, // directional — handled via tryDirectional
+
+    tryDirectional(dx, dy, ctx) {
+        const adjX = ctx.gridX + dx, adjY = ctx.gridY + dy;
+
+        // Must have a wall-free passage to the adjacent cell
+        const walls = ctx.cells[ctx.gridY][ctx.gridX];
+        if (dx ===  1 && (walls & WALLS.RIGHT))  return false;
+        if (dx === -1 && (walls & WALLS.LEFT))   return false;
+        if (dy ===  1 && (walls & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (walls & WALLS.TOP))    return false;
+
+        // Adjacent cell must be scenery-blocked (that's what we hop over)
+        if (!ctx.sceneryBlocked.has(`${adjX},${adjY}`)) return false;
+
+        // Landing cell must be in bounds
+        const landX = ctx.gridX + dx * 2, landY = ctx.gridY + dy * 2;
+        if (landX < 0 || landX >= ctx.cols || landY < 0 || landY >= ctx.rows) return false;
+
+        // Must have wall-free passage from adj to landing
+        const adjWalls = ctx.cells[adjY][adjX];
+        if (dx ===  1 && (adjWalls & WALLS.RIGHT))  return false;
+        if (dx === -1 && (adjWalls & WALLS.LEFT))   return false;
+        if (dy ===  1 && (adjWalls & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (adjWalls & WALLS.TOP))    return false;
+
+        // Landing can't be scenery or a closed gate
+        if (ctx.sceneryBlocked.has(`${landX},${landY}`)) return false;
+        if (ctx.findGate(adjX, adjY, landX, landY)) return false;
+
+        // Execute the hop
+        ctx.setGrid(landX, landY);
+        ctx.setMoving(true);
+
+        ctx.scene.tweens.add({
+            targets: ctx.player,
+            x: ctx.worldX(landX),
+            y: ctx.worldY(landY),
+            duration: 300,
+            ease: 'Sine.easeInOut',
+            onComplete: () => {
+                ctx.setMoving(false);
+                ctx.fog.revealAround(landX, landY, ctx.scene.time.now);
+                ctx.collectKey();
+                ctx.checkObjective();
+                ctx.checkGoal();
+                ctx.checkHazardCollision();
+            },
+        });
+        // Bounce scale for hop feel
+        ctx.scene.tweens.add({ targets: ctx.player, scaleY: 1.3, yoyo: true, duration: 150 });
+        return true;
+    },
+};
+
+const STING: Skill = {
+    name: 'STING',
+    label: 'sting — stun frog!',
+    isDirectional: false,
+
+    activate(ctx) {
+        let nearest: Hazard | null = null;
+        let bestDist = Infinity;
+        for (const h of ctx.hazards) {
+            if (h.dead || h.stunned) continue;
+            const d = Math.abs(h.gridX - ctx.gridX) + Math.abs(h.gridY - ctx.gridY);
+            if (d < bestDist) { bestDist = d; nearest = h; }
+        }
+        if (!nearest || bestDist > 1) return false; // no adjacent enemy
+        nearest.stun(5000);
+        ctx.scene.tweens.add({ targets: ctx.player, scaleX: 1.3, scaleY: 1.3, yoyo: true, duration: 200 });
+        return true;
+    },
+
+    tryDirectional: () => false,
+};
+
+const GLOW: Skill = {
+    name: 'GLOW',
+    label: 'glow — reveal fog!',
+    isDirectional: false,
+
+    activate(ctx) {
+        ctx.fog.revealArea(ctx.gridX, ctx.gridY, 4, ctx.scene.time.now);
+        // Bright flash effect
+        const flash = ctx.scene.add.circle(
+            ctx.player.x, ctx.player.y, TILE * 4,
+            0xaaffaa, 0.4, // approximate — overridden per season below
+        ).setDepth(2.8);
+        ctx.scene.tweens.add({ targets: flash, alpha: 0, scale: 1.5, duration: 600, onComplete: () => flash.destroy() });
+        return true;
+    },
+
+    tryDirectional: () => false,
+};
+
+const DASH: Skill = {
+    name: 'DASH',
+    label: 'dash — sprint ahead!',
+    isDirectional: true,
+
+    activate: () => false,
+
+    tryDirectional(dx, dy, ctx) {
+        // Check we can move at least 1 cell
+        const walls0 = ctx.cells[ctx.gridY][ctx.gridX];
+        if (dx ===  1 && (walls0 & WALLS.RIGHT))  return false;
+        if (dx === -1 && (walls0 & WALLS.LEFT))   return false;
+        if (dy ===  1 && (walls0 & WALLS.BOTTOM)) return false;
+        if (dy === -1 && (walls0 & WALLS.TOP))    return false;
+
+        const nx = ctx.gridX + dx, ny = ctx.gridY + dy;
+        if (ctx.sceneryBlocked.has(`${nx},${ny}`)) return false;
+
+        ctx.setMoving(true);
+
+        // Collect up to 3 cells we can dash through
+        const steps: { x: number; y: number }[] = [];
+        let cx = ctx.gridX, cy = ctx.gridY;
+        for (let s = 0; s < 3; s++) {
+            const w = ctx.cells[cy][cx];
+            if (dx ===  1 && (w & WALLS.RIGHT))  break;
+            if (dx === -1 && (w & WALLS.LEFT))   break;
+            if (dy ===  1 && (w & WALLS.BOTTOM)) break;
+            if (dy === -1 && (w & WALLS.TOP))    break;
+            const nsx = cx + dx, nsy = cy + dy;
+            if (nsx < 0 || nsx >= ctx.cols || nsy < 0 || nsy >= ctx.rows) break;
+            if (ctx.sceneryBlocked.has(`${nsx},${nsy}`)) break;
+            const gate = ctx.findGate(cx, cy, nsx, nsy);
+            if (gate) {
+                if (ctx.keyCount === 0) break;
+                ctx.keyCount--;
+                gate.open = true;
+                gate.graphic.destroy();
+                ctx.updateInventory();
+            }
+            cx = nsx;
+            cy = nsy;
+            steps.push({ x: cx, y: cy });
+        }
+
+        if (steps.length === 0) {
+            ctx.setMoving(false);
+            return false;
+        }
+
+        const finalX = steps[steps.length - 1].x;
+        const finalY = steps[steps.length - 1].y;
+        ctx.setGrid(finalX, finalY);
+
+        ctx.scene.tweens.add({
+            targets: ctx.player,
+            x: ctx.worldX(finalX),
+            y: ctx.worldY(finalY),
+            duration: 100 * steps.length,
+            ease: 'Power3',
+            onComplete: () => {
+                ctx.setMoving(false);
+                for (const s of steps) ctx.fog.revealAround(s.x, s.y, ctx.scene.time.now);
+                ctx.collectKey();
+                ctx.checkObjective();
+                ctx.checkGoal();
+            },
+        });
+        // Stretch effect for dash feel
+        if (dx !== 0) {
+            ctx.scene.tweens.add({ targets: ctx.player, scaleX: 1.4, scaleY: 0.7, yoyo: true, duration: 100 });
+        } else {
+            ctx.scene.tweens.add({ targets: ctx.player, scaleX: 0.7, scaleY: 1.4, yoyo: true, duration: 100 });
+        }
+        return true;
+    },
+};
+
+const SKILLS: Record<SeasonName, Skill> = {
+    Winter: HOP,
+    Spring: STING,
+    Summer: GLOW,
+    Fall:   DASH,
+};

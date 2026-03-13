@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS, HEADER } from './constants';
+import { TILE, MAX_COLS, MAX_ROWS, HEADER } from './constants';
 
-const W      = COLS * TILE;
-const MAZE_H = ROWS * TILE;
+const W      = MAX_COLS * TILE + 260; // full canvas width including panel
+const MAZE_H = MAX_ROWS * TILE;
 
 // ── Texture helpers ───────────────────────────────────────────────────────────
 

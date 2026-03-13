@@ -11,12 +11,14 @@ export const OPPOSITE: Record<number, number> = {
     [WALLS.LEFT]:   WALLS.RIGHT,
 };
 
-const DIRS = [
+export const MOVE_DIRS = [
     { dc:  0, dr: -1, wall: WALLS.TOP    },
     { dc:  1, dr:  0, wall: WALLS.RIGHT  },
     { dc:  0, dr:  1, wall: WALLS.BOTTOM },
     { dc: -1, dr:  0, wall: WALLS.LEFT   },
-];
+] as const;
+
+const DIRS = MOVE_DIRS;
 
 function blank(cols: number, rows: number) {
     return Array.from({ length: rows }, () => Array(cols).fill(ALL_WALLS)) as number[][];

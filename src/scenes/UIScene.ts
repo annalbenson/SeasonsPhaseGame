@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TILE, COLS, ROWS, HEADER, PANEL, VERSION } from '../constants';
+import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL, VERSION } from '../constants';
 
 // Runs in parallel on top of every other scene.
 // Owns the mute button so neither MenuScene nor GameScene has to.
@@ -10,7 +10,7 @@ export default class UIScene extends Phaser.Scene {
 
     create() {
         this.btn = this.add
-            .text(COLS * TILE + PANEL - 10, Math.round(HEADER / 2), this.label(), {
+            .text(MAX_COLS * TILE + PANEL - 10, Math.round(HEADER / 2), this.label(), {
                 fontSize: '15px',
                 color: '#aabbcc',
                 backgroundColor: '#00000055',
@@ -28,7 +28,7 @@ export default class UIScene extends Phaser.Scene {
         this.btn.on('pointerout',  () => this.btn.setAlpha(1));
 
         // Version tag — bottom-right corner
-        this.add.text(COLS * TILE + PANEL - 8, ROWS * TILE + HEADER - 8, VERSION, {
+        this.add.text(MAX_COLS * TILE + PANEL - 8, MAX_ROWS * TILE + HEADER - 8, VERSION, {
             fontSize: '12px',
             color: '#555566',
         }).setOrigin(1, 1).setDepth(100);
