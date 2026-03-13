@@ -118,6 +118,11 @@ const FALL: SeasonTheme = {
     textHex:     hex(0x200a02),
 };
 
+// ── Season lookup by name ────────────────────────────────────────────────────
+export const SEASONS: Record<string, SeasonTheme> = {
+    Winter: WINTER, Spring: SPRING, Summer: SUMMER, Fall: FALL,
+};
+
 // ── 12 months ────────────────────────────────────────────────────────────────
 
 // Grid sizes: 8→10→12 within each season (1st, 2nd, 3rd month)

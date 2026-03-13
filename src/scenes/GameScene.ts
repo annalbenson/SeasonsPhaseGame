@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { ALGORITHMS, AlgorithmKey, WALLS, OPPOSITE, widenCorridors } from '../maze';
-import { MONTHS, MonthConfig, SeasonTheme } from '../seasons';
+import { MONTHS, SEASONS, MonthConfig, SeasonTheme } from '../seasons';
+import { CustomMapData } from '../toolkit';
 import { addWeather } from '../weather';
 import { Hazard } from '../hazard';
 import { FogOfWar } from '../fog';
@@ -80,6 +81,7 @@ export default class GameScene extends Phaser.Scene {
 
     private fog!: FogOfWar;
     private hardMode = false;
+    private customMap: CustomMapData | null = null;
 
     private skill!: SkillManager;
     private skillKey!: Phaser.Input.Keyboard.Key;
@@ -102,11 +104,23 @@ export default class GameScene extends Phaser.Scene {
 
     constructor() { super('GameScene'); }
 
-    init(data: { algorithm?: AlgorithmKey; month?: number; from?: string; hard?: boolean }) {
+    init(data: { algorithm?: AlgorithmKey; month?: number; from?: string; hard?: boolean; customMap?: CustomMapData }) {
         this.algorithm   = data.algorithm ?? 'kruskals';
-        this.monthConfig = MONTHS[(data.month ?? 1) - 1];
         this.fromScene   = data.from ?? 'TitleScene';
         this.hardMode    = data.hard ?? false;
+        this.customMap   = data.customMap ?? null;
+
+        if (this.customMap) {
+            const season = SEASONS[this.customMap.seasonName];
+            this.monthConfig = {
+                month: 1, name: 'Custom', shortName: 'Cst', season,
+                quote: 'A world of your own making.', author: 'You',
+                cols: this.customMap.cols, rows: this.customMap.rows,
+            };
+        } else {
+            this.monthConfig = MONTHS[(data.month ?? 1) - 1];
+        }
+
         this.skill       = new SkillManager(this.monthConfig.season.name);
         this.cols        = this.monthConfig.cols;
         this.rows        = this.monthConfig.rows;
@@ -125,24 +139,29 @@ export default class GameScene extends Phaser.Scene {
         this.objDone      = false;
         this.goalLock     = null;
         this.objText      = null;
-        // fog is created fresh in create(), no reset needed here
-        // skill is created fresh in create()
 
-        // Pick two distinct random corners for start and goal
-        const corners = [
-            { col: 0,            row: 0            },
-            { col: this.cols - 1, row: 0            },
-            { col: 0,            row: this.rows - 1 },
-            { col: this.cols - 1, row: this.rows - 1 },
-        ];
-        for (let i = corners.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [corners[i], corners[j]] = [corners[j], corners[i]];
+        if (this.customMap) {
+            this.startCol = this.customMap.start.col;
+            this.startRow = this.customMap.start.row;
+            this.goalCol  = this.customMap.goal.col;
+            this.goalRow  = this.customMap.goal.row;
+        } else {
+            // Pick two distinct random corners for start and goal
+            const corners = [
+                { col: 0,            row: 0            },
+                { col: this.cols - 1, row: 0            },
+                { col: 0,            row: this.rows - 1 },
+                { col: this.cols - 1, row: this.rows - 1 },
+            ];
+            for (let i = corners.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [corners[i], corners[j]] = [corners[j], corners[i]];
+            }
+            this.startCol = corners[0].col;
+            this.startRow = corners[0].row;
+            this.goalCol  = corners[1].col;
+            this.goalRow  = corners[1].row;
         }
-        this.startCol = corners[0].col;
-        this.startRow = corners[0].row;
-        this.goalCol  = corners[1].col;
-        this.goalRow  = corners[1].row;
     }
 
     create() {
@@ -152,50 +171,57 @@ export default class GameScene extends Phaser.Scene {
         this.cameras.main.setBackgroundColor(season.bgColor);
 
         // ── Maze ──────────────────────────────────────────────────────────────
-        this.cells = ALGORITHMS[this.algorithm].generate(this.cols, this.rows);
+        let widenedCells = new Set<string>();
+        if (this.customMap) {
+            // Custom map: use user-provided cells directly
+            this.cells = this.customMap.cells.map(row => [...row]);
+            this.gateEdges = this.customMap.gates.map(g => ({ from: { ...g.from }, to: { ...g.to } }));
+        } else {
+            this.cells = ALGORITHMS[this.algorithm].generate(this.cols, this.rows);
 
-        // Find gate edges on the spanning tree (every edge is a bridge here).
-        // Gate count scales with grid: 8→1, 10→2, 12→3
-        const numGates = Math.max(1, Math.floor(this.cols / 4) - 1);
-        const treePath = solvePath(this.cells, this.cols, this.rows,
-            this.startCol, this.startRow, this.goalCol, this.goalRow);
-        this.gateEdges = [];
-        if (treePath.length >= 10) {
-            for (let i = 0; i < numGates; i++) {
-                const frac = (i + 1) / (numGates + 1);
-                const idx = Math.floor(treePath.length * frac);
-                if (idx + 1 < treePath.length) {
-                    this.gateEdges.push({ from: treePath[idx], to: treePath[idx + 1] });
+            // Find gate edges on the spanning tree (every edge is a bridge here).
+            // Gate count scales with grid: 8→1, 10→2, 12→3
+            const numGates = Math.max(1, Math.floor(this.cols / 4) - 1);
+            const treePath = solvePath(this.cells, this.cols, this.rows,
+                this.startCol, this.startRow, this.goalCol, this.goalRow);
+            this.gateEdges = [];
+            if (treePath.length >= 10) {
+                for (let i = 0; i < numGates; i++) {
+                    const frac = (i + 1) / (numGates + 1);
+                    const idx = Math.floor(treePath.length * frac);
+                    if (idx + 1 < treePath.length) {
+                        this.gateEdges.push({ from: treePath[idx], to: treePath[idx + 1] });
+                    }
                 }
             }
-        }
 
-        // Block gate edges before widening so corridors can't create bypasses
-        for (const { from, to } of this.gateEdges) {
-            const dc = to.col - from.col, dr = to.row - from.row;
-            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
-            this.cells[from.row][from.col] |= fw;
-            this.cells[to.row][to.col]     |= OPPOSITE[fw];
-        }
-
-        // Compute zone map so widening only connects cells within the same zone
-        // (prevents creating bypass paths around gates)
-        let zoneMap: Map<string, number> | undefined;
-        if (this.gateEdges.length > 0) {
-            zoneMap = new Map();
-            // Zone 0: reachable from start
-            const z0 = floodFill(this.cells, this.cols, this.rows, this.startCol, this.startRow);
-            for (const k of z0) zoneMap.set(k, 0);
-            // Zones 1..N: reachable from each gate's far side
-            for (let i = 0; i < this.gateEdges.length; i++) {
-                const gTo = this.gateEdges[i].to;
-                const zi = floodFill(this.cells, this.cols, this.rows, gTo.col, gTo.row);
-                for (const k of zi) zoneMap.set(k, i + 1);
+            // Block gate edges before widening so corridors can't create bypasses
+            for (const { from, to } of this.gateEdges) {
+                const dc = to.col - from.col, dr = to.row - from.row;
+                const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+                this.cells[from.row][from.col] |= fw;
+                this.cells[to.row][to.col]     |= OPPOSITE[fw];
             }
-        }
 
-        // Widen some corridors — creates occasional 2-tile-wide sections
-        const widenedCells = widenCorridors(this.cells, this.cols, this.rows, 0.13, zoneMap);
+            // Compute zone map so widening only connects cells within the same zone
+            // (prevents creating bypass paths around gates)
+            let zoneMap: Map<string, number> | undefined;
+            if (this.gateEdges.length > 0) {
+                zoneMap = new Map();
+                // Zone 0: reachable from start
+                const z0 = floodFill(this.cells, this.cols, this.rows, this.startCol, this.startRow);
+                for (const k of z0) zoneMap.set(k, 0);
+                // Zones 1..N: reachable from each gate's far side
+                for (let i = 0; i < this.gateEdges.length; i++) {
+                    const gTo = this.gateEdges[i].to;
+                    const zi = floodFill(this.cells, this.cols, this.rows, gTo.col, gTo.row);
+                    for (const k of zi) zoneMap.set(k, i + 1);
+                }
+            }
+
+            // Widen some corridors — creates occasional 2-tile-wide sections
+            widenedCells = widenCorridors(this.cells, this.cols, this.rows, 0.13, zoneMap);
+        }
 
         // Re-open gate passages (the gate objects will block the player, not walls)
         for (const { from, to } of this.gateEdges) {
@@ -252,22 +278,27 @@ export default class GameScene extends Phaser.Scene {
         }
         this.mazeLayer.add(g);
 
-        // Bushes go into mazeLayer BEFORE puzzle items so keys/gates render on top
-        this.placeBushes(widenedCells, season);
+        if (this.customMap) {
+            // Custom map: place entities from user data
+            this.placeCustomEntities(season);
+        } else {
+            // Bushes go into mazeLayer BEFORE puzzle items so keys/gates render on top
+            this.placeBushes(widenedCells, season);
 
-        // Winter: place blocking rocks on corridors that require HOP to pass
-        if (season.name === 'Winter') {
-            this.placeBlockingRocks(season);
+            // Winter: place blocking rocks on corridors that require HOP to pass
+            if (season.name === 'Winter') {
+                this.placeBlockingRocks(season);
+            }
+
+            // Keys + gates (also added to mazeLayer inside placePuzzleItems)
+            this.placePuzzleItems(season);
+
+            // Verify all keys are reachable from start (respecting scenery and gates)
+            this.verifyKeyReachability();
+
+            // Season objectives — placed after puzzle items so we can avoid their cells
+            this.placeObjectives(season);
         }
-
-        // Keys + gates (also added to mazeLayer inside placePuzzleItems)
-        this.placePuzzleItems(season);
-
-        // Verify all keys are reachable from start (respecting scenery and gates)
-        this.verifyKeyReachability();
-
-        // Season objectives — placed after puzzle items so we can avoid their cells
-        this.placeObjectives(season);
 
         // ── Weather ───────────────────────────────────────────────────────────
         addWeather(this, season.name);
@@ -282,7 +313,11 @@ export default class GameScene extends Phaser.Scene {
         this.player = this.createPlayerSprite(startX, startY, season);
         this.player.setDepth(2);
 
-        this.spawnHazard(season);
+        if (this.customMap) {
+            this.spawnCustomHazards(season);
+        } else {
+            this.spawnHazard(season);
+        }
 
         const trailTints: Record<string, number[]> = {
             Spring: [0xffdd00, 0xffffff, 0xffaa00, 0xffee88],
@@ -1602,6 +1637,7 @@ export default class GameScene extends Phaser.Scene {
                             algorithm: this.algorithm,
                             from:      this.fromScene,
                             hard:      this.hardMode,
+                            customMap: this.customMap ?? undefined,
                         });
                     });
                 });
@@ -1891,6 +1927,113 @@ export default class GameScene extends Phaser.Scene {
         );
     }
 
+    // ── Custom map entity placement ─────────────────────────────────────────
+    private placeCustomEntities(season: SeasonTheme) {
+        const cm = this.customMap!;
+
+        // Bushes (hiding spots)
+        for (const { col, row } of cm.bushes) {
+            this.bushCells.add(`${col},${row}`);
+            this.drawBushAt(col, row, season);
+        }
+
+        // Scenic obstacles
+        for (const { col, row } of cm.scenery) {
+            this.sceneryBlocked.add(`${col},${row}`);
+            this.drawScenery(col, row, season);
+        }
+
+        // Keys
+        for (const pos of cm.keys) {
+            const rect = this.add
+                .rectangle(pos.col * TILE + TILE / 2, pos.row * TILE + TILE / 2, 18, 18, season.keyColor)
+                .setRotation(Math.PI / 4);
+            this.mazeLayer.add(rect);
+            this.keyItems.set(`${pos.col},${pos.row}`, rect);
+        }
+
+        // Gates
+        for (const { from, to } of cm.gates) {
+            const dc = to.col - from.col;
+            const dr = to.row - from.row;
+            let gx: number, gy: number, gw: number, gh: number;
+            if      (dc ===  1) { gx = from.col * TILE + TILE;     gy = from.row * TILE + TILE / 2; gw = 10; gh = TILE - 10; }
+            else if (dc === -1) { gx = from.col * TILE;             gy = from.row * TILE + TILE / 2; gw = 10; gh = TILE - 10; }
+            else if (dr ===  1) { gx = from.col * TILE + TILE / 2; gy = from.row * TILE + TILE;     gw = TILE - 10; gh = 10; }
+            else                { gx = from.col * TILE + TILE / 2; gy = from.row * TILE;            gw = TILE - 10; gh = 10; }
+            const graphic = this.add.rectangle(gx, gy, gw, gh, season.gateColor);
+            this.mazeLayer.add(graphic);
+            this.gates.push({ fromCol: from.col, fromRow: from.row, toCol: to.col, toRow: to.row, graphic, open: false });
+        }
+        if (this.gates.length > 0) {
+            this.gate1Cell = { col: cm.gates[0].from.col, row: cm.gates[0].from.row };
+        }
+
+        // Objectives
+        this.objTotal = cm.objectives.length;
+        for (const { col, row } of cm.objectives) {
+            const cx = this.worldX(col);
+            const cy = this.worldY(row);
+            let container: Phaser.GameObjects.Container;
+            switch (season.name) {
+                case 'Spring': container = this.buildFlowerSprite(cx, cy);   break;
+                case 'Summer': container = this.buildPlantSprite(cx, cy);    break;
+                case 'Winter': container = this.buildSnowflakeSprite(cx, cy); break;
+                default:       container = this.buildAcornSprite(cx, cy);    break;
+            }
+            this.objectives.set(`${col},${row}`, container);
+        }
+        // If no objectives, mark as done immediately so goal is accessible
+        if (this.objTotal === 0) {
+            this.objDone = true;
+            if (this.goalLock) { this.goalLock.destroy(); this.goalLock = null; }
+        }
+        this.updateObjText();
+    }
+
+    private spawnCustomHazards(season: SeasonTheme) {
+        const cm = this.customMap!;
+        if (cm.enemies.length === 0) return;
+
+        const onCaught = () => {
+            this.lives--;
+            this.updateLives();
+            if (this.lives <= 0) {
+                this.time.delayedCall(700, () => {
+                    for (const h of this.hazards) h.destroy();
+                    this.cameras.main.fadeOut(600, 0, 0, 0);
+                    this.cameras.main.once('camerafadeoutcomplete', () => {
+                        this.scene.start('GameScene', {
+                            customMap: this.customMap ?? undefined,
+                            from: 'ToolkitScene',
+                        });
+                    });
+                });
+            } else {
+                this.tweens.killTweensOf(this.player);
+                this.gridX    = this.startCol;
+                this.gridY    = this.startRow;
+                this.moving   = false;
+                this.isHiding = false;
+                this.tweens.add({
+                    targets:  this.player,
+                    x:        this.worldX(this.startCol),
+                    y:        this.worldY(this.startRow),
+                    alpha:    1.0,
+                    duration: 500,
+                    ease:     'Power2',
+                });
+                this.fog.revealAround(this.startCol, this.startRow, this.time.now);
+                for (const h of this.hazards) h.scatter();
+            }
+        };
+
+        for (const { col, row } of cm.enemies) {
+            this.hazards.push(new Hazard(this, this.cells, col, row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
+        }
+        for (const h of this.hazards) h.setSiblings(this.hazards);
+    }
+
     // ── Month progression ─────────────────────────────────────────────────────
     private goToEnd() {
         for (const h of this.hazards) h.destroy();
@@ -1901,6 +2044,18 @@ export default class GameScene extends Phaser.Scene {
     private checkGoal() {
         if (this.gridX !== this.goalCol || this.gridY !== this.goalRow) return;
         if (!this.objDone) return;
+
+        // Custom map: return to toolkit on completion
+        if (this.customMap) {
+            this.time.delayedCall(500, () => {
+                for (const h of this.hazards) h.destroy();
+                this.cameras.main.fadeOut(800, 0, 0, 0);
+                this.cameras.main.once('camerafadeoutcomplete', () => {
+                    this.scene.start('ToolkitScene');
+                });
+            });
+            return;
+        }
 
         if (this.monthConfig.month === 12) {
             this.time.delayedCall(500, () => this.goToEnd());

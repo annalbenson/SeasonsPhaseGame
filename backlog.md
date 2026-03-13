@@ -146,5 +146,8 @@ Beyond fog and skills, the side panel, puzzle placement, and maze rendering coul
 ### Missing depth management system
 Manual `setDepth()` calls with magic numbers (1.4, 1.5, 2, 100) scattered throughout. No documentation of layer order.
 
+### Test hop-aware BFS
+`hopAwareBfs` is a private method on GameScene — pure grid logic (walls + scenery) that validates winter levels are solvable when blocking rocks require HOP. Extract to `mazeUtils.ts` and add tests that generate levels with blocking rocks on the solution path and verify solvability via hop.
+
 ### No ESLint / Prettier
 No automated code style enforcement configured.

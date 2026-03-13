@@ -105,6 +105,13 @@ export default class TitleScene extends Phaser.Scene {
             });
         });
 
+        makeButton(W / 2, H / 2 + 190, 'Map Toolkit', () => {
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('ToolkitScene');
+            });
+        });
+
         // ── Music + persistent HUD ────────────────────────────────────────────
         if (!this.sound.get('bgm')?.isPlaying) {
             this.sound.play('bgm', { loop: true, volume: 0.07 });
