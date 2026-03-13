@@ -151,3 +151,34 @@ Manual `setDepth()` calls with magic numbers (1.4, 1.5, 2, 100) scattered throug
 
 ### No ESLint / Prettier
 No automated code style enforcement configured.
+
+---
+
+## Map Toolkit improvements
+
+### ✅ Undo/redo
+Snapshot-based undo (Z) and redo (Y) with 50-deep stack.
+
+### ✅ Save/load maps
+localStorage persistence with up to 10 saved maps, load from setup screen.
+
+### ✅ Generate random maze
+"Generate" button runs Kruskal's to pre-fill the grid as a starting point for editing.
+
+### ✅ Entity count display
+Tool panel shows counts next to each entity type (e.g. "Enemy 2/4", "Key 3").
+
+### Drag to paint walls
+Hold+drag to toggle multiple wall edges in one gesture instead of clicking each edge individually.
+
+### Custom purple-yellow color scheme
+Original stretch goal: a custom toolkit-only palette (purple/yellow from the tutorial) as a 5th season option.
+
+### Share maps
+Export/import maps as a compact string (base64-encoded JSON) for sharing with others.
+
+### Map rename
+Let users name their saved maps instead of auto-generated names.
+
+### Confirmation on Clear
+Prompt before wiping the entire map to prevent accidental loss.
