@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { TILE } from './constants';
-import { WALLS } from './maze';
+import { WALLS, OPPOSITE } from './maze';
 import { SeasonTheme } from './seasons';
 import { CustomMapData } from './toolkit';
 import { Cell, solvePath, floodFill, bfsDistanceMap } from './mazeUtils';
