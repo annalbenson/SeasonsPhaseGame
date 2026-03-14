@@ -9,9 +9,9 @@ import { FogOfWar } from '../fog';
 import { SkillManager, SkillContext } from '../skills';
 import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUtils';
 import { statsEvents, STAT } from '../statsEmitter';
-import { createPlayerSprite, ensureSparkleTexture, buildObjectiveSprite } from '../sprites';
-import { drawBushAt, drawScenery } from '../scenery';
+import { createPlayerSprite, ensureSparkleTexture } from '../sprites';
 import { buildHeader, buildSidePanel } from '../sidePanel';
+import { PlacementCtx, placeBushes, placeBlockingRocks, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
 
 
 // Returns the first month of the season that contains `month`
@@ -100,6 +100,22 @@ export default class GameScene extends Phaser.Scene {
     private worldX(col: number) { return col * TILE + TILE / 2 + this.offsetX; }
     /** World-space Y for a grid row (includes header offset). */
     private worldY(row: number) { return row * TILE + TILE / 2 + HEADER + this.offsetY; }
+
+    /** Build a PlacementCtx snapshot for the entity placement module. */
+    private buildPlacementCtx(): PlacementCtx {
+        return {
+            scene: this, mazeLayer: this.mazeLayer,
+            cells: this.cells, cols: this.cols, rows: this.rows,
+            startCol: this.startCol, startRow: this.startRow,
+            goalCol: this.goalCol, goalRow: this.goalRow,
+            bushCells: this.bushCells, sceneryBlocked: this.sceneryBlocked,
+            gateEdges: this.gateEdges, keyItems: this.keyItems,
+            objectives: this.objectives, gates: this.gates,
+            gate1Cell: this.gate1Cell,
+            worldX: (col: number) => this.worldX(col),
+            worldY: (row: number) => this.worldY(row),
+        };
+    }
 
     constructor() { super('GameScene'); }
 
@@ -277,16 +293,25 @@ export default class GameScene extends Phaser.Scene {
         }
         this.mazeLayer.add(g);
 
+        const pCtx = this.buildPlacementCtx();
+
         if (this.customMap) {
             // Custom map: place entities from user data
-            this.placeCustomEntities(season);
+            this.objTotal = placeCustomEntities(pCtx, season, this.customMap);
+            this.gate1Cell = pCtx.gate1Cell;
+            // If no objectives, mark as done immediately so goal is accessible
+            if (this.objTotal === 0) {
+                this.objDone = true;
+                if (this.goalLock) { this.goalLock.destroy(); this.goalLock = null; }
+            }
+            this.updateObjText();
         } else {
             // Bushes go into mazeLayer BEFORE puzzle items so keys/gates render on top
-            this.placeBushes(widenedCells, season);
+            placeBushes(pCtx, widenedCells, season.name);
 
             // Winter: place blocking rocks on corridors that require HOP to pass
             if (season.name === 'Winter') {
-                this.placeBlockingRocks(season);
+                placeBlockingRocks(pCtx, season.name);
             }
 
             // Keys + gates (also added to mazeLayer inside placePuzzleItems)
@@ -296,7 +321,8 @@ export default class GameScene extends Phaser.Scene {
             this.verifyKeyReachability();
 
             // Season objectives — placed after puzzle items so we can avoid their cells
-            this.placeObjectives(season);
+            this.objTotal = placeObjectives(pCtx, season);
+            this.updateObjText();
         }
 
         // ── Weather ───────────────────────────────────────────────────────────
@@ -812,229 +838,6 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
-    // ── Bush placement ────────────────────────────────────────────────────────
-    private placeBushes(widenedCells: Set<string>, season: MonthConfig['season']) {
-        for (const key of widenedCells) {
-            const [col, row] = key.split(',').map(Number);
-            if (col === this.startCol && row === this.startRow) continue;
-            if (col === this.goalCol  && row === this.goalRow)  continue;
-            if (Math.random() > 0.65)                          continue;
-            this.bushCells.add(key);
-            drawBushAt(this, this.mazeLayer, col, row, season.name);
-        }
-
-        // Guarantee bushes every ~5 steps along the main solution path so the
-        // player always has a hiding spot reachable from common corridors.
-        const path = solvePath(this.cells, this.cols, this.rows, this.startCol, this.startRow, this.goalCol, this.goalRow);
-
-        // Scenic decorations on remaining widened cells that didn't get a bush.
-        // Must not land on the solution path or gate-adjacent cells (they're blocking).
-        const pathSet = new Set(path.map(c => `${c.col},${c.row}`));
-        // Protect cells adjacent to gates so the player can always reach gate edges
-        const gateProtected = new Set<string>();
-        for (const { from, to } of this.gateEdges) {
-            gateProtected.add(`${from.col},${from.row}`);
-            gateProtected.add(`${to.col},${to.row}`);
-        }
-        for (const key of widenedCells) {
-            if (this.bushCells.has(key)) continue;
-            if (pathSet.has(key)) continue;
-            if (gateProtected.has(key)) continue;
-            if (Math.random() > 0.45) continue;
-            const [col, row] = key.split(',').map(Number);
-            if (col === this.startCol && row === this.startRow) continue;
-            if (col === this.goalCol  && row === this.goalRow)  continue;
-            this.sceneryBlocked.add(key);
-            drawScenery(this, this.mazeLayer, col, row, season.name);
-        }
-
-        // Second pass: place scenery on dead-end cells (3 walls) across the grid
-        // so every level gets landmarks even when few widened cells exist.
-        // Scale target: 8→3, 10→5, 12→7
-        const targetCount = Math.floor(this.cols * this.rows / 20);
-        const deadEnds: string[] = [];
-        for (let row = 0; row < this.rows; row++) {
-            for (let col = 0; col < this.cols; col++) {
-                const key = `${col},${row}`;
-                if (this.sceneryBlocked.has(key)) continue;
-                if (this.bushCells.has(key)) continue;
-                if (pathSet.has(key)) continue;
-                if (gateProtected.has(key)) continue;
-                if (col === this.startCol && row === this.startRow) continue;
-                if (col === this.goalCol  && row === this.goalRow)  continue;
-                const w = this.cells[row][col];
-                const wallCount = ((w & WALLS.TOP) ? 1 : 0) + ((w & WALLS.RIGHT) ? 1 : 0)
-                    + ((w & WALLS.BOTTOM) ? 1 : 0) + ((w & WALLS.LEFT) ? 1 : 0);
-                if (wallCount >= 3) deadEnds.push(key);
-            }
-        }
-        // Shuffle and pick up to targetCount minus what we already placed
-        for (let i = deadEnds.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [deadEnds[i], deadEnds[j]] = [deadEnds[j], deadEnds[i]];
-        }
-        const needed = Math.max(0, targetCount - this.sceneryBlocked.size);
-        for (let i = 0; i < Math.min(needed, deadEnds.length); i++) {
-            const key = deadEnds[i];
-            const [col, row] = key.split(',').map(Number);
-            this.sceneryBlocked.add(key);
-            drawScenery(this, this.mazeLayer, col, row, season.name);
-        }
-
-        // Bush spacing scales with grid: 8→4, 10→5, 12→6
-        const step = Math.floor(this.cols / 2);
-        for (let i = step; i < path.length - step; i += step) {
-            this.guaranteeBushNear(path[i].col, path[i].row, season);
-        }
-    }
-
-    // ── Scenic obstacle (blocking landmark, tile-sized) ────────────────────
-    // ── Winter blocking rocks — require HOP to pass ───────────────────────────
-    private placeBlockingRocks(season: SeasonTheme) {
-        const MIN_ROCKS = 2;
-        // Scale: 8→2, 10→3, 12→4
-        const count = Math.max(MIN_ROCKS, Math.floor(this.cols / 4));
-
-        // Build the solution path so we can prefer cells ON it (forces HOP usage)
-        const solPath = solvePath(this.cells, this.cols, this.rows,
-            this.startCol, this.startRow, this.goalCol, this.goalRow, this.sceneryBlocked);
-        const solPathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
-
-        // Protect cells adjacent to gates — a rock next to a gate makes HOP
-        // fail because the gate blocks the landing check.
-        const gateProtected = new Set<string>();
-        for (const { from, to } of this.gateEdges) {
-            gateProtected.add(`${from.col},${from.row}`);
-            gateProtected.add(`${to.col},${to.row}`);
-        }
-
-        // Candidates: any cell that can be hopped over (has at least one pair of
-        // opposite open walls so the player can approach from one side and land
-        // on the other). Prefer solution-path cells — they guarantee the player
-        // MUST use HOP to proceed.
-        const onPath: Cell[] = [];
-        const offPath: Cell[] = [];
-        for (let row = 0; row < this.rows; row++) {
-            for (let col = 0; col < this.cols; col++) {
-                const key = `${col},${row}`;
-                if (this.sceneryBlocked.has(key)) continue;
-                if (this.bushCells.has(key)) continue;
-                if (gateProtected.has(key)) continue;
-                if (col === this.startCol && row === this.startRow) continue;
-                if (col === this.goalCol && row === this.goalRow) continue;
-                const distStart = Math.abs(col - this.startCol) + Math.abs(row - this.startRow);
-                const distGoal = Math.abs(col - this.goalCol) + Math.abs(row - this.goalRow);
-                if (distStart <= 2 || distGoal <= 2) continue;
-
-                // Must have at least one hoppable axis: both sides open
-                const w = this.cells[row][col];
-                const hoppableH = !(w & WALLS.LEFT) && !(w & WALLS.RIGHT);
-                const hoppableV = !(w & WALLS.TOP) && !(w & WALLS.BOTTOM);
-                if (!hoppableH && !hoppableV) continue;
-
-                if (solPathSet.has(key)) {
-                    onPath.push({ col, row });
-                } else {
-                    offPath.push({ col, row });
-                }
-            }
-        }
-
-        // Shuffle both pools
-        const shuffle = (arr: Cell[]) => {
-            for (let i = arr.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [arr[i], arr[j]] = [arr[j], arr[i]];
-            }
-        };
-        shuffle(onPath);
-        shuffle(offPath);
-
-        // Place on-path rocks first (these force HOP), then off-path
-        const candidates = [...onPath, ...offPath];
-
-        let placed = 0;
-        for (const c of candidates) {
-            if (placed >= count) break;
-            const key = `${c.col},${c.row}`;
-            this.sceneryBlocked.add(key);
-
-            if (this.hopAwareBfs()) {
-                drawScenery(this, this.mazeLayer, c.col, c.row, season.name);
-                placed++;
-            } else {
-                // Undo — this rock makes the level unsolvable even with HOP
-                this.sceneryBlocked.delete(key);
-            }
-        }
-    }
-
-    /** BFS from start to goal that treats hop-over-scenery as a valid move. */
-    private hopAwareBfs(): boolean {
-        const visited = new Set<string>();
-        const queue: Cell[] = [{ col: this.startCol, row: this.startRow }];
-        visited.add(`${this.startCol},${this.startRow}`);
-
-        while (queue.length > 0) {
-            const { col, row } = queue.shift()!;
-            if (col === this.goalCol && row === this.goalRow) return true;
-
-            for (const { dc, dr, wall } of MOVE_DIRS) {
-                if (this.cells[row][col] & wall) continue;
-                const nc = col + dc, nr = row + dr;
-                if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.rows) continue;
-                const nk = `${nc},${nr}`;
-
-                if (this.sceneryBlocked.has(nk)) {
-                    // Try hopping over it
-                    const lc = col + dc * 2, lr = row + dr * 2;
-                    if (lc < 0 || lc >= this.cols || lr < 0 || lr >= this.rows) continue;
-                    const lk = `${lc},${lr}`;
-                    if (visited.has(lk)) continue;
-                    if (this.sceneryBlocked.has(lk)) continue;
-                    // Check wall from adj to landing
-                    const adjWalls = this.cells[nr][nc];
-                    if (dc === 1 && (adjWalls & WALLS.RIGHT)) continue;
-                    if (dc === -1 && (adjWalls & WALLS.LEFT)) continue;
-                    if (dr === 1 && (adjWalls & WALLS.BOTTOM)) continue;
-                    if (dr === -1 && (adjWalls & WALLS.TOP)) continue;
-                    visited.add(lk);
-                    queue.push({ col: lc, row: lr });
-                } else {
-                    if (visited.has(nk)) continue;
-                    visited.add(nk);
-                    queue.push({ col: nc, row: nr });
-                }
-            }
-        }
-        return false;
-    }
-
-    // ── Guarantee a hiding spot near a given cell ─────────────────────────────
-    private guaranteeBushNear(hCol: number, hRow: number, season: MonthConfig['season']) {
-        // Already have a bush within Manhattan 2? Nothing to do.
-        for (let dr = -2; dr <= 2; dr++) {
-            for (let dc = -2; dc <= 2; dc++) {
-                if (Math.abs(dc) + Math.abs(dr) > 2) continue;
-                if (this.bushCells.has(`${hCol + dc},${hRow + dr}`)) return;
-            }
-        }
-        // Pick a random orthogonal neighbour to force a bush into
-        const dirs = [{ dc: 0, dr: -1 }, { dc: 1, dr: 0 }, { dc: 0, dr: 1 }, { dc: -1, dr: 0 }];
-        const valid = dirs
-            .map(({ dc, dr }) => ({ col: hCol + dc, row: hRow + dr }))
-            .filter(({ col, row }) =>
-                col >= 0 && col < this.cols && row >= 0 && row < this.rows &&
-                !(col === this.startCol && row === this.startRow) &&
-                !(col === this.goalCol  && row === this.goalRow) &&
-                !this.sceneryBlocked.has(`${col},${row}`)
-            );
-        if (valid.length === 0) return;
-        const { col, row } = valid[Math.floor(Math.random() * valid.length)];
-        this.bushCells.add(`${col},${row}`);
-        drawBushAt(this, this.mazeLayer, col, row, season.name);
-    }
-
     // ── Hazard spawn ──────────────────────────────────────────────────────────
     private spawnHazard(season: SeasonTheme) {
         const onCaught = () => {
@@ -1109,16 +912,17 @@ export default class GameScene extends Phaser.Scene {
         }
 
         // Enemy 1: in the start-side zone
+        const pCtx = this.buildPlacementCtx();
         if (nearStart.length > 0) {
             const pos = pick(nearStart);
-            this.guaranteeBushNear(pos.col, pos.row, season);
+            guaranteeBushNear(pCtx, pos.col, pos.row, season.name);
             this.hazards.push(new Hazard(this, this.cells, pos.col, pos.row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
         }
 
         // Enemy 2: in the goal-side zone
         if (nearGoal.length > 0) {
             const pos = pick(nearGoal);
-            this.guaranteeBushNear(pos.col, pos.row, season);
+            guaranteeBushNear(pCtx, pos.col, pos.row, season.name);
             this.hazards.push(new Hazard(this, this.cells, pos.col, pos.row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
         }
 
@@ -1131,97 +935,6 @@ export default class GameScene extends Phaser.Scene {
         const full  = '♥'.repeat(Math.max(0, this.lives));
         const empty = '♡'.repeat(Math.max(0, 3 - this.lives));
         this.livesText.setText(full + empty);
-    }
-
-    // ── Season objectives ─────────────────────────────────────────────────────
-    private placeObjectives(season: SeasonTheme) {
-        // Scale objectives with grid: 8→2, 10→2, 12→3
-        const count = Math.floor(this.cols / 4);
-        this.objTotal = count;
-
-        // Only place objectives on cells the player can physically reach
-        const reachable = floodFill(this.cells, this.cols, this.rows,
-            this.startCol, this.startRow, this.sceneryBlocked);
-
-        const avoid = new Set<string>([`${this.startCol},${this.startRow}`, `${this.goalCol},${this.goalRow}`]);
-        for (const k of this.keyItems.keys()) avoid.add(k);
-        for (const k of this.sceneryBlocked) avoid.add(k);
-
-        const candidates: Cell[] = [];
-        for (const key of reachable) {
-            if (avoid.has(key)) continue;
-            const [col, row] = key.split(',').map(Number);
-            candidates.push({ col, row });
-        }
-
-        // Compute zone membership (flood fill with gate walls blocked)
-        const zoneOf = new Map<string, number>();
-        if (this.gateEdges.length >= 1) {
-            const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
-            for (const { from, to } of this.gateEdges) {
-                const dc = to.col - from.col, dr = to.row - from.row;
-                const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
-                wallOps.push({ from, to, fw });
-                this.cells[from.row][from.col] |= fw;
-                this.cells[to.row][to.col] |= OPPOSITE[fw];
-            }
-            const z0 = floodFill(this.cells, this.cols, this.rows, this.startCol, this.startRow, this.sceneryBlocked);
-            for (const k of z0) zoneOf.set(k, 0);
-            for (let i = 0; i < this.gateEdges.length; i++) {
-                const gTo = this.gateEdges[i].to;
-                const zi = floodFill(this.cells, this.cols, this.rows, gTo.col, gTo.row, this.sceneryBlocked);
-                for (const k of zi) zoneOf.set(k, i + 1);
-            }
-            for (const { from, to, fw } of wallOps) {
-                this.cells[from.row][from.col] &= ~fw;
-                this.cells[to.row][to.col] &= ~OPPOSITE[fw];
-            }
-        }
-
-        // Distance from solution path for ranking candidates
-        const solPath = solvePath(this.cells, this.cols, this.rows,
-            this.startCol, this.startRow, this.goalCol, this.goalRow,
-            this.sceneryBlocked);
-        const pathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
-        const distFromPath = bfsDistanceMap(this.cells, this.cols, this.rows, pathSet, this.sceneryBlocked);
-
-        // Group candidates by zone
-        const numZones = this.gateEdges.length + 1;
-        const byZone: Cell[][] = Array.from({ length: numZones }, () => []);
-        for (const c of candidates) {
-            const z = zoneOf.get(`${c.col},${c.row}`) ?? 0;
-            byZone[z].push(c);
-        }
-        // Sort each zone's candidates by distance from path (descending)
-        for (const arr of byZone) {
-            arr.sort((a, b) =>
-                (distFromPath.get(`${b.col},${b.row}`) ?? 0) -
-                (distFromPath.get(`${a.col},${a.row}`) ?? 0));
-        }
-
-        // Place at least 1 objective per zone (pick most distant), fill remaining
-        const placed: Cell[] = [];
-        const usedZones = byZone.filter(z => z.length > 0);
-        for (const zoneCands of usedZones) {
-            if (placed.length >= count) break;
-            placed.push(zoneCands.shift()!);
-        }
-        // Fill remaining slots from whichever zone has the most candidates
-        while (placed.length < count) {
-            // Pick from the zone with the most remaining candidates
-            let best = usedZones.filter(z => z.length > 0)
-                .sort((a, b) => b.length - a.length)[0];
-            if (!best || best.length === 0) break;
-            placed.push(best.shift()!);
-        }
-
-        for (const { col, row } of placed) {
-            const cx = this.worldX(col);
-            const cy = this.worldY(row);
-            const container = buildObjectiveSprite(this, cx, cy, season.name);
-            this.objectives.set(`${col},${row}`, container);
-        }
-        this.updateObjText();
     }
 
     private checkObjective() {
@@ -1267,64 +980,6 @@ export default class GameScene extends Phaser.Scene {
             ? `${ '\u25C6'.repeat(this.objTotal) }  ${label} \u2713`
             : `${filled}${empty}  ${label}`
         );
-    }
-
-    // ── Custom map entity placement ─────────────────────────────────────────
-    private placeCustomEntities(season: SeasonTheme) {
-        const cm = this.customMap!;
-
-        // Bushes (hiding spots)
-        for (const { col, row } of cm.bushes) {
-            this.bushCells.add(`${col},${row}`);
-            drawBushAt(this, this.mazeLayer, col, row, season.name);
-        }
-
-        // Scenic obstacles
-        for (const { col, row } of cm.scenery) {
-            this.sceneryBlocked.add(`${col},${row}`);
-            drawScenery(this, this.mazeLayer, col, row, season.name);
-        }
-
-        // Keys
-        for (const pos of cm.keys) {
-            const rect = this.add
-                .rectangle(pos.col * TILE + TILE / 2, pos.row * TILE + TILE / 2, 18, 18, season.keyColor)
-                .setRotation(Math.PI / 4);
-            this.mazeLayer.add(rect);
-            this.keyItems.set(`${pos.col},${pos.row}`, rect);
-        }
-
-        // Gates
-        for (const { from, to } of cm.gates) {
-            const dc = to.col - from.col;
-            const dr = to.row - from.row;
-            let gx: number, gy: number, gw: number, gh: number;
-            if      (dc ===  1) { gx = from.col * TILE + TILE;     gy = from.row * TILE + TILE / 2; gw = 10; gh = TILE - 10; }
-            else if (dc === -1) { gx = from.col * TILE;             gy = from.row * TILE + TILE / 2; gw = 10; gh = TILE - 10; }
-            else if (dr ===  1) { gx = from.col * TILE + TILE / 2; gy = from.row * TILE + TILE;     gw = TILE - 10; gh = 10; }
-            else                { gx = from.col * TILE + TILE / 2; gy = from.row * TILE;            gw = TILE - 10; gh = 10; }
-            const graphic = this.add.rectangle(gx, gy, gw, gh, season.gateColor);
-            this.mazeLayer.add(graphic);
-            this.gates.push({ fromCol: from.col, fromRow: from.row, toCol: to.col, toRow: to.row, graphic, open: false });
-        }
-        if (this.gates.length > 0) {
-            this.gate1Cell = { col: cm.gates[0].from.col, row: cm.gates[0].from.row };
-        }
-
-        // Objectives
-        this.objTotal = cm.objectives.length;
-        for (const { col, row } of cm.objectives) {
-            const cx = this.worldX(col);
-            const cy = this.worldY(row);
-            const container = buildObjectiveSprite(this, cx, cy, season.name);
-            this.objectives.set(`${col},${row}`, container);
-        }
-        // If no objectives, mark as done immediately so goal is accessible
-        if (this.objTotal === 0) {
-            this.objDone = true;
-            if (this.goalLock) { this.goalLock.destroy(); this.goalLock = null; }
-        }
-        this.updateObjText();
     }
 
     private spawnCustomHazards(season: SeasonTheme) {

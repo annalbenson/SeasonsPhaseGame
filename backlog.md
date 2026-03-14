@@ -134,8 +134,8 @@ Season-specific skill logic (HOP, STING, GLOW, DASH) scattered across GameScene 
 ### ✅ Pre-compute color hex strings in seasons.ts
 Stop doing bit-shifting at runtime to convert integer colors to hex strings. Season themes should include ready-to-use hex strings.
 
-### GameScene god object (2,200+ lines)
-Beyond fog and skills, the side panel, puzzle placement, and maze rendering could be extracted into focused classes.
+### GameScene god object (down from 2,200 to 1,078 lines)
+Extracted: sprites.ts, scenery.ts, sidePanel.ts, entityPlacement.ts. Remaining candidates: onCaught callback, puzzle placement, maze rendering.
 
 ### Sprite construction is verbose
 ~800 lines of `add.circle(...magic numbers...)` across GameScene and hazard.ts for procedural sprites. Data-driven definitions would be cleaner.
@@ -200,3 +200,52 @@ Walls in the maze levels are hard to see when playing. Consider increasing the w
 ## Idea: Season-specific music
 
 Different ambient music or soundtrack per season to enhance the atmosphere. Would need royalty-free tracks or procedural audio for each of the four seasons.
+
+---
+
+## Bug: GameY2Scene hazard stun check missing
+
+`checkHazardCollision()` in GameY2Scene only checks `h.dead`, not `h.stunned`. Stunned enemies still cause collisions in Y2 mode — unlike GameScene which checks both.
+
+---
+
+## Bug: GameY2Scene input inconsistency
+
+Uses `isDown` (continuous hold) for movement instead of `JustDown` (single press) like GameScene. Causes different movement feel between Year 1 and Year 2.
+
+---
+
+## Code quality (continued)
+
+### onCaught callback duplication
+`spawnHazard` and `spawnCustomHazards` in GameScene have ~80 lines of nearly identical death/reset logic. Extract to shared method.
+
+### GameY2Scene reimplements sidePanel
+GameY2Scene builds header and side panel locally (~90 lines) instead of importing `buildHeader`/`buildSidePanel` from `sidePanel.ts`.
+
+### TutorialScene reimplements fog
+TutorialScene has its own fog system (~200 lines) instead of using the extracted `FogOfWar` class.
+
+### TutorialScene builds creature sprites locally
+8 creature sprite builders in TutorialScene (~450 lines) instead of using `sprites.ts`. Also duplicates goal lock overlay and objective gem rendering in 3 places.
+
+### Export shuffle from maze.ts
+`shuffle()` exists in `maze.ts` but isn't exported. Re-implemented inline in `entityPlacement.ts` twice.
+
+### Gate interface inconsistency
+GameScene uses `fromCol/fromRow/toCol/toRow`, ToolkitScene uses `{from: {col,row}, to: {col,row}}`. Should unify.
+
+### SeasonName type duplication
+`SeasonName` defined in `skills.ts` separately from season names in `seasons.ts`. Can diverge.
+
+### TutorialScene defines local SeasonThemeT
+Should import `SeasonTheme` from `seasons.ts` instead of defining its own interface.
+
+### No scene lifecycle cleanup
+No `shutdown()` handlers in GameScene or GameY2Scene. Event listeners, tweens, and timed callbacks may accumulate on scene restart.
+
+### Gameplay parameter constants
+Hunt distance, stun duration, cooldown, move speed, fog decay — all scattered as magic numbers. Should consolidate into a gameplay params object.
+
+### Non-deterministic tests
+`pickOffPath()` uses `Math.random()` with no seed. Test failures are irreproducible. Tests also skip trials where gate count doesn't match, inflating pass rates.
