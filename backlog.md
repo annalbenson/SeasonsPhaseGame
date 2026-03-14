@@ -7,13 +7,17 @@
 - Fog of war with visibility decay (revealed cells fade back to hidden over time)
 - Hard mode with faster fog decay (10s start / 8s duration vs 30s / 15s)
 - 9-step hardcoded tutorial teaching movement, keys/gates, enemies, objectives, fog, and all 4 seasonal skills
-- Seasonal skills with 15s cooldown: HOP (Winter), BUZZ (Spring), GLOW (Summer), DASH (Fall)
+- Seasonal skills with 15s cooldown: BURROW (Winter), BUZZ (Spring), GLOW (Summer), DASH (Fall)
+- BURROW is a toggle skill — SPACE to dig in, SPACE to emerge (no timeout)
 - Scenic obstacles (3 variants per season) shown in legend
 - Side panel with objectives, lives, keys, and colour-coded legend
 - Quote cards between levels; season title cards at season boundaries
 - End screen after completing December
 - Enemy collision check on both player move and enemy move (no fast-click evasion; dash still allows evasion)
-- Title screen with New Game, New Hard Game, and How to Play
+- Hazards walk over hidden (burrowed) players instead of blocking them
+- Title screen with Year One, Year One (Hard Mode), Year One (Random Start), Year Two, How to Play, Map Toolkit, My Stats
+- Zone-aware entity placement — objectives spread across zones, keys pushed far off solution path
+- Firebase authentication with sign in/out and stats tracking
 - Version tag in bottom-right corner
 
 ---
@@ -59,9 +63,9 @@ Text readability audit — reviewed all seasonal color schemes for contrast.
 
 ---
 
-## Idea: Raise explore percentage
+## ✅ Raise explore percentage (shipped)
 
-Players currently only visit ~42% of reachable cells. Place keys farther from the solution path (top 25% most BFS-distant candidates) and spread objectives across all zones so the player must explore laterally.
+Players previously only visited ~42% of reachable cells. Fixed with zone-aware objective placement (1 per zone minimum), keys pushed to top 5% most BFS-distant off-path candidates, wider spacing, and scaled objective counts. Explore % now averages 60%+ with 43%+ minimum.
 
 ---
 

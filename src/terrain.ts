@@ -7,6 +7,7 @@
 import Phaser from 'phaser';
 import { TILE } from './constants';
 import { SeasonTheme } from './seasons';
+import { shuffle } from './maze';
 
 export enum Terrain {
     OPEN  = 0,
@@ -90,7 +91,7 @@ export function generateMountainMap(cols: number, _rows: number): TerrainMap {
                 }
 
                 // Tree clusters (2–3 trees each), avoid edges
-                const treeCandidates: { col: number; row: number }[] = [];
+                let treeCandidates: { col: number; row: number }[] = [];
                 for (let r = top + 1; r < bot - 1; r++) {
                     for (let c = center - half + 1; c < center + half; c++) {
                         if (grid[r][c] === Terrain.OPEN) {
@@ -98,7 +99,7 @@ export function generateMountainMap(cols: number, _rows: number): TerrainMap {
                         }
                     }
                 }
-                shuffle(treeCandidates);
+                treeCandidates = shuffle(treeCandidates);
                 const treeSet = new Set<string>();
                 const numClusters = 2 + Math.floor(Math.random() * 2);
                 let placed = 0;
@@ -186,25 +187,18 @@ export function generateMountainMap(cols: number, _rows: number): TerrainMap {
     const fishSpawns: { col: number; row: number }[] = [];
     for (const zone of zones) {
         if (zone.type !== 'water') continue;
-        const waterCells: { col: number; row: number }[] = [];
+        let waterCells: { col: number; row: number }[] = [];
         for (let r = zone.startRow; r < zone.startRow + zone.height; r++) {
             for (let c = 0; c < cols; c++) {
                 if (grid[r][c] === Terrain.WATER) waterCells.push({ col: c, row: r });
             }
         }
-        shuffle(waterCells);
+        waterCells = shuffle(waterCells);
         const n = Math.min(2 + Math.floor(Math.random() * 2), waterCells.length);
         for (let i = 0; i < n; i++) fishSpawns.push(waterCells[i]);
     }
 
     return { cols, rows: totalRows, grid, start, goal, fishSpawns, zones, landCells };
-}
-
-function shuffle<T>(arr: T[]): void {
-    for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
 }
 
 // ── Terrain rendering ───────────────────────────────────────────────────────

@@ -232,10 +232,10 @@ export default class GameY2Scene extends Phaser.Scene {
         }
 
         let dx = 0, dy = 0;
-        if (this.cursors.left.isDown  || this.wasd.left.isDown)  dx = -1;
-        if (this.cursors.right.isDown || this.wasd.right.isDown) dx =  1;
-        if (this.cursors.up.isDown    || this.wasd.up.isDown)    dy = -1;
-        if (this.cursors.down.isDown  || this.wasd.down.isDown)  dy =  1;
+        if (Phaser.Input.Keyboard.JustDown(this.cursors.left)  || Phaser.Input.Keyboard.JustDown(this.wasd.left))  dx = -1;
+        if (Phaser.Input.Keyboard.JustDown(this.cursors.right) || Phaser.Input.Keyboard.JustDown(this.wasd.right)) dx =  1;
+        if (Phaser.Input.Keyboard.JustDown(this.cursors.up)    || Phaser.Input.Keyboard.JustDown(this.wasd.up))    dy = -1;
+        if (Phaser.Input.Keyboard.JustDown(this.cursors.down)  || Phaser.Input.Keyboard.JustDown(this.wasd.down))  dy =  1;
         if (dx === 0 && dy === 0) return;
         if (dx !== 0 && dy !== 0) dy = 0;
 
@@ -331,7 +331,7 @@ export default class GameY2Scene extends Phaser.Scene {
     private checkHazardCollision() {
         if (this.isHiding) return;
         for (const h of this.hazards) {
-            if (h.dead) continue;
+            if (h.dead || h.stunned) continue;
             if (h.gridX === this.gridX && h.gridY === this.gridY) {
                 this.onCaught(); return;
             }

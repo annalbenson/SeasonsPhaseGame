@@ -11,19 +11,15 @@ writeFileSync(RESULTS_FILE, `Test results — ${new Date().toISOString()}\n\n`);
 function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals', size: number = 10) {
     const cols = size, rows = size;
 
-    // Random start/goal in distinct corners
-    const corners = [
-        { col: 0, row: 0 },
-        { col: cols - 1, row: 0 },
-        { col: 0, row: rows - 1 },
-        { col: cols - 1, row: rows - 1 },
+    // Opposite corners for start and goal (diagonal pairs only)
+    const pairs: [{ col: number; row: number }, { col: number; row: number }][] = [
+        [{ col: 0, row: 0 }, { col: cols - 1, row: rows - 1 }],
+        [{ col: cols - 1, row: 0 }, { col: 0, row: rows - 1 }],
     ];
-    for (let i = corners.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [corners[i], corners[j]] = [corners[j], corners[i]];
-    }
-    const startCol = corners[0].col, startRow = corners[0].row;
-    const goalCol = corners[1].col, goalRow = corners[1].row;
+    const pair = pairs[Math.random() < 0.5 ? 0 : 1];
+    if (Math.random() < 0.5) pair.reverse();
+    const startCol = pair[0].col, startRow = pair[0].row;
+    const goalCol = pair[1].col, goalRow = pair[1].row;
 
     // Generate
     const cells = ALGORITHMS[algorithm].generate(cols, rows);

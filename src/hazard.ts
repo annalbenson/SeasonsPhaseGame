@@ -38,6 +38,7 @@ export class Hazard {
     private ox = 0;  // world-space x offset (centering)
     private oy = 0;  // world-space y offset (centering)
     private siblings: Hazard[] = [];  // other hazards to avoid
+    private isGateBlocked: (fromCol: number, fromRow: number, toCol: number, toRow: number) => boolean;
 
     constructor(
         scene:      Phaser.Scene,
@@ -49,6 +50,7 @@ export class Hazard {
         blocked:    Set<string> = new Set(),
         offsetX     = 0,
         offsetY     = 0,
+        isGateBlocked: (fromCol: number, fromRow: number, toCol: number, toRow: number) => boolean = () => false,
     ) {
         this.scene   = scene;
         this.cells   = cells;
@@ -58,6 +60,7 @@ export class Hazard {
         this.onCatch = onCatch;
         this.ox      = offsetX;
         this.oy      = offsetY;
+        this.isGateBlocked = isGateBlocked;
 
         this.sprite = this.buildSprite(
             startCol * TILE + TILE / 2 + this.ox,
@@ -205,6 +208,7 @@ export class Hazard {
             if (walls & d.wall) return false;
             const nx = this.gridX + d.dc, ny = this.gridY + d.dr;
             if (this.blocked.has(`${nx},${ny}`)) return false;
+            if (this.isGateBlocked(this.gridX, this.gridY, nx, ny)) return false;
             // Avoid moving onto or adjacent to a sibling (within Manhattan 2)
             for (const s of this.siblings) {
                 if (s.dead) continue;

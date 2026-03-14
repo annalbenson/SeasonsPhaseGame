@@ -164,21 +164,17 @@ export default class GameScene extends Phaser.Scene {
             this.goalCol  = this.customMap.goal.col;
             this.goalRow  = this.customMap.goal.row;
         } else {
-            // Pick two distinct random corners for start and goal
-            const corners = [
-                { col: 0,            row: 0            },
-                { col: this.cols - 1, row: 0            },
-                { col: 0,            row: this.rows - 1 },
-                { col: this.cols - 1, row: this.rows - 1 },
+            // Pick opposite corners for start and goal (diagonal pairs only)
+            const pairs: [{ col: number; row: number }, { col: number; row: number }][] = [
+                [{ col: 0, row: 0 }, { col: this.cols - 1, row: this.rows - 1 }],
+                [{ col: this.cols - 1, row: 0 }, { col: 0, row: this.rows - 1 }],
             ];
-            for (let i = corners.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [corners[i], corners[j]] = [corners[j], corners[i]];
-            }
-            this.startCol = corners[0].col;
-            this.startRow = corners[0].row;
-            this.goalCol  = corners[1].col;
-            this.goalRow  = corners[1].row;
+            const pair = pairs[Math.random() < 0.5 ? 0 : 1];
+            if (Math.random() < 0.5) pair.reverse();
+            this.startCol = pair[0].col;
+            this.startRow = pair[0].row;
+            this.goalCol  = pair[1].col;
+            this.goalRow  = pair[1].row;
         }
     }
 
@@ -857,56 +853,59 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
-    // ── Hazard spawn ──────────────────────────────────────────────────────────
-    private spawnHazard(season: SeasonTheme) {
-        const onCaught = () => {
-            this.lives--;
-            this.updateLives();
-            statsEvents.emit(STAT.CAUGHT);
+    // ── Caught / death ─────────────────────────────────────────────────────────
+    private onCaught() {
+        this.lives--;
+        this.updateLives();
+        statsEvents.emit(STAT.CAUGHT);
 
-            if (this.lives <= 0) {
-                statsEvents.emit(STAT.DEATH);
-                this.time.delayedCall(700, () => {
-                    for (const h of this.hazards) h.destroy();
-                    this.cameras.main.fadeOut(600, 0, 0, 0);
-                    this.cameras.main.once('camerafadeoutcomplete', () => {
-                        this.scene.start('GameScene', {
+        if (this.lives <= 0) {
+            statsEvents.emit(STAT.DEATH);
+            this.time.delayedCall(700, () => {
+                for (const h of this.hazards) h.destroy();
+                this.cameras.main.fadeOut(600, 0, 0, 0);
+                this.cameras.main.once('camerafadeoutcomplete', () => {
+                    const restart: Record<string, unknown> = this.customMap
+                        ? { customMap: this.customMap, from: 'ToolkitScene' }
+                        : {
                             month:     seasonStart(this.monthConfig.month),
                             algorithm: this.algorithm,
                             from:      this.fromScene,
                             hard:      this.hardMode,
-                            customMap: this.customMap ?? undefined,
-                        });
-                    });
+                        };
+                    this.scene.start('GameScene', restart);
                 });
-            } else {
-                this.tweens.killTweensOf(this.player);
-                this.gridX    = this.startCol;
-                this.gridY    = this.startRow;
-                this.moving   = false;
-                this.isHiding = false;
-                // Clear burrow state so player can move again
-                if (this.burrowed) {
-                    this.burrowed = false;
-                    if (this.skillCtx.emergeBurrow) {
-                        this.skillCtx.emergeBurrow = undefined;
-                    }
+            });
+        } else {
+            this.tweens.killTweensOf(this.player);
+            this.gridX    = this.startCol;
+            this.gridY    = this.startRow;
+            this.moving   = false;
+            this.isHiding = false;
+            // Clear burrow state so player can move again
+            if (this.burrowed) {
+                this.burrowed = false;
+                if (this.skillCtx.emergeBurrow) {
+                    this.skillCtx.emergeBurrow = undefined;
                 }
-                this.tweens.add({
-                    targets:  this.player,
-                    x:        this.worldX(this.startCol),
-                    y:        this.worldY(this.startRow),
-                    alpha:    1.0,
-                    scaleX:   1,
-                    scaleY:   1,
-                    duration: 500,
-                    ease:     'Power2',
-                });
-                this.fog.revealAround(this.startCol, this.startRow, this.time.now);
-                for (const h of this.hazards) h.scatter();
             }
-        };
+            this.tweens.add({
+                targets:  this.player,
+                x:        this.worldX(this.startCol),
+                y:        this.worldY(this.startRow),
+                alpha:    1.0,
+                scaleX:   1,
+                scaleY:   1,
+                duration: 500,
+                ease:     'Power2',
+            });
+            this.fog.revealAround(this.startCol, this.startRow, this.time.now);
+            for (const h of this.hazards) h.scatter();
+        }
+    }
 
+    // ── Hazard spawn ──────────────────────────────────────────────────────────
+    private spawnHazard(season: SeasonTheme) {
         // Place enemies at ~33% and ~66% along the solution path
         const solPath = solvePath(this.cells, this.cols, this.rows,
             this.startCol, this.startRow, this.goalCol, this.goalRow, this.sceneryBlocked);
@@ -942,7 +941,8 @@ export default class GameScene extends Phaser.Scene {
             if (best) {
                 placed.push(best);
                 guaranteeBushNear(pCtx, best.col, best.row, season.name);
-                this.hazards.push(new Hazard(this, this.cells, best.col, best.row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
+                this.hazards.push(new Hazard(this, this.cells, best.col, best.row, season.name, () => this.onCaught(), this.sceneryBlocked, this.offsetX, this.offsetY,
+                    (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr) !== null));
             }
         }
 
@@ -1006,52 +1006,9 @@ export default class GameScene extends Phaser.Scene {
         const cm = this.customMap!;
         if (cm.enemies.length === 0) return;
 
-        const onCaught = () => {
-            this.lives--;
-            this.updateLives();
-            statsEvents.emit(STAT.CAUGHT);
-            if (this.lives <= 0) {
-                statsEvents.emit(STAT.DEATH);
-                this.time.delayedCall(700, () => {
-                    for (const h of this.hazards) h.destroy();
-                    this.cameras.main.fadeOut(600, 0, 0, 0);
-                    this.cameras.main.once('camerafadeoutcomplete', () => {
-                        this.scene.start('GameScene', {
-                            customMap: this.customMap ?? undefined,
-                            from: 'ToolkitScene',
-                        });
-                    });
-                });
-            } else {
-                this.tweens.killTweensOf(this.player);
-                this.gridX    = this.startCol;
-                this.gridY    = this.startRow;
-                this.moving   = false;
-                this.isHiding = false;
-                // Clear burrow state so player can move again
-                if (this.burrowed) {
-                    this.burrowed = false;
-                    if (this.skillCtx.emergeBurrow) {
-                        this.skillCtx.emergeBurrow = undefined;
-                    }
-                }
-                this.tweens.add({
-                    targets:  this.player,
-                    x:        this.worldX(this.startCol),
-                    y:        this.worldY(this.startRow),
-                    alpha:    1.0,
-                    scaleX:   1,
-                    scaleY:   1,
-                    duration: 500,
-                    ease:     'Power2',
-                });
-                this.fog.revealAround(this.startCol, this.startRow, this.time.now);
-                for (const h of this.hazards) h.scatter();
-            }
-        };
-
         for (const { col, row } of cm.enemies) {
-            this.hazards.push(new Hazard(this, this.cells, col, row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
+            this.hazards.push(new Hazard(this, this.cells, col, row, season.name, () => this.onCaught(), this.sceneryBlocked, this.offsetX, this.offsetY,
+                (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr) !== null));
         }
         for (const h of this.hazards) h.setSiblings(this.hazards);
     }
