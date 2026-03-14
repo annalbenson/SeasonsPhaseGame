@@ -148,6 +148,7 @@ export default class GameScene extends Phaser.Scene {
         this.hazards        = [];
         this.isHiding    = false;
         this.burrowed    = false;
+        this._skillCtx   = undefined!;
         this.gate1Cell   = null;
         this.lives       = 3;
         this.objectives  = new Map();
@@ -598,30 +599,38 @@ export default class GameScene extends Phaser.Scene {
         this.inventoryText.setText(`${filled}${empty}  KEY`);
     }
 
-    // ── Skill context ───────────────────────────────────────────────────────
+    // ── Skill context (persistent object — BURROW stores emergeBurrow on it) ──
+    private _skillCtx!: SkillContext;
     private get skillCtx(): SkillContext {
-        return {
-            scene: this,
-            gridX: this.gridX, gridY: this.gridY,
-            cols: this.cols, rows: this.rows,
-            cells: this.cells,
-            sceneryBlocked: this.sceneryBlocked,
-            hazards: this.hazards,
-            fog: this.fog,
-            player: this.player,
-            worldX: (c) => this.worldX(c),
-            worldY: (r) => this.worldY(r),
-            findGate: (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr),
-            keyCount: this.keyCount,
-            updateInventory: () => this.updateInventory(),
-            collectKey: () => this.collectKey(),
-            checkObjective: () => this.checkObjective(),
-            checkGoal: () => this.checkGoal(),
-            checkHazardCollision: () => this.checkHazardCollision(),
-            setGrid: (x, y) => { this.gridX = x; this.gridY = y; },
-            setMoving: (m) => { this.moving = m; this.slideDir = null; },
-            setBurrowed: (active) => { this.burrowed = active; },
-        };
+        if (!this._skillCtx) {
+            const self = this;
+            this._skillCtx = {
+                scene: this,
+                get gridX() { return self.gridX; },
+                get gridY() { return self.gridY; },
+                get cols() { return self.cols; },
+                get rows() { return self.rows; },
+                get cells() { return self.cells; },
+                get sceneryBlocked() { return self.sceneryBlocked; },
+                get hazards() { return self.hazards; },
+                get fog() { return self.fog; },
+                get player() { return self.player; },
+                worldX: (c) => this.worldX(c),
+                worldY: (r) => this.worldY(r),
+                findGate: (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr),
+                get keyCount() { return self.keyCount; },
+                set keyCount(v) { self.keyCount = v; },
+                updateInventory: () => this.updateInventory(),
+                collectKey: () => this.collectKey(),
+                checkObjective: () => this.checkObjective(),
+                checkGoal: () => this.checkGoal(),
+                checkHazardCollision: () => this.checkHazardCollision(),
+                setGrid: (x, y) => { this.gridX = x; this.gridY = y; },
+                setMoving: (m) => { this.moving = m; this.slideDir = null; },
+                setBurrowed: (active) => { this.burrowed = active; },
+            };
+        }
+        return this._skillCtx;
     }
 
     // ── Gate lookup ───────────────────────────────────────────────────────────
@@ -876,11 +885,20 @@ export default class GameScene extends Phaser.Scene {
                 this.gridY    = this.startRow;
                 this.moving   = false;
                 this.isHiding = false;
+                // Clear burrow state so player can move again
+                if (this.burrowed) {
+                    this.burrowed = false;
+                    if (this.skillCtx.emergeBurrow) {
+                        this.skillCtx.emergeBurrow = undefined;
+                    }
+                }
                 this.tweens.add({
                     targets:  this.player,
                     x:        this.worldX(this.startCol),
                     y:        this.worldY(this.startRow),
                     alpha:    1.0,
+                    scaleX:   1,
+                    scaleY:   1,
                     duration: 500,
                     ease:     'Power2',
                 });
@@ -1010,11 +1028,20 @@ export default class GameScene extends Phaser.Scene {
                 this.gridY    = this.startRow;
                 this.moving   = false;
                 this.isHiding = false;
+                // Clear burrow state so player can move again
+                if (this.burrowed) {
+                    this.burrowed = false;
+                    if (this.skillCtx.emergeBurrow) {
+                        this.skillCtx.emergeBurrow = undefined;
+                    }
+                }
                 this.tweens.add({
                     targets:  this.player,
                     x:        this.worldX(this.startCol),
                     y:        this.worldY(this.startRow),
                     alpha:    1.0,
+                    scaleX:   1,
+                    scaleY:   1,
                     duration: 500,
                     ease:     'Power2',
                 });

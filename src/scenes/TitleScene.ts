@@ -108,21 +108,29 @@ export default class TitleScene extends Phaser.Scene {
             });
         });
 
-        makeButton(W / 2, H / 2 + 190, 'Year Two', () => {
+        makeButton(W / 2, H / 2 + 190, 'Year One (Random Start)', () => {
+            const month = Math.floor(Math.random() * 12) + 1;
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('QuoteScene', { month, isSeason: true, from: 'TitleScene' });
+            });
+        });
+
+        makeButton(W / 2, H / 2 + 250, 'Year Two', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('GameY2Scene', { monthIndex: 0, from: 'TitleScene' });
             });
         });
 
-        makeButton(W / 2, H / 2 + 250, 'Map Toolkit', () => {
+        makeButton(W / 2, H / 2 + 310, 'Map Toolkit', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('ToolkitScene');
             });
         });
 
-        makeButton(W / 2, H / 2 + 310, 'My Stats', () => {
+        makeButton(W / 2, H / 2 + 370, 'My Stats', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('StatsScene');
@@ -130,7 +138,7 @@ export default class TitleScene extends Phaser.Scene {
         });
 
         // ── Sign in / out ────────────────────────────────────────────────────
-        const authBtn = this.add.text(W / 2, H / 2 + 380, '', {
+        const authBtn = this.add.text(W / 2, H / 2 + 440, '', {
             fontSize: '18px', color: '#556677',
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
         authBtn.on('pointerover', () => authBtn.setColor('#aabbcc'));

@@ -165,10 +165,9 @@ export class Hazard {
         if (this.state === 'hunting') {
             dir = this.huntDir();
         } else if (this.state === 'passing') {
-            // Walk toward the hidden player, but once adjacent/on top use random
-            // so the hazard continues through rather than oscillating in place
-            const dist = Math.abs(this.fairyCol - this.gridX) + Math.abs(this.fairyRow - this.gridY);
-            dir = dist > 1 ? this.huntDir() : this.randomDir();
+            // Walk toward and through the hidden player — the catch check
+            // at move-end skips hidden players, so they're safe
+            dir = this.huntDir();
         } else if (this.retreatMoves > 0) {
             dir = this.retreatDir();
             this.retreatMoves--;
