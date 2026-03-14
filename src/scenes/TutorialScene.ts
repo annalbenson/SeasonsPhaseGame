@@ -79,6 +79,7 @@ interface StepConfig {
     cols: number; rows: number; hint: string;
     season?: string;  // if set, uses season theme + teaches that skill
     hardcoded?: number[][];  // optional pre-built maze (wall bitmasks)
+    goal?: { col: number; row: number };  // override default bottom-right goal
 }
 
 const ALL_WALLS = 1 | 2 | 4 | 8; // TOP|RIGHT|BOTTOM|LEFT — cell with all walls = isolated
@@ -140,19 +141,18 @@ const MAZE_STEP3 = carveMaze(4, 3, [
 ]);
 
 /*
- * Step 4 (5×3): Objectives — one branch up, one branch down, goal at end.
- *         [obj1]
- *           ↑
- *   [S]→[.]→[.]→[.]→[G]
- *                ↓
- *              [obj2]
+ * Step 4 (6×3): Objectives — branches off a straight corridor, goal at end.
+ *            [obj1]
+ *              ↑
+ *   [S]→[.]→[.]→[.]→[.]→[G]    (goal on main path)
+ *                    ↓
+ *                  [obj2]
  */
-const MAZE_STEP4 = carveMaze(5, 3, [
-    [0,0, 0,1],                                         // start down to corridor
-    [0,1, 1,1], [1,1, 2,1], [2,1, 3,1], [3,1, 4,1],  // main corridor (row 1)
-    [4,1, 4,2],                                         // down to goal
-    [2,1, 2,0],                                         // branch up to obj1
-    [3,1, 3,2],                                         // branch down to obj2
+const MAZE_STEP4 = carveMaze(6, 3, [
+    [0,0, 0,1],                                                    // start down to corridor
+    [0,1, 1,1], [1,1, 2,1], [2,1, 3,1], [3,1, 4,1], [4,1, 5,1], // main corridor (row 1)
+    [2,1, 2,0],                                                    // branch up to obj1
+    [3,1, 3,2],                                                    // branch down to obj2
 ]);
 
 /*
@@ -216,7 +216,7 @@ const STEPS: StepConfig[] = [
     { cols: 3, rows: 2, hint: 'Use arrow keys or WASD to move.\nReach the yellow flower!', hardcoded: MAZE_STEP1 },
     { cols: 4, rows: 2, hint: 'Collect the key to open the gate.', hardcoded: MAZE_STEP2 },
     { cols: 4, rows: 3, hint: 'Hide in bushes when the creature is near!\nReach the flower to continue.', hardcoded: MAZE_STEP3 },
-    { cols: 5, rows: 3, hint: 'Collect all treasures before\nthe exit unlocks.', hardcoded: MAZE_STEP4 },
+    { cols: 6, rows: 3, hint: 'Collect all treasures before\nthe exit unlocks.', hardcoded: MAZE_STEP4, goal: { col: 5, row: 1 } },
     { cols: 3, rows: 3, hint: 'Fog hides the maze! Explore to reveal tiles.\nFog returns over time — move quickly!', hardcoded: MAZE_STEP5 },
     { cols: 4, rows: 2, hint: 'Bunny can BURROW to hide!\nSPACE to dig in, SPACE to emerge.', season: 'Winter', hardcoded: MAZE_WINTER },
     { cols: 3, rows: 2, hint: 'Bee can STING the nearest enemy!\nPress SPACE to stun it.', season: 'Spring', hardcoded: MAZE_SPRING },
@@ -374,8 +374,8 @@ export default class TutorialScene extends Phaser.Scene {
         // Player starts top-left, goal bottom-right
         this.gridX = 0;
         this.gridY = 0;
-        this.goalCol = cfg.cols - 1;
-        this.goalRow = cfg.rows - 1;
+        this.goalCol = cfg.goal?.col ?? cfg.cols - 1;
+        this.goalRow = cfg.goal?.row ?? cfg.rows - 1;
         this.goalLocked = false;
 
         this.drawMaze();
