@@ -165,7 +165,7 @@ export function guaranteeBushNear(
 // ── Season objectives ────────────────────────────────────────────────────────
 
 export function placeObjectives(ctx: PlacementCtx, season: SeasonTheme): number {
-    const count = Math.ceil(ctx.cols / 3); // 8→3, 10→4, 12→4
+    const count = Math.max(3, Math.floor(ctx.cols / 2) - 1); // 8→3, 10→4, 12→5
 
     const reachable = floodFill(ctx.cells, ctx.cols, ctx.rows,
         ctx.startCol, ctx.startRow, ctx.sceneryBlocked);
@@ -185,44 +185,82 @@ export function placeObjectives(ctx: PlacementCtx, season: SeasonTheme): number 
     const pathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
     const distFromPath = bfsDistanceMap(ctx.cells, ctx.cols, ctx.rows, pathSet, ctx.sceneryBlocked);
 
-    // Place objectives at evenly spaced percentages along the solution path.
-    // For each anchor point, pick the farthest-from-path candidate within a
-    // search radius, enforcing minimum grid spacing between objectives.
     const placed: Cell[] = [];
     const usedKeys = new Set<string>();
-    const searchRadius = Math.max(4, Math.floor(ctx.cols / 2));
-    const minSpacing = Math.max(3, Math.floor(ctx.cols / 3));
+    const minSpacing = Math.max(3, Math.floor(ctx.cols / 2));    // 8→4, 10→5, 12→6
+    const minOffPath = Math.max(1, Math.floor(ctx.cols / 5));    // 8→1, 10→2, 12→2
 
-    for (let i = 0; i < count; i++) {
-        const frac = (i + 1) / (count + 1); // e.g. 3 objs → 25%, 50%, 75%
+    // ── Zone-aware placement: 1 objective per zone first ──────────────────
+    if (ctx.gateEdges.length > 0) {
+        // Temporarily block gates to compute zones
+        const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
+        for (const { from, to } of ctx.gateEdges) {
+            const dc = to.col - from.col, dr = to.row - from.row;
+            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+            wallOps.push({ from, to, fw });
+            ctx.cells[from.row][from.col] |= fw;
+            ctx.cells[to.row][to.col] |= OPPOSITE[fw];
+        }
+
+        const zones: Set<string>[] = [];
+        zones.push(floodFill(ctx.cells, ctx.cols, ctx.rows, ctx.startCol, ctx.startRow, ctx.sceneryBlocked));
+        for (const { to } of ctx.gateEdges) {
+            zones.push(floodFill(ctx.cells, ctx.cols, ctx.rows, to.col, to.row, ctx.sceneryBlocked));
+        }
+
+        // Restore passages
+        for (const { from, to, fw } of wallOps) {
+            ctx.cells[from.row][from.col] &= ~fw;
+            ctx.cells[to.row][to.col] &= ~OPPOSITE[fw];
+        }
+
+        // Place 1 objective in each zone (farthest from path)
+        for (const zone of zones) {
+            if (placed.length >= count) break;
+            const zoneCands: { cell: Cell; offPath: number }[] = [];
+            for (const key of zone) {
+                if (!candidateSet.has(key) || usedKeys.has(key) || pathSet.has(key)) continue;
+                const [col, row] = key.split(',').map(Number);
+                if (placed.some(p => Math.abs(p.col - col) + Math.abs(p.row - row) < minSpacing)) continue;
+                zoneCands.push({ cell: { col, row }, offPath: distFromPath.get(key) ?? 0 });
+            }
+            zoneCands.sort((a, b) => b.offPath - a.offPath);
+            // Prefer candidates above minOffPath threshold, fall back if needed
+            const good = zoneCands.filter(c => c.offPath >= minOffPath);
+            const pick = (good.length > 0 ? good[0] : zoneCands[0])?.cell;
+            if (pick) {
+                placed.push(pick);
+                usedKeys.add(`${pick.col},${pick.row}`);
+            }
+        }
+    }
+
+    // ── Fill remaining slots with path-percentage anchoring ───────────────
+    const remaining = count - placed.length;
+    const searchRadius = Math.max(5, ctx.cols - 1);  // 8→7, 10→9, 12→11
+
+    for (let i = 0; i < remaining; i++) {
+        const frac = (i + 1) / (remaining + 1);
         const anchorIdx = Math.min(Math.floor(solPath.length * frac), solPath.length - 1);
         const anchor = solPath[anchorIdx];
 
-        // Find candidates near this anchor, sorted by distance from path (descending)
         const nearby: { cell: Cell; dist: number; offPath: number }[] = [];
         for (const key of candidateSet) {
-            if (usedKeys.has(key)) continue;
-            if (pathSet.has(key)) continue;
+            if (usedKeys.has(key) || pathSet.has(key)) continue;
             const [col, row] = key.split(',').map(Number);
-            // Enforce minimum spacing from already-placed objectives
             if (placed.some(p => Math.abs(p.col - col) + Math.abs(p.row - row) < minSpacing)) continue;
             const manhattan = Math.abs(col - anchor.col) + Math.abs(row - anchor.row);
             if (manhattan > searchRadius) continue;
-            nearby.push({
-                cell: { col, row },
-                dist: manhattan,
-                offPath: distFromPath.get(key) ?? 0,
-            });
+            nearby.push({ cell: { col, row }, dist: manhattan, offPath: distFromPath.get(key) ?? 0 });
         }
-
-        // Sort: prefer far from path, break ties by closer to anchor
         nearby.sort((a, b) => b.offPath - a.offPath || a.dist - b.dist);
 
-        if (nearby.length > 0) {
-            const pick = nearby[0].cell;
-            const key = `${pick.col},${pick.row}`;
+        // Prefer candidates above minOffPath threshold
+        const good = nearby.filter(c => c.offPath >= minOffPath);
+        const pick = (good.length > 0 ? good[0] : nearby[0])?.cell;
+        if (pick) {
             placed.push(pick);
-            usedKeys.add(key);
+            usedKeys.add(`${pick.col},${pick.row}`);
         }
     }
 

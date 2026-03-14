@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import { writeFileSync, appendFileSync } from 'fs';
 import { ALGORITHMS, WALLS, OPPOSITE, widenCorridors } from '../maze';
 import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUtils';
+
+const RESULTS_FILE = 'test-results.txt';
+writeFileSync(RESULTS_FILE, `Test results — ${new Date().toISOString()}\n\n`);
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Run the same maze-generation + gate/key/scenery pipeline the game uses. */
@@ -162,7 +166,7 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals', size: number = 1
             );
             if (offPath.length > 0) {
                 offPath.sort((a, b) => (distFromPathKeys.get(b) ?? 0) - (distFromPathKeys.get(a) ?? 0));
-                const topN = Math.max(1, Math.floor(offPath.length * 0.10));
+                const topN = Math.max(1, Math.floor(offPath.length * 0.05));
                 const key = offPath[Math.floor(Math.random() * topN)];
                 const [c, r] = key.split(',').map(Number);
                 return { col: c, row: r };
@@ -199,7 +203,7 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals', size: number = 1
     const solPathSetForObj = new Set(solPathForObj.map(c => `${c.col},${c.row}`));
     const distFromPath = bfsDistanceMap(cells, cols, rows, solPathSetForObj, sceneryBlocked);
 
-    // ── Objective placement (mirrors placeObjectives — path-percentage) ──
+    // ── Objective placement (mirrors placeObjectives — zone-aware) ──
     const reachableFromStart = floodFill(cells, cols, rows, startCol, startRow, sceneryBlocked);
     const avoid = new Set<string>([
         `${startCol},${startRow}`,
@@ -212,37 +216,76 @@ function buildLevel(algorithm: 'dfs' | 'kruskals' = 'kruskals', size: number = 1
         if (avoid.has(key)) continue;
         candidateSet.add(key);
     }
-    const objCount = Math.ceil(cols / 3); // 8→3, 10→4, 12→4
+    const objCount = Math.max(3, Math.floor(cols / 2) - 1); // 8→3, 10→4, 12→5
 
     const objectivePositions: Cell[] = [];
     const usedKeys = new Set<string>();
-    const searchRadius = Math.max(4, Math.floor(cols / 2));
+    const minSpacing = Math.max(3, Math.floor(cols / 2));        // 8→4, 10→5, 12→6
+    const minOffPath = Math.max(1, Math.floor(cols / 5));        // 8→1, 10→2, 12→2
 
-    for (let i = 0; i < objCount; i++) {
-        const frac = (i + 1) / (objCount + 1);
+    // Zone-aware: place 1 objective per zone first
+    if (gateEdges.length > 0) {
+        const wallOpsObj: { from: Cell; to: Cell; fw: number }[] = [];
+        for (const { from, to } of gateEdges) {
+            const dc = to.col - from.col, dr = to.row - from.row;
+            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+            wallOpsObj.push({ from, to, fw });
+            cells[from.row][from.col] |= fw;
+            cells[to.row][to.col] |= OPPOSITE[fw];
+        }
+        const objZones: Set<string>[] = [];
+        objZones.push(floodFill(cells, cols, rows, startCol, startRow, sceneryBlocked));
+        for (const { to } of gateEdges) {
+            objZones.push(floodFill(cells, cols, rows, to.col, to.row, sceneryBlocked));
+        }
+        for (const { from, to, fw } of wallOpsObj) {
+            cells[from.row][from.col] &= ~fw;
+            cells[to.row][to.col] &= ~OPPOSITE[fw];
+        }
+
+        for (const zone of objZones) {
+            if (objectivePositions.length >= objCount) break;
+            const zoneCands: { cell: Cell; offPath: number }[] = [];
+            for (const key of zone) {
+                if (!candidateSet.has(key) || usedKeys.has(key) || solPathSetForObj.has(key)) continue;
+                const [col, row] = key.split(',').map(Number);
+                if (objectivePositions.some(p => Math.abs(p.col - col) + Math.abs(p.row - row) < minSpacing)) continue;
+                zoneCands.push({ cell: { col, row }, offPath: distFromPath.get(key) ?? 0 });
+            }
+            zoneCands.sort((a, b) => b.offPath - a.offPath);
+            const good = zoneCands.filter(c => c.offPath >= minOffPath);
+            const pick = (good.length > 0 ? good[0] : zoneCands[0])?.cell;
+            if (pick) {
+                objectivePositions.push(pick);
+                usedKeys.add(`${pick.col},${pick.row}`);
+            }
+        }
+    }
+
+    // Fill remaining with path-percentage anchoring
+    const remaining = objCount - objectivePositions.length;
+    const searchRadius = Math.max(5, cols - 1);  // 8→7, 10→9, 12→11
+    for (let i = 0; i < remaining; i++) {
+        const frac = (i + 1) / (remaining + 1);
         const anchorIdx = Math.min(Math.floor(solPathForObj.length * frac), solPathForObj.length - 1);
         const anchor = solPathForObj[anchorIdx];
 
         const nearby: { cell: Cell; dist: number; offPath: number }[] = [];
         for (const key of candidateSet) {
-            if (usedKeys.has(key)) continue;
-            if (solPathSetForObj.has(key)) continue;
+            if (usedKeys.has(key) || solPathSetForObj.has(key)) continue;
             const [col, row] = key.split(',').map(Number);
+            if (objectivePositions.some(p => Math.abs(p.col - col) + Math.abs(p.row - row) < minSpacing)) continue;
             const manhattan = Math.abs(col - anchor.col) + Math.abs(row - anchor.row);
             if (manhattan > searchRadius) continue;
-            nearby.push({
-                cell: { col, row },
-                dist: manhattan,
-                offPath: distFromPath.get(key) ?? 0,
-            });
+            nearby.push({ cell: { col, row }, dist: manhattan, offPath: distFromPath.get(key) ?? 0 });
         }
         nearby.sort((a, b) => b.offPath - a.offPath || a.dist - b.dist);
 
-        if (nearby.length > 0) {
-            const pick = nearby[0].cell;
-            const key = `${pick.col},${pick.row}`;
-            objectivePositions.push(pick);
-            usedKeys.add(key);
+        const goodR = nearby.filter(c => c.offPath >= minOffPath);
+        const pickR = (goodR.length > 0 ? goodR[0] : nearby[0])?.cell;
+        if (pickR) {
+            objectivePositions.push(pickR);
+            usedKeys.add(`${pickR.col},${pickR.row}`);
         }
     }
 
@@ -569,8 +612,9 @@ describe(`[${tag}] Explore percentage`, () => {
         const avgExplore = ratios.reduce((a, b) => a + b, 0) / ratios.length;
         const minExplore = Math.min(...ratios);
 
-        expect(avgExplore).toBeGreaterThan(0.48);
-        expect(minExplore).toBeGreaterThan(0.25);
+        appendFileSync(RESULTS_FILE, `[${tag}] Explore: avg=${(avgExplore*100).toFixed(1)}% min=${(minExplore*100).toFixed(1)}%\n`);
+        expect(avgExplore).toBeGreaterThan(0.56);
+        expect(minExplore).toBeGreaterThan(0.35);
     });
 
     it(`keys are placed off the main solution path (${NUM_TRIALS} trials)`, () => {
@@ -587,6 +631,7 @@ describe(`[${tag}] Explore percentage`, () => {
         }
 
         if (totalKeys > 0) {
+            appendFileSync(RESULTS_FILE, `[${tag}] Keys off-path: ${(offPathCount/totalKeys*100).toFixed(1)}%\n`);
             expect(offPathCount / totalKeys).toBeGreaterThan(0.7);
         }
     });
@@ -628,6 +673,7 @@ describe(`[${tag}] Explore percentage`, () => {
         }
 
         if (totalWithGates > 0) {
+            appendFileSync(RESULTS_FILE, `[${tag}] Objectives spread: ${(spreadCount/totalWithGates*100).toFixed(1)}%\n`);
             expect(spreadCount / totalWithGates).toBeGreaterThan(0.80);
         }
     });

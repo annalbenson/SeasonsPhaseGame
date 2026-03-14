@@ -462,7 +462,7 @@ export default class GameScene extends Phaser.Scene {
             );
             if (offPath.length > 0) {
                 offPath.sort((a, b) => (distFromPath.get(b) ?? 0) - (distFromPath.get(a) ?? 0));
-                const topN = Math.max(1, Math.floor(offPath.length * 0.10));
+                const topN = Math.max(1, Math.floor(offPath.length * 0.05));
                 const key = offPath[Math.floor(Math.random() * topN)];
                 const [c, r] = key.split(',').map(Number);
                 return { col: c, row: r };
