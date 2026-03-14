@@ -61,11 +61,11 @@ export function drawBushAt(
             );
         }
     } else {
-        // Summer bushes
+        // Summer bushes — lush green pops against warm sandy floor
         layer.add([
-            scene.add.circle(cx - 9, cy + 5, 11, 0x165a30, 0.92),
-            scene.add.circle(cx + 9, cy + 5, 11, 0x165a30, 0.92),
-            scene.add.circle(cx,     cy - 3, 13, 0x1a6636, 0.95),
+            scene.add.circle(cx - 9, cy + 5, 11, 0x1a7a3a, 0.92),
+            scene.add.circle(cx + 9, cy + 5, 11, 0x1a7a3a, 0.92),
+            scene.add.circle(cx,     cy - 3, 13, 0x228844, 0.95),
             scene.add.circle(cx - 6, cy - 5, 3, 0xff6688, 0.9),
             scene.add.circle(cx + 7, cy + 2, 2.5, 0xffdd44, 0.9),
             scene.add.circle(cx + 1, cy - 7, 2.5, 0xff88aa, 0.85),
@@ -106,25 +106,28 @@ export function drawScenery(
         }
     } else if (seasonName === 'Summer') {
         if (variant === 0) {
-            layer.add(scene.add.ellipse(cx + 6, cy + 6, 36, 28, 0x445544, 0.8));
-            layer.add(scene.add.ellipse(cx - 6, cy - 2, 30, 24, 0x556655, 0.75));
-            layer.add(scene.add.ellipse(cx, cy - 8, 20, 14, 0x668866, 0.7));
-            layer.add(scene.add.ellipse(cx + 10, cy - 4, 12, 8, 0x448844, 0.6));
+            // Warm boulder
+            layer.add(scene.add.ellipse(cx + 6, cy + 6, 36, 28, 0x7a6a50, 0.8));
+            layer.add(scene.add.ellipse(cx - 6, cy - 2, 30, 24, 0x8a7a60, 0.75));
+            layer.add(scene.add.ellipse(cx, cy - 8, 20, 14, 0x9a8a70, 0.7));
+            layer.add(scene.add.ellipse(cx + 10, cy - 4, 12, 8, 0x448844, 0.5));
         } else if (variant === 1) {
+            // Fallen log
             layer.add(scene.add.ellipse(cx, cy, 48, 16, 0x5a3a1a, 0.75).setAngle(Math.random() * 30 - 15));
             layer.add(scene.add.circle(cx - 20, cy, 8, 0x6a4a2a, 0.7));
             layer.add(scene.add.circle(cx + 20, cy, 7, 0x4a2a0a, 0.65));
-            layer.add(scene.add.ellipse(cx + 4, cy - 6, 16, 6, 0x448844, 0.5));
+            layer.add(scene.add.ellipse(cx + 4, cy - 6, 16, 6, 0x448844, 0.4));
         } else {
+            // Dry brush / thistles
             for (let i = 0; i < 6; i++) {
                 const a = (i * 60) + Math.random() * 20;
                 const r = 6 + Math.random() * 6;
                 layer.add(
                     scene.add.ellipse(cx + Math.cos(a * 0.017) * r, cy + Math.sin(a * 0.017) * r,
-                        6, 24, 0x2a7a3a, 0.65).setAngle(a)
+                        6, 24, 0x887744, 0.6).setAngle(a)
                 );
             }
-            layer.add(scene.add.circle(cx, cy, 6, 0x1a5a2a, 0.7));
+            layer.add(scene.add.circle(cx, cy, 6, 0x665533, 0.7));
         }
     } else if (seasonName === 'Fall') {
         if (variant === 0) {

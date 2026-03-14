@@ -964,7 +964,7 @@ export default class GameScene extends Phaser.Scene {
 
         const season = this.monthConfig.season;
         const label  = season.name === 'Spring' ? 'POLLINATE'
-                     : season.name === 'Summer' ? 'WATER'
+                     : season.name === 'Summer' ? 'PICK'
                      : season.name === 'Winter' ? 'COLLECT'
                      : 'PLANT';
         const filled = '\u25C6'.repeat(this.objCompleted);

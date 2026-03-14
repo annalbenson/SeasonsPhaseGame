@@ -59,11 +59,11 @@ const SEASON_THEMES: Record<string, SeasonThemeT> = {
         sceneryColor: 0x778877, sceneryLight: 0x99aa99, skillName: 'STING',
     },
     Summer: {
-        floorLight: 0x7ab87a, floorDark: 0x4e8a4e, wallColor: 0x0a2a0a,
-        goalColor: 0xf5e040, bgColor: 0x041408, accent: 0xaaffaa, accentHex: '#aaffaa',
-        dimHex: '#4e8a4e', textColor: '#7ab87a', bushColor: 0x336622, bushLight: 0x448833,
-        playerColor: 0xffffaa, playerGlow: 0xaaffaa, enemyColor: 0xcc5500,
-        sceneryColor: 0x5a3a1a, sceneryLight: 0x6a4a2a, skillName: 'GLOW',
+        floorLight: 0xc8c8a0, floorDark: 0xa0a078, wallColor: 0x2a2818,
+        goalColor: 0xf5e040, bgColor: 0x080808, accent: 0xe8e8aa, accentHex: '#e8e8aa',
+        dimHex: '#a0a078', textColor: '#c8c8a0', bushColor: 0x1a7a3a, bushLight: 0x228844,
+        playerColor: 0xffffaa, playerGlow: 0xe8e8aa, enemyColor: 0xcc5500,
+        sceneryColor: 0x7a6a50, sceneryLight: 0x8a7a60, skillName: 'GLOW',
     },
     Fall: {
         floorLight: 0xf09838, floorDark: 0xc06818, wallColor: 0x200a02,

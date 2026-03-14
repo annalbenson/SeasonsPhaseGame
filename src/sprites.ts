@@ -151,7 +151,7 @@ export function createFairy(scene: Phaser.Scene, x: number, y: number, glowColor
 export function buildObjectiveSprite(scene: Phaser.Scene, cx: number, cy: number, seasonName: string): Phaser.GameObjects.Container {
     switch (seasonName) {
         case 'Spring': return buildFlowerSprite(scene, cx, cy);
-        case 'Summer': return buildPlantSprite(scene, cx, cy);
+        case 'Summer': return buildBerrySprite(scene, cx, cy);
         case 'Winter': return buildSnowflakeSprite(scene, cx, cy);
         default:       return buildAcornSprite(scene, cx, cy);
     }
@@ -176,15 +176,21 @@ function buildFlowerSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.
     return c;
 }
 
-function buildPlantSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
+function buildBerrySprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
+    const berryColors = [0xdd2244, 0xcc1133, 0xee3355];
     const parts: Phaser.GameObjects.GameObject[] = [
         scene.add.circle(0, 2, 24, 0xffffff, 0.72),
-        scene.add.rectangle(0, 12,  16, 12, 0x8b5e3c),
-        scene.add.rectangle(0,  6,  20,  5, 0xaa7b4e),
-        scene.add.rectangle(0, -2,   3, 12, 0x559933),
-        scene.add.ellipse(-9, -6, 12,  8, 0x55aa22, 0.9).setAngle(-30),
-        scene.add.ellipse( 9, -6, 12,  8, 0x55aa22, 0.9).setAngle( 30),
-        scene.add.ellipse( 0,-14, 10,  6, 0x66bb33, 0.9),
+        // Three clustered berries
+        scene.add.circle(-7, 2, 8, berryColors[0]),
+        scene.add.circle( 7, 2, 8, berryColors[1]),
+        scene.add.circle( 0, -6, 8, berryColors[2]),
+        // Berry highlights
+        scene.add.circle(-9, 0, 2.5, 0xff8899, 0.7),
+        scene.add.circle( 5, 0, 2.5, 0xff8899, 0.7),
+        scene.add.circle(-2, -8, 2.5, 0xff8899, 0.7),
+        // Tiny leaf on top
+        scene.add.ellipse(0, -14, 10, 5, 0x338822, 0.9),
+        scene.add.ellipse(0, -12,  2, 6, 0x336622, 0.8),
     ];
     const c = scene.add.container(cx, cy, parts).setDepth(1.8);
     scene.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });

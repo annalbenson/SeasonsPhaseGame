@@ -180,8 +180,8 @@ export function buildSidePanel(
             draw: (g, ly) => { g.fillStyle(0xff88aa, 0.9); g.fillCircle(lx + 7, ly, 5); g.fillStyle(0xffee44, 0.9); g.fillCircle(lx + 7, ly, 2); },
         },
         Summer: {
-            color: 0x44aaff, label: 'plant — water!',
-            draw: (g, ly) => { g.fillStyle(0x44aaff, 0.9); g.fillCircle(lx + 7, ly, 5); },
+            color: 0xdd2244, label: 'berries — pick!',
+            draw: (g, ly) => { g.fillStyle(0xdd2244, 0.9); g.fillCircle(lx + 5, ly, 4); g.fillCircle(lx + 11, ly, 4); },
         },
         Fall: {
             color: 0xc07030, label: 'acorn — plant!',

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { WALLS, OPPOSITE, ALGORITHMS } from '../maze';
 import { SEASONS, SeasonTheme } from '../seasons';
-import { solvePath } from '../mazeUtils';
+import { Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUtils';
 import { CustomMapData } from '../toolkit';
 
 const W = MAX_COLS * TILE + PANEL;
@@ -12,16 +12,16 @@ const ALL_WALLS = WALLS.TOP | WALLS.RIGHT | WALLS.BOTTOM | WALLS.LEFT;
 
 type ToolName = 'wall' | 'start' | 'goal' | 'bush' | 'scenery' | 'enemy' | 'objective' | 'gate' | 'key' | 'eraser';
 
-const TOOLS: { name: ToolName; label: string }[] = [
+const TOOLS: { name: ToolName; label: string; autoPlace?: boolean }[] = [
     { name: 'wall',      label: 'Walls'     },
     { name: 'start',     label: 'Start'     },
     { name: 'goal',      label: 'Goal'      },
-    { name: 'enemy',     label: 'Enemy'     },
-    { name: 'bush',      label: 'Hiding'    },
-    { name: 'scenery',   label: 'Obstacle'  },
-    { name: 'objective', label: 'Objective' },
-    { name: 'gate',      label: 'Gate'      },
-    { name: 'key',       label: 'Key'       },
+    { name: 'enemy',     label: 'Enemy',     autoPlace: true },
+    { name: 'bush',      label: 'Hiding',    autoPlace: true },
+    { name: 'scenery',   label: 'Obstacle',  autoPlace: true },
+    { name: 'objective', label: 'Objective', autoPlace: true },
+    { name: 'gate',      label: 'Gate',      autoPlace: true },
+    { name: 'key',       label: 'Key',       autoPlace: true },
     { name: 'eraser',    label: 'Eraser'    },
 ];
 
@@ -550,7 +550,7 @@ export default class ToolkitScene extends Phaser.Scene {
         let y = HEADER + py + 38;
         for (const tool of TOOLS) {
             const active = tool.name === this.activeTool;
-            const btn = this.add.text(cx - 20, y, tool.label, {
+            const btn = this.add.text(cx - 30, y, tool.label, {
                 fontSize: '16px',
                 color: active ? '#ffffff' : season.accentHex,
                 fontStyle: active ? 'bold' : 'normal',
@@ -564,10 +564,22 @@ export default class ToolkitScene extends Phaser.Scene {
             });
 
             // Count label (right of tool name)
-            const countText = this.add.text(cx + 55, y, '', {
+            const countText = this.add.text(cx + 45, y, '', {
                 fontSize: '13px', color: season.panelDimHex,
             }).setOrigin(0.5).setDepth(depth);
             this.toolCounts.push(countText);
+
+            // Auto-place button
+            if (tool.autoPlace) {
+                const autoBtn = this.add.text(cx + 85, y, 'Auto', {
+                    fontSize: '11px', color: '#000000',
+                    backgroundColor: season.accentHex,
+                    padding: { x: 4, y: 2 },
+                }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(depth);
+                autoBtn.on('pointerover', () => autoBtn.setAlpha(0.7));
+                autoBtn.on('pointerout', () => autoBtn.setAlpha(1));
+                autoBtn.on('pointerdown', () => this.autoPlace(tool.name));
+            }
 
             if (active) this.toolHighlight.setY(y);
             this.toolButtons.push(btn);
@@ -798,7 +810,7 @@ export default class ToolkitScene extends Phaser.Scene {
         // Seasonal labels for display
         const enemyLabel  = s.name === 'Spring' ? '\ud83d\udc38' : s.name === 'Summer' ? '\ud83d\udc0d' : s.name === 'Fall' ? '\ud83e\udd8a' : '\ud83e\udd89';
         const bushLabel   = s.name === 'Spring' ? '\ud83c\udf3f' : s.name === 'Summer' ? '\ud83c\udf33' : s.name === 'Fall' ? '\ud83c\udf42' : '\u2744\ufe0f';
-        const objLabel    = s.name === 'Spring' ? '\ud83c\udf3c' : s.name === 'Summer' ? '\ud83c\udf31' : s.name === 'Fall' ? '\ud83c\udf30' : '\u2744\ufe0f';
+        const objLabel    = s.name === 'Spring' ? '\ud83c\udf3c' : s.name === 'Summer' ? '\ud83c\udf52' : s.name === 'Fall' ? '\ud83c\udf30' : '\u2744\ufe0f';
 
         // Start
         const sc = this.startCell;
@@ -908,6 +920,361 @@ export default class ToolkitScene extends Phaser.Scene {
                     fontSize: '18px',
                 }).setOrigin(0.5),
             );
+        }
+    }
+
+    // ── Auto-placement ──────────────────────────────────────────────────────
+    private autoPlace(tool: ToolName) {
+        // Need a maze with passages first
+        const hasPassages = this.cells.some(row => row.some(w => w !== ALL_WALLS));
+        if (!hasPassages) {
+            this.setStatus('Generate a maze first');
+            return;
+        }
+
+        this.pushUndo();
+
+        switch (tool) {
+            case 'enemy':     this.autoPlaceEnemies(); break;
+            case 'bush':      this.autoPlaceBushes(); break;
+            case 'scenery':   this.autoPlaceScenery(); break;
+            case 'objective': this.autoPlaceObjectives(); break;
+            case 'gate':      this.autoPlaceGates(); break;
+            case 'key':       this.autoPlaceKeys(); break;
+            default: return;
+        }
+
+        this.redrawEntities();
+        this.setStatus(`Auto-placed ${tool}s`);
+        this.statusText?.setColor('#66ff66');
+        this.time.delayedCall(2000, () => {
+            this.setStatus('');
+            this.statusText?.setColor('#ff6666');
+        });
+    }
+
+    private autoPlaceEnemies() {
+        // Clear existing enemies, then place at ~33%/~66% along solution path
+        this.enemies = [];
+        const blocked = new Set(this.scenery);
+        const path = solvePath(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, this.goalCell.col, this.goalCell.row, blocked);
+        if (path.length < 6) return;
+
+        const enemyCount = 2;
+        const minSpacing = Math.max(3, Math.floor(this.cols / 3));
+
+        for (let i = 0; i < enemyCount; i++) {
+            const frac = (i + 1) / (enemyCount + 1);
+            const anchorIdx = Math.min(Math.floor(path.length * frac), path.length - 1);
+            const anchor = path[anchorIdx];
+
+            let best: Cell | null = null;
+            let bestDist = Infinity;
+            for (let row = 0; row < this.rows; row++) {
+                for (let col = 0; col < this.cols; col++) {
+                    if (col === this.startCell.col && row === this.startCell.row) continue;
+                    if (col === this.goalCell.col && row === this.goalCell.row) continue;
+                    if (this.scenery.has(`${col},${row}`)) continue;
+                    const distStart = Math.abs(col - this.startCell.col) + Math.abs(row - this.startCell.row);
+                    if (distStart <= 3) continue;
+                    if (this.enemies.some(e => Math.abs(e.col - col) + Math.abs(e.row - row) < minSpacing)) continue;
+                    const dist = Math.abs(col - anchor.col) + Math.abs(row - anchor.row);
+                    if (dist < bestDist) { bestDist = dist; best = { col, row }; }
+                }
+            }
+            if (best) this.enemies.push(best);
+        }
+    }
+
+    private autoPlaceBushes() {
+        // Clear existing bushes, then place on off-path cells + guarantee near path
+        this.bushes.clear();
+        const blocked = new Set(this.scenery);
+        const path = solvePath(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, this.goalCell.col, this.goalCell.row, blocked);
+        const pathSet = new Set(path.map(c => `${c.col},${c.row}`));
+
+        const occupied = new Set<string>([
+            `${this.startCell.col},${this.startCell.row}`,
+            `${this.goalCell.col},${this.goalCell.row}`,
+            ...this.scenery,
+            ...this.keys,
+            ...this.objectives,
+        ]);
+        for (const e of this.enemies) occupied.add(`${e.col},${e.row}`);
+
+        const candidates: string[] = [];
+        for (let row = 0; row < this.rows; row++) {
+            for (let col = 0; col < this.cols; col++) {
+                const key = `${col},${row}`;
+                if (occupied.has(key)) continue;
+                if (pathSet.has(key)) continue;
+                candidates.push(key);
+            }
+        }
+
+        // Shuffle
+        for (let i = candidates.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+        }
+
+        const target = Math.max(4, Math.floor(this.cols * this.rows / 8));
+        for (let i = 0; i < Math.min(target, candidates.length); i++) {
+            this.bushes.add(candidates[i]);
+        }
+
+        // Guarantee a bush every 3 steps along path
+        for (let i = 3; i < path.length - 3; i += 3) {
+            this.guaranteeBushNear(path[i].col, path[i].row);
+        }
+    }
+
+    private guaranteeBushNear(hCol: number, hRow: number) {
+        for (let dr = -2; dr <= 2; dr++) {
+            for (let dc = -2; dc <= 2; dc++) {
+                if (Math.abs(dc) + Math.abs(dr) > 2) continue;
+                if (this.bushes.has(`${hCol + dc},${hRow + dr}`)) return;
+            }
+        }
+        const dirs = [{ dc: 0, dr: -1 }, { dc: 1, dr: 0 }, { dc: 0, dr: 1 }, { dc: -1, dr: 0 }];
+        const valid = dirs
+            .map(({ dc, dr }) => ({ col: hCol + dc, row: hRow + dr }))
+            .filter(({ col, row }) =>
+                col >= 0 && col < this.cols && row >= 0 && row < this.rows &&
+                !(col === this.startCell.col && row === this.startCell.row) &&
+                !(col === this.goalCell.col && row === this.goalCell.row) &&
+                !this.scenery.has(`${col},${row}`)
+            );
+        if (valid.length === 0) return;
+        const { col, row } = valid[Math.floor(Math.random() * valid.length)];
+        this.bushes.add(`${col},${row}`);
+    }
+
+    private autoPlaceScenery() {
+        // Clear existing scenery, then place on dead ends + random off-path cells
+        this.scenery.clear();
+        const path = solvePath(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, this.goalCell.col, this.goalCell.row);
+        const pathSet = new Set(path.map(c => `${c.col},${c.row}`));
+
+        const gateProtected = new Set<string>();
+        for (const g of this.gates) {
+            gateProtected.add(`${g.from.col},${g.from.row}`);
+            gateProtected.add(`${g.to.col},${g.to.row}`);
+        }
+
+        // Dead ends (3+ walls) off-path
+        const deadEnds: string[] = [];
+        for (let row = 0; row < this.rows; row++) {
+            for (let col = 0; col < this.cols; col++) {
+                const key = `${col},${row}`;
+                if (pathSet.has(key)) continue;
+                if (gateProtected.has(key)) continue;
+                if (col === this.startCell.col && row === this.startCell.row) continue;
+                if (col === this.goalCell.col && row === this.goalCell.row) continue;
+                const w = this.cells[row][col];
+                const wallCount = ((w & WALLS.TOP) ? 1 : 0) + ((w & WALLS.RIGHT) ? 1 : 0)
+                    + ((w & WALLS.BOTTOM) ? 1 : 0) + ((w & WALLS.LEFT) ? 1 : 0);
+                if (wallCount >= 3) deadEnds.push(key);
+            }
+        }
+
+        // Shuffle dead ends
+        for (let i = deadEnds.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [deadEnds[i], deadEnds[j]] = [deadEnds[j], deadEnds[i]];
+        }
+
+        const target = Math.floor(this.cols * this.rows / 20);
+        for (let i = 0; i < Math.min(target, deadEnds.length); i++) {
+            this.scenery.add(deadEnds[i]);
+        }
+
+        // Fill remaining with random off-path cells
+        if (this.scenery.size < target) {
+            const extras: string[] = [];
+            for (let row = 0; row < this.rows; row++) {
+                for (let col = 0; col < this.cols; col++) {
+                    const key = `${col},${row}`;
+                    if (this.scenery.has(key)) continue;
+                    if (pathSet.has(key)) continue;
+                    if (gateProtected.has(key)) continue;
+                    if (col === this.startCell.col && row === this.startCell.row) continue;
+                    if (col === this.goalCell.col && row === this.goalCell.row) continue;
+                    extras.push(key);
+                }
+            }
+            for (let i = extras.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [extras[i], extras[j]] = [extras[j], extras[i]];
+            }
+            const needed = target - this.scenery.size;
+            for (let i = 0; i < Math.min(needed, extras.length); i++) {
+                this.scenery.add(extras[i]);
+            }
+        }
+    }
+
+    private autoPlaceObjectives() {
+        // Clear existing objectives, then place along solution path, far from path
+        this.objectives.clear();
+        const blocked = new Set(this.scenery);
+        const path = solvePath(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, this.goalCell.col, this.goalCell.row, blocked);
+        if (path.length < 4) return;
+
+        const pathSet = new Set(path.map(c => `${c.col},${c.row}`));
+        const reachable = floodFill(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, blocked);
+
+        const avoid = new Set<string>([
+            `${this.startCell.col},${this.startCell.row}`,
+            `${this.goalCell.col},${this.goalCell.row}`,
+            ...this.scenery,
+            ...this.keys,
+        ]);
+
+        const distFromPath = bfsDistanceMap(this.cells, this.cols, this.rows, pathSet, blocked);
+
+        const count = Math.ceil(this.cols / 3);
+        const placed: Cell[] = [];
+        const usedKeys = new Set<string>();
+        const searchRadius = Math.max(4, Math.floor(this.cols / 2));
+        const minSpacing = Math.max(3, Math.floor(this.cols / 3));
+
+        for (let i = 0; i < count; i++) {
+            const frac = (i + 1) / (count + 1);
+            const anchorIdx = Math.min(Math.floor(path.length * frac), path.length - 1);
+            const anchor = path[anchorIdx];
+
+            const nearby: { cell: Cell; dist: number; offPath: number }[] = [];
+            for (const key of reachable) {
+                if (avoid.has(key)) continue;
+                if (usedKeys.has(key)) continue;
+                if (pathSet.has(key)) continue;
+                const [col, row] = key.split(',').map(Number);
+                if (placed.some(p => Math.abs(p.col - col) + Math.abs(p.row - row) < minSpacing)) continue;
+                const manhattan = Math.abs(col - anchor.col) + Math.abs(row - anchor.row);
+                if (manhattan > searchRadius) continue;
+                nearby.push({
+                    cell: { col, row },
+                    dist: manhattan,
+                    offPath: distFromPath.get(key) ?? 0,
+                });
+            }
+
+            nearby.sort((a, b) => b.offPath - a.offPath || a.dist - b.dist);
+
+            if (nearby.length > 0) {
+                const pick = nearby[0].cell;
+                const key = `${pick.col},${pick.row}`;
+                placed.push(pick);
+                usedKeys.add(key);
+            }
+        }
+
+        for (const { col, row } of placed) {
+            this.objectives.add(`${col},${row}`);
+        }
+    }
+
+    private autoPlaceGates() {
+        // Clear existing gates (and keys), then place along solution path
+        this.gates = [];
+        this.keys.clear();
+
+        const path = solvePath(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, this.goalCell.col, this.goalCell.row);
+        if (path.length < 10) {
+            this.setStatus('Path too short for gates');
+            return;
+        }
+
+        const numGates = Math.max(1, Math.floor(this.cols / 4) - 1);
+        for (let i = 0; i < numGates; i++) {
+            const frac = (i + 1) / (numGates + 1);
+            const idx = Math.floor(path.length * frac);
+            if (idx + 1 < path.length) {
+                const from = path[idx];
+                const to = path[idx + 1];
+                // Ensure no wall between them
+                const dc = to.col - from.col, dr = to.row - from.row;
+                const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+                if (!(this.cells[from.row][from.col] & fw)) {
+                    this.gates.push({ from: { ...from }, to: { ...to } });
+                }
+            }
+        }
+
+        // Auto-place keys for each gate
+        if (this.gates.length > 0) {
+            this.autoPlaceKeys();
+        }
+    }
+
+    private autoPlaceKeys() {
+        // Clear existing keys, then place one per gate zone far from solution path
+        this.keys.clear();
+        if (this.gates.length === 0) return;
+
+        const blocked = new Set(this.scenery);
+
+        // Temporarily block gate edges to compute zones
+        const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
+        for (const { from, to } of this.gates) {
+            const dc = to.col - from.col, dr = to.row - from.row;
+            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
+            wallOps.push({ from, to, fw });
+            this.cells[from.row][from.col] |= fw;
+            this.cells[to.row][to.col] |= OPPOSITE[fw];
+        }
+
+        // Build zones
+        const zones: Set<string>[] = [];
+        zones.push(floodFill(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, blocked));
+        for (const gate of this.gates) {
+            zones.push(floodFill(this.cells, this.cols, this.rows,
+                gate.to.col, gate.to.row, blocked));
+        }
+
+        // Restore passages
+        for (const { from, to, fw } of wallOps) {
+            this.cells[from.row][from.col] &= ~fw;
+            this.cells[to.row][to.col] &= ~OPPOSITE[fw];
+        }
+
+        // Pick key locations far from solution path
+        const pathCells = new Set<string>();
+        const solPath = solvePath(this.cells, this.cols, this.rows,
+            this.startCell.col, this.startCell.row, this.goalCell.col, this.goalCell.row, blocked);
+        for (const c of solPath) pathCells.add(`${c.col},${c.row}`);
+        const distFromPath = bfsDistanceMap(this.cells, this.cols, this.rows, pathCells, blocked);
+
+        // One key per zone (except the last which has the goal)
+        for (let i = 0; i < zones.length - 1; i++) {
+            const offPath = [...zones[i]].filter(k =>
+                !pathCells.has(k) &&
+                k !== `${this.startCell.col},${this.startCell.row}` &&
+                k !== `${this.goalCell.col},${this.goalCell.row}`
+            );
+            if (offPath.length > 0) {
+                offPath.sort((a, b) => (distFromPath.get(b) ?? 0) - (distFromPath.get(a) ?? 0));
+                const topN = Math.max(1, Math.floor(offPath.length * 0.10));
+                const key = offPath[Math.floor(Math.random() * topN)];
+                this.keys.add(key);
+            } else {
+                // Fallback: any cell in zone
+                const any = [...zones[i]].filter(k =>
+                    k !== `${this.startCell.col},${this.startCell.row}` &&
+                    k !== `${this.goalCell.col},${this.goalCell.row}`
+                );
+                if (any.length > 0) {
+                    this.keys.add(any[Math.floor(Math.random() * any.length)]);
+                }
+            }
         }
     }
 

@@ -87,19 +87,19 @@ const SPRING: SeasonTheme = {
 
 const SUMMER: SeasonTheme = {
     name:       'Summer',
-    floorLight: 0x7ab87a,   // muted sage-green
-    floorDark:  0x4e8a4e,   // medium forest green
-    wallColor:  0x0a2a0a,   // forest black-green
+    floorLight: 0xc8c8a0,   // sun-bleached straw / pale khaki
+    floorDark:  0xa0a078,   // dusty sage-grey
+    wallColor:  0x2a2818,   // dark olive-brown
     goalColor:  0xf5e040,   // sunshine yellow
-    bgColor:    0x041408,
-    uiAccent:   0xaaffaa,
-    textColor:  0x0a2a0a,
-    keyColor:   0xffffff,   // white/silver — crisp against green
-    gateColor:  0xcc2200,   // deep red — classic complementary to green
-    accentHex:   hex(0xaaffaa),
-    dimHex:      dimHex(0xaaffaa, 0.65),
-    panelDimHex: panelDim(0xaaffaa, 0.55, 0x88),
-    textHex:     hex(0x0a2a0a),
+    bgColor:    0x080808,
+    uiAccent:   0xe8e8aa,   // pale straw yellow
+    textColor:  0x2a2818,
+    keyColor:   0xffffff,   // white/silver
+    gateColor:  0xcc2200,   // deep red
+    accentHex:   hex(0xe8e8aa),
+    dimHex:      dimHex(0xe8e8aa, 0.65),
+    panelDimHex: panelDim(0xe8e8aa, 0.55, 0x88),
+    textHex:     hex(0x2a2818),
 };
 
 const FALL: SeasonTheme = {
