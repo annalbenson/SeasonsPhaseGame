@@ -11,7 +11,7 @@ import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUt
 import { statsEvents, STAT } from '../statsEmitter';
 import { createPlayerSprite, ensureSparkleTexture } from '../sprites';
 import { buildHeader, buildSidePanel } from '../sidePanel';
-import { PlacementCtx, placeBushes, placeBlockingRocks, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
+import { PlacementCtx, placeScenery, placeBushes, placeBlockingRocks, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
 
 
 // Returns the first month of the season that contains `month`
@@ -280,7 +280,7 @@ export default class GameScene extends Phaser.Scene {
 
         // Walls
         const g = this.add.graphics();
-        g.lineStyle(4, season.wallColor, 1);
+        g.lineStyle(6, season.wallColor, 1);
         for (let row = 0; row < this.rows; row++) {
             for (let col = 0; col < this.cols; col++) {
                 const x = col * TILE, y = row * TILE;
@@ -306,23 +306,26 @@ export default class GameScene extends Phaser.Scene {
             }
             this.updateObjText();
         } else {
-            // Bushes go into mazeLayer BEFORE puzzle items so keys/gates render on top
-            placeBushes(pCtx, widenedCells, season.name);
+            // 1. Scenery (blocking obstacles) — on widened cells + dead ends
+            placeScenery(pCtx, widenedCells, season.name);
 
-            // Winter: place blocking rocks on corridors that require HOP to pass
+            // 2. Winter blocking rocks — on corridors that require HOP to pass
             if (season.name === 'Winter') {
                 placeBlockingRocks(pCtx, season.name);
             }
 
-            // Keys + gates (also added to mazeLayer inside placePuzzleItems)
+            // 3. Keys + gates
             this.placePuzzleItems(season);
 
-            // Verify all keys are reachable from start (respecting scenery and gates)
+            // 4. Verify all keys are reachable from start
             this.verifyKeyReachability();
 
-            // Season objectives — placed after puzzle items so we can avoid their cells
+            // 5. Season objectives — spread along solution path
             this.objTotal = placeObjectives(pCtx, season);
             this.updateObjText();
+
+            // 6. Bushes (hiding spots) — placed last so they fill remaining space
+            placeBushes(pCtx, season.name);
         }
 
         // ── Weather ───────────────────────────────────────────────────────────
@@ -462,7 +465,7 @@ export default class GameScene extends Phaser.Scene {
             );
             if (offPath.length > 0) {
                 offPath.sort((a, b) => (distFromPath.get(b) ?? 0) - (distFromPath.get(a) ?? 0));
-                const topN = Math.max(1, Math.floor(offPath.length * 0.25));
+                const topN = Math.max(1, Math.floor(offPath.length * 0.10));
                 const key = offPath[Math.floor(Math.random() * topN)];
                 const [c, r] = key.split(',').map(Number);
                 return { col: c, row: r };
@@ -879,51 +882,41 @@ export default class GameScene extends Phaser.Scene {
             }
         };
 
-        const pick = (candidates: { col: number; row: number }[]) =>
-            candidates[Math.floor(Math.random() * candidates.length)];
+        // Place enemies at ~33% and ~66% along the solution path
+        const solPath = solvePath(this.cells, this.cols, this.rows,
+            this.startCol, this.startRow, this.goalCol, this.goalRow, this.sceneryBlocked);
 
-        // Split the grid into two zones: before gate1 (near start) and after gate1 (near goal)
-        const g = this.gate1Cell;
-        const nearStart: { col: number; row: number }[] = [];
-        const nearGoal:  { col: number; row: number }[] = [];
+        const pCtx = this.buildPlacementCtx();
+        const enemyCount = 2;
+        const placed: { col: number; row: number }[] = [];
+        const minSpacing = Math.max(3, Math.floor(this.cols / 3));
 
-        for (let row = 0; row < this.rows; row++) {
-            for (let col = 0; col < this.cols; col++) {
-                if (col === this.goalCol  && row === this.goalRow)  continue;
-                if (col === this.startCol && row === this.startRow) continue;
-                if (this.sceneryBlocked.has(`${col},${row}`)) continue;
-                const distFromStart = Math.abs(col - this.startCol) + Math.abs(row - this.startRow);
-                if (distFromStart <= 3) continue; // too close to player spawn
+        for (let i = 0; i < enemyCount; i++) {
+            const frac = (i + 1) / (enemyCount + 1);
+            const anchorIdx = Math.min(Math.floor(solPath.length * frac), solPath.length - 1);
+            const anchor = solPath[anchorIdx];
 
-                if (g) {
-                    const distToGate = Math.abs(col - g.col) + Math.abs(row - g.row);
-                    const distToGoal = Math.abs(col - this.goalCol) + Math.abs(row - this.goalRow);
-                    const distToStart = distFromStart;
-                    // Before gate1: closer to start than to goal
-                    if (distToStart < distToGoal && distFromStart >= 4) nearStart.push({ col, row });
-                    // After gate1: closer to goal than to start, and away from gate
-                    if (distToGoal < distToStart && distToGate >= 2) nearGoal.push({ col, row });
-                } else {
-                    // No gates — just split by distance
-                    if (distFromStart <= 7) nearStart.push({ col, row });
-                    else nearGoal.push({ col, row });
+            // Find nearest valid cell to the anchor
+            let best: { col: number; row: number } | null = null;
+            let bestDist = Infinity;
+            for (let row = 0; row < this.rows; row++) {
+                for (let col = 0; col < this.cols; col++) {
+                    if (col === this.goalCol && row === this.goalRow) continue;
+                    if (col === this.startCol && row === this.startRow) continue;
+                    if (this.sceneryBlocked.has(`${col},${row}`)) continue;
+                    const distFromStart = Math.abs(col - this.startCol) + Math.abs(row - this.startRow);
+                    if (distFromStart <= 3) continue;
+                    if (placed.some(p => Math.abs(p.col - col) + Math.abs(p.row - row) < minSpacing)) continue;
+                    const dist = Math.abs(col - anchor.col) + Math.abs(row - anchor.row);
+                    if (dist < bestDist) { bestDist = dist; best = { col, row }; }
                 }
             }
-        }
 
-        // Enemy 1: in the start-side zone
-        const pCtx = this.buildPlacementCtx();
-        if (nearStart.length > 0) {
-            const pos = pick(nearStart);
-            guaranteeBushNear(pCtx, pos.col, pos.row, season.name);
-            this.hazards.push(new Hazard(this, this.cells, pos.col, pos.row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
-        }
-
-        // Enemy 2: in the goal-side zone
-        if (nearGoal.length > 0) {
-            const pos = pick(nearGoal);
-            guaranteeBushNear(pCtx, pos.col, pos.row, season.name);
-            this.hazards.push(new Hazard(this, this.cells, pos.col, pos.row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
+            if (best) {
+                placed.push(best);
+                guaranteeBushNear(pCtx, best.col, best.row, season.name);
+                this.hazards.push(new Hazard(this, this.cells, best.col, best.row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
+            }
         }
 
         // Tell each hazard about its siblings so they spread out

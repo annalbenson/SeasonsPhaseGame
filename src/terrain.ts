@@ -270,7 +270,7 @@ export function drawTerrain(
 
     // Outer border
     const g = scene.add.graphics();
-    g.lineStyle(4, season.wallColor, 1);
+    g.lineStyle(6, season.wallColor, 1);
     g.strokeRect(0, 0, cols * TILE, rows * TILE);
     container.add(g);
 }

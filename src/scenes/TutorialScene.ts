@@ -454,7 +454,7 @@ export default class TutorialScene extends Phaser.Scene {
         }
 
         const g = this.add.graphics();
-        g.lineStyle(4, st?.wallColor ?? T.wallColor, 1);
+        g.lineStyle(6, st?.wallColor ?? T.wallColor, 1);
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 if (this.cells[row][col] === ALL_WALLS) continue; // skip isolated cells

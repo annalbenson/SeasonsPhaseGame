@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { TILE } from './constants';
-import { WALLS, OPPOSITE } from './maze';
+import { WALLS } from './maze';
 import { SeasonTheme } from './seasons';
 import { CustomMapData } from './toolkit';
 import { Cell, MOVE_DIRS, solvePath, floodFill, bfsDistanceMap } from './mazeUtils';
@@ -30,32 +30,23 @@ export interface PlacementCtx {
     worldY(row: number): number;
 }
 
-// ── Bush + scenery decoration placement ──────────────────────────────────────
+// ── Scenery decoration placement (blocking obstacles) ────────────────────────
 
-export function placeBushes(
+export function placeScenery(
     ctx: PlacementCtx,
     widenedCells: Set<string>,
     seasonName: string,
 ): void {
-    for (const key of widenedCells) {
-        const [col, row] = key.split(',').map(Number);
-        if (col === ctx.startCol && row === ctx.startRow) continue;
-        if (col === ctx.goalCol  && row === ctx.goalRow)  continue;
-        if (Math.random() > 0.65)                         continue;
-        ctx.bushCells.add(key);
-        drawBushAt(ctx.scene, ctx.mazeLayer, col, row, seasonName);
-    }
-
     const path = solvePath(ctx.cells, ctx.cols, ctx.rows, ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow);
-
     const pathSet = new Set(path.map(c => `${c.col},${c.row}`));
     const gateProtected = new Set<string>();
     for (const { from, to } of ctx.gateEdges) {
         gateProtected.add(`${from.col},${from.row}`);
         gateProtected.add(`${to.col},${to.row}`);
     }
+
+    // Widened cells that aren't on the solution path or gate-adjacent become scenery
     for (const key of widenedCells) {
-        if (ctx.bushCells.has(key)) continue;
         if (pathSet.has(key)) continue;
         if (gateProtected.has(key)) continue;
         if (Math.random() > 0.45) continue;
@@ -73,7 +64,6 @@ export function placeBushes(
         for (let col = 0; col < ctx.cols; col++) {
             const key = `${col},${row}`;
             if (ctx.sceneryBlocked.has(key)) continue;
-            if (ctx.bushCells.has(key)) continue;
             if (pathSet.has(key)) continue;
             if (gateProtected.has(key)) continue;
             if (col === ctx.startCol && row === ctx.startRow) continue;
@@ -95,10 +85,50 @@ export function placeBushes(
         ctx.sceneryBlocked.add(key);
         drawScenery(ctx.scene, ctx.mazeLayer, col, row, seasonName);
     }
+}
 
-    // Guarantee bush near every ~step cells along solution path
-    const step = Math.floor(ctx.cols / 2);
-    for (let i = step; i < path.length - step; i += step) {
+// ── Bush (hiding spot) placement — runs after all blocking entities are placed ─
+
+export function placeBushes(ctx: PlacementCtx, seasonName: string): void {
+    const path = solvePath(ctx.cells, ctx.cols, ctx.rows,
+        ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow, ctx.sceneryBlocked);
+    const pathSet = new Set(path.map(c => `${c.col},${c.row}`));
+
+    // Occupied cells: scenery, keys, objectives, start, goal
+    const occupied = new Set<string>([
+        `${ctx.startCol},${ctx.startRow}`,
+        `${ctx.goalCol},${ctx.goalRow}`,
+        ...ctx.sceneryBlocked,
+        ...ctx.keyItems.keys(),
+        ...ctx.objectives.keys(),
+    ]);
+
+    // Candidates: all reachable non-occupied, non-path cells
+    const candidates: string[] = [];
+    for (let row = 0; row < ctx.rows; row++) {
+        for (let col = 0; col < ctx.cols; col++) {
+            const key = `${col},${row}`;
+            if (occupied.has(key)) continue;
+            if (pathSet.has(key)) continue;
+            candidates.push(key);
+        }
+    }
+
+    // Shuffle and place bushes — target ~1 bush per 8 cells
+    const target = Math.max(4, Math.floor(ctx.cols * ctx.rows / 8));
+    for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    for (let i = 0; i < Math.min(target, candidates.length); i++) {
+        const key = candidates[i];
+        const [col, row] = key.split(',').map(Number);
+        ctx.bushCells.add(key);
+        drawBushAt(ctx.scene, ctx.mazeLayer, col, row, seasonName);
+    }
+
+    // Guarantee a bush every 3 steps along the solution path
+    for (let i = 3; i < path.length - 3; i += 3) {
         guaranteeBushNear(ctx, path[i].col, path[i].row, seasonName);
     }
 }
@@ -140,7 +170,6 @@ export function placeBlockingRocks(ctx: PlacementCtx, seasonName: string): void 
 
     const solPath = solvePath(ctx.cells, ctx.cols, ctx.rows,
         ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow, ctx.sceneryBlocked);
-    const solPathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
 
     const gateProtected = new Set<string>();
     for (const { from, to } of ctx.gateEdges) {
@@ -148,53 +177,56 @@ export function placeBlockingRocks(ctx: PlacementCtx, seasonName: string): void 
         gateProtected.add(`${to.col},${to.row}`);
     }
 
-    const onPath: Cell[] = [];
-    const offPath: Cell[] = [];
-    for (let row = 0; row < ctx.rows; row++) {
-        for (let col = 0; col < ctx.cols; col++) {
-            const key = `${col},${row}`;
-            if (ctx.sceneryBlocked.has(key)) continue;
-            if (ctx.bushCells.has(key)) continue;
-            if (gateProtected.has(key)) continue;
-            if (col === ctx.startCol && row === ctx.startRow) continue;
-            if (col === ctx.goalCol && row === ctx.goalRow) continue;
-            const distStart = Math.abs(col - ctx.startCol) + Math.abs(row - ctx.startRow);
-            const distGoal = Math.abs(col - ctx.goalCol) + Math.abs(row - ctx.goalRow);
-            if (distStart <= 2 || distGoal <= 2) continue;
-
-            const w = ctx.cells[row][col];
-            const hoppableH = !(w & WALLS.LEFT) && !(w & WALLS.RIGHT);
-            const hoppableV = !(w & WALLS.TOP) && !(w & WALLS.BOTTOM);
-            if (!hoppableH && !hoppableV) continue;
-
-            if (solPathSet.has(key)) {
-                onPath.push({ col, row });
-            } else {
-                offPath.push({ col, row });
-            }
-        }
-    }
-
-    const shuffle = (arr: Cell[]) => {
-        for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [arr[i], arr[j]] = [arr[j], arr[i]];
-        }
+    // Check if a cell is a valid rock candidate
+    const isHoppable = (col: number, row: number): boolean => {
+        const key = `${col},${row}`;
+        if (ctx.sceneryBlocked.has(key)) return false;
+        if (ctx.bushCells.has(key)) return false;
+        if (gateProtected.has(key)) return false;
+        if (col === ctx.startCol && row === ctx.startRow) return false;
+        if (col === ctx.goalCol && row === ctx.goalRow) return false;
+        const distStart = Math.abs(col - ctx.startCol) + Math.abs(row - ctx.startRow);
+        const distGoal = Math.abs(col - ctx.goalCol) + Math.abs(row - ctx.goalRow);
+        if (distStart <= 2 || distGoal <= 2) return false;
+        const w = ctx.cells[row][col];
+        const hoppableH = !(w & WALLS.LEFT) && !(w & WALLS.RIGHT);
+        const hoppableV = !(w & WALLS.TOP) && !(w & WALLS.BOTTOM);
+        return hoppableH || hoppableV;
     };
-    shuffle(onPath);
-    shuffle(offPath);
 
-    const candidates = [...onPath, ...offPath];
+    // Place rocks at evenly spaced percentages along the solution path.
+    // For each anchor, search nearby on-path cells for the best hoppable candidate.
+    const placed: Cell[] = [];
+    const minSpacing = Math.max(3, Math.floor(ctx.cols / 3));
 
-    let placed = 0;
-    for (const c of candidates) {
-        if (placed >= count) break;
-        const key = `${c.col},${c.row}`;
+    for (let i = 0; i < count; i++) {
+        const frac = (i + 1) / (count + 1);
+        const anchorIdx = Math.min(Math.floor(solPath.length * frac), solPath.length - 1);
+
+        // Search outward from the anchor along the path for a valid hoppable cell
+        let best: Cell | null = null;
+        for (let offset = 0; offset < solPath.length; offset++) {
+            for (const dir of [1, -1]) {
+                const idx = anchorIdx + offset * dir;
+                if (idx < 0 || idx >= solPath.length) continue;
+                const c = solPath[idx];
+                if (!isHoppable(c.col, c.row)) continue;
+                // Enforce spacing from already-placed rocks
+                if (placed.some(p => Math.abs(p.col - c.col) + Math.abs(p.row - c.row) < minSpacing)) continue;
+                best = c;
+                break;
+            }
+            if (best) break;
+        }
+
+        if (!best) continue;
+
+        const key = `${best.col},${best.row}`;
         ctx.sceneryBlocked.add(key);
 
         if (hopAwareBfs(ctx)) {
-            drawScenery(ctx.scene, ctx.mazeLayer, c.col, c.row, seasonName);
-            placed++;
+            drawScenery(ctx.scene, ctx.mazeLayer, best.col, best.row, seasonName);
+            placed.push(best);
         } else {
             ctx.sceneryBlocked.delete(key);
         }
@@ -203,14 +235,14 @@ export function placeBlockingRocks(ctx: PlacementCtx, seasonName: string): void 
 
 // ── BFS from start to goal that treats hop-over-scenery as a valid move ─────
 
-export function hopAwareBfs(ctx: PlacementCtx): boolean {
+/** BFS that treats hop-over-scenery as a valid move. Returns all reachable cells. */
+export function hopAwareFloodFill(ctx: PlacementCtx): Set<string> {
     const visited = new Set<string>();
     const queue: Cell[] = [{ col: ctx.startCol, row: ctx.startRow }];
     visited.add(`${ctx.startCol},${ctx.startRow}`);
 
     while (queue.length > 0) {
         const { col, row } = queue.shift()!;
-        if (col === ctx.goalCol && row === ctx.goalRow) return true;
 
         for (const { dc, dr, wall } of MOVE_DIRS) {
             if (ctx.cells[row][col] & wall) continue;
@@ -238,81 +270,84 @@ export function hopAwareBfs(ctx: PlacementCtx): boolean {
             }
         }
     }
-    return false;
+    return visited;
+}
+
+/** Check if goal is reachable from start via hop-aware BFS. */
+export function hopAwareBfs(ctx: PlacementCtx): boolean {
+    return hopAwareFloodFill(ctx).has(`${ctx.goalCol},${ctx.goalRow}`);
 }
 
 // ── Season objectives ────────────────────────────────────────────────────────
 
 export function placeObjectives(ctx: PlacementCtx, season: SeasonTheme): number {
-    const count = Math.floor(ctx.cols / 4);
+    const count = Math.ceil(ctx.cols / 3); // 8→3, 10→4, 12→4
 
-    const reachable = floodFill(ctx.cells, ctx.cols, ctx.rows,
-        ctx.startCol, ctx.startRow, ctx.sceneryBlocked);
+    // Winter has blocking rocks the player can HOP over — use hop-aware reachability
+    // so objectives can land beyond rocks. (WinterY2 uses GameY2Scene, not this code.)
+    const reachable = season.name === 'Winter'
+        ? hopAwareFloodFill(ctx)
+        : floodFill(ctx.cells, ctx.cols, ctx.rows, ctx.startCol, ctx.startRow, ctx.sceneryBlocked);
 
     const avoid = new Set<string>([`${ctx.startCol},${ctx.startRow}`, `${ctx.goalCol},${ctx.goalRow}`]);
     for (const k of ctx.keyItems.keys()) avoid.add(k);
     for (const k of ctx.sceneryBlocked) avoid.add(k);
 
-    const candidates: Cell[] = [];
+    const candidateSet = new Set<string>();
     for (const key of reachable) {
         if (avoid.has(key)) continue;
-        const [col, row] = key.split(',').map(Number);
-        candidates.push({ col, row });
+        candidateSet.add(key);
     }
 
-    // Compute zone membership (flood fill with gate walls blocked)
-    const zoneOf = new Map<string, number>();
-    if (ctx.gateEdges.length >= 1) {
-        const wallOps: { from: Cell; to: Cell; fw: number }[] = [];
-        for (const { from, to } of ctx.gateEdges) {
-            const dc = to.col - from.col, dr = to.row - from.row;
-            const fw = dc === 1 ? WALLS.RIGHT : dc === -1 ? WALLS.LEFT : dr === 1 ? WALLS.BOTTOM : WALLS.TOP;
-            wallOps.push({ from, to, fw });
-            ctx.cells[from.row][from.col] |= fw;
-            ctx.cells[to.row][to.col] |= OPPOSITE[fw];
-        }
-        const z0 = floodFill(ctx.cells, ctx.cols, ctx.rows, ctx.startCol, ctx.startRow, ctx.sceneryBlocked);
-        for (const k of z0) zoneOf.set(k, 0);
-        for (let i = 0; i < ctx.gateEdges.length; i++) {
-            const gTo = ctx.gateEdges[i].to;
-            const zi = floodFill(ctx.cells, ctx.cols, ctx.rows, gTo.col, gTo.row, ctx.sceneryBlocked);
-            for (const k of zi) zoneOf.set(k, i + 1);
-        }
-        for (const { from, to, fw } of wallOps) {
-            ctx.cells[from.row][from.col] &= ~fw;
-            ctx.cells[to.row][to.col] &= ~OPPOSITE[fw];
-        }
-    }
-
-    const solPath = solvePath(ctx.cells, ctx.cols, ctx.rows,
-        ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow,
-        ctx.sceneryBlocked);
+    // Solve the full path (for Winter, ignore scenery so we get a path through rocks)
+    const solPath = season.name === 'Winter'
+        ? solvePath(ctx.cells, ctx.cols, ctx.rows,
+            ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow)
+        : solvePath(ctx.cells, ctx.cols, ctx.rows,
+            ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow, ctx.sceneryBlocked);
     const pathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
-    const distFromPath = bfsDistanceMap(ctx.cells, ctx.cols, ctx.rows, pathSet, ctx.sceneryBlocked);
+    const distFromPath = bfsDistanceMap(ctx.cells, ctx.cols, ctx.rows, pathSet,
+        season.name === 'Winter' ? undefined : ctx.sceneryBlocked);
 
-    const numZones = ctx.gateEdges.length + 1;
-    const byZone: Cell[][] = Array.from({ length: numZones }, () => []);
-    for (const c of candidates) {
-        const z = zoneOf.get(`${c.col},${c.row}`) ?? 0;
-        byZone[z].push(c);
-    }
-    for (const arr of byZone) {
-        arr.sort((a, b) =>
-            (distFromPath.get(`${b.col},${b.row}`) ?? 0) -
-            (distFromPath.get(`${a.col},${a.row}`) ?? 0));
-    }
-
+    // Place objectives at evenly spaced percentages along the solution path.
+    // For each anchor point, pick the farthest-from-path candidate within a
+    // search radius, enforcing minimum grid spacing between objectives.
     const placed: Cell[] = [];
-    const usedZones = byZone.filter(z => z.length > 0);
-    for (const zoneCands of usedZones) {
-        if (placed.length >= count) break;
-        placed.push(zoneCands.shift()!);
-    }
-    while (placed.length < count) {
-        const best = usedZones.filter(z => z.length > 0)
-            .sort((a, b) => b.length - a.length)[0];
-        if (!best || best.length === 0) break;
-        placed.push(best.shift()!);
+    const usedKeys = new Set<string>();
+    const searchRadius = Math.max(4, Math.floor(ctx.cols / 2));
+    const minSpacing = Math.max(3, Math.floor(ctx.cols / 3));
+
+    for (let i = 0; i < count; i++) {
+        const frac = (i + 1) / (count + 1); // e.g. 3 objs → 25%, 50%, 75%
+        const anchorIdx = Math.min(Math.floor(solPath.length * frac), solPath.length - 1);
+        const anchor = solPath[anchorIdx];
+
+        // Find candidates near this anchor, sorted by distance from path (descending)
+        const nearby: { cell: Cell; dist: number; offPath: number }[] = [];
+        for (const key of candidateSet) {
+            if (usedKeys.has(key)) continue;
+            if (pathSet.has(key)) continue;
+            const [col, row] = key.split(',').map(Number);
+            // Enforce minimum spacing from already-placed objectives
+            if (placed.some(p => Math.abs(p.col - col) + Math.abs(p.row - row) < minSpacing)) continue;
+            const manhattan = Math.abs(col - anchor.col) + Math.abs(row - anchor.row);
+            if (manhattan > searchRadius) continue;
+            nearby.push({
+                cell: { col, row },
+                dist: manhattan,
+                offPath: distFromPath.get(key) ?? 0,
+            });
+        }
+
+        // Sort: prefer far from path, break ties by closer to anchor
+        nearby.sort((a, b) => b.offPath - a.offPath || a.dist - b.dist);
+
+        if (nearby.length > 0) {
+            const pick = nearby[0].cell;
+            const key = `${pick.col},${pick.row}`;
+            placed.push(pick);
+            usedKeys.add(key);
+        }
     }
 
     for (const { col, row } of placed) {

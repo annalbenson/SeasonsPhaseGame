@@ -776,7 +776,7 @@ export default class ToolkitScene extends Phaser.Scene {
     private redrawWalls() {
         const g = this.wallGraphics;
         g.clear();
-        g.lineStyle(4, this.season.wallColor, 1);
+        g.lineStyle(6, this.season.wallColor, 1);
 
         for (let row = 0; row < this.rows; row++) {
             for (let col = 0; col < this.cols; col++) {

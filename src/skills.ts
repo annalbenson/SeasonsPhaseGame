@@ -13,7 +13,7 @@ import { statsEvents, STAT } from './statsEmitter';
 //   Summer (GLOW)  — immediate: reveal a large fog area
 //   Fall   (DASH)  — directional: sprint 3 cells in one direction
 
-const COOLDOWN = 15_000; // 15 seconds shared across all skills
+const DEFAULT_COOLDOWN = 15_000; // 15 seconds default
 
 /** Shared state and scene references needed by all skills. */
 export interface SkillContext {
@@ -47,6 +47,7 @@ export interface Skill {
     readonly name: string;
     readonly label: string;
     readonly isDirectional: boolean;
+    readonly cooldown: number;
     /** Attempt immediate activation. Returns true if consumed. */
     activate(ctx: SkillContext): boolean;
     /** Attempt directional activation. Returns true if consumed. */
@@ -138,8 +139,9 @@ export class SkillManager {
     }
 
     private startCooldown(now: number) {
+        if (this.skill.cooldown <= 0) return; // no cooldown
         this.used = true;
-        this.cooldownEnd = now + COOLDOWN;
+        this.cooldownEnd = now + this.skill.cooldown;
     }
 }
 
@@ -149,6 +151,7 @@ const HOP: Skill = {
     name: 'HOP',
     label: 'hop — jump obstacle!',
     isDirectional: true,
+    cooldown: 0,
 
     activate: () => false, // directional — handled via tryDirectional
 
@@ -209,6 +212,7 @@ const STING: Skill = {
     name: 'STING',
     label: 'sting — stun frog!',
     isDirectional: false,
+    cooldown: DEFAULT_COOLDOWN,
 
     activate(ctx) {
         let nearest: Hazard | null = null;
@@ -232,6 +236,7 @@ const GLOW: Skill = {
     name: 'GLOW',
     label: 'glow — reveal fog!',
     isDirectional: false,
+    cooldown: DEFAULT_COOLDOWN,
 
     activate(ctx) {
         ctx.fog.revealArea(ctx.gridX, ctx.gridY, 4, ctx.scene.time.now);
@@ -251,6 +256,7 @@ const DASH: Skill = {
     name: 'DASH',
     label: 'dash — sprint ahead!',
     isDirectional: true,
+    cooldown: DEFAULT_COOLDOWN,
 
     activate: () => false,
 
@@ -330,6 +336,7 @@ const SWIM: Skill = {
     name: 'SWIM',
     label: 'swim — cross water!',
     isDirectional: false,
+    cooldown: DEFAULT_COOLDOWN,
 
     activate(ctx) {
         if (ctx.setSwimming) {
