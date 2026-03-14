@@ -185,6 +185,6 @@ Prompt before wiping the entire map to prevent accidental loss.
 
 ---
 
-## Bug: Stone next to gate breaks HOP
+## ✅ Bug: Stone next to gate breaks HOP (fixed)
 
-When a scenic obstacle (blocking rock) is placed directly adjacent to a gate, the HOP skill fails. The player tries to hop over the stone but the gate on the far side blocks the landing check, making the cell impassable even with a key. Need to handle the stone+gate adjacency case — either allow HOP to open the gate on landing, or prevent this placement from occurring during level generation.
+Fixed by adding `gateProtected` filtering to `placeBlockingRocks()` — rocks can no longer be placed on cells adjacent to gate edges, matching the existing protection in `placeBushes()`.

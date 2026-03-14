@@ -1396,6 +1396,14 @@ export default class GameScene extends Phaser.Scene {
             this.startCol, this.startRow, this.goalCol, this.goalRow, this.sceneryBlocked);
         const solPathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
 
+        // Protect cells adjacent to gates — a rock next to a gate makes HOP
+        // fail because the gate blocks the landing check.
+        const gateProtected = new Set<string>();
+        for (const { from, to } of this.gateEdges) {
+            gateProtected.add(`${from.col},${from.row}`);
+            gateProtected.add(`${to.col},${to.row}`);
+        }
+
         // Candidates: any cell that can be hopped over (has at least one pair of
         // opposite open walls so the player can approach from one side and land
         // on the other). Prefer solution-path cells — they guarantee the player
@@ -1407,6 +1415,7 @@ export default class GameScene extends Phaser.Scene {
                 const key = `${col},${row}`;
                 if (this.sceneryBlocked.has(key)) continue;
                 if (this.bushCells.has(key)) continue;
+                if (gateProtected.has(key)) continue;
                 if (col === this.startCol && row === this.startRow) continue;
                 if (col === this.goalCol && row === this.goalRow) continue;
                 const distStart = Math.abs(col - this.startCol) + Math.abs(row - this.startRow);
