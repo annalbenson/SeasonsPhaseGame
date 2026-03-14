@@ -20,7 +20,7 @@ function panelDim(c: number, factor: number, min: number): string {
 }
 
 export interface SeasonTheme {
-    name: 'Winter' | 'Spring' | 'Summer' | 'Fall';
+    name: 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial' | 'WinterY2';
     floorLight: number;   // light checkerboard tile
     floorDark:  number;   // dark checkerboard tile
     wallColor:  number;   // maze wall lines
@@ -46,6 +46,7 @@ export interface MonthConfig {
     author:    string;    // short attribution
     cols:      number;    // grid width for this month
     rows:      number;    // grid height for this month
+    year?:     number;    // default 1
 }
 
 // ── Four season palettes ──────────────────────────────────────────────────────
@@ -118,9 +119,44 @@ const FALL: SeasonTheme = {
     textHex:     hex(0x200a02),
 };
 
+const TUTORIAL: SeasonTheme = {
+    name:       'Tutorial',
+    floorLight: 0xc8b0e8,   // lavender
+    floorDark:  0x9a78c8,   // deeper purple
+    wallColor:  0x2a1048,   // dark plum
+    goalColor:  0xffe060,   // bright yellow
+    bgColor:    0x0e0618,
+    uiAccent:   0xffe060,
+    textColor:  0x2a1048,
+    keyColor:   0xffe060,
+    gateColor:  0xff6644,
+    accentHex:   hex(0xffe060),
+    dimHex:      dimHex(0xffe060, 0.65),
+    panelDimHex: panelDim(0xffe060, 0.55, 0x88),
+    textHex:     hex(0x2a1048),
+};
+
+const WINTER_Y2: SeasonTheme = {
+    name:       'WinterY2',
+    floorLight: 0xc8dce8,   // pale snow
+    floorDark:  0xa0b8c8,   // packed snow
+    wallColor:  0x1a2838,   // dark slate
+    goalColor:  0x40c8ff,   // bright aurora blue
+    bgColor:    0x060e18,
+    uiAccent:   0x88ccff,
+    textColor:  0x1a2838,
+    keyColor:   0xffee88,
+    gateColor:  0xff6644,
+    accentHex:   hex(0x88ccff),
+    dimHex:      dimHex(0x88ccff, 0.65),
+    panelDimHex: panelDim(0x88ccff, 0.55, 0x88),
+    textHex:     hex(0x1a2838),
+};
+
 // ── Season lookup by name ────────────────────────────────────────────────────
 export const SEASONS: Record<string, SeasonTheme> = {
     Winter: WINTER, Spring: SPRING, Summer: SUMMER, Fall: FALL,
+    Tutorial: TUTORIAL, WinterY2: WINTER_Y2,
 };
 
 // ── 12 months ────────────────────────────────────────────────────────────────
@@ -140,4 +176,12 @@ export const MONTHS: MonthConfig[] = [
     { month: 10, name: 'October',   shortName: 'Oct', season: FALL,   cols: 10, rows: 10, quote: 'The mellow year is hasting to its close.',           author: 'William Cullen Bryant'   },
     { month: 11, name: 'November',  shortName: 'Nov', season: FALL,   cols: 12, rows: 12, quote: 'No warmth, no cheerfulness, no healthful ease,',     author: 'Thomas Hood'             },
     { month: 12, name: 'December',  shortName: 'Dec', season: WINTER, cols: 12, rows: 12, quote: 'In the bleak midwinter, frosty wind made moan.',     author: 'Christina Rossetti'      },
+];
+
+// ── Year 2: Winter months ────────────────────────────────────────────────────
+// Open terrain maps — winding mountain path, no internal walls.
+export const MONTHS_Y2: MonthConfig[] = [
+    { month: 1, name: 'January',  shortName: 'Jan', season: WINTER_Y2, cols: 10, rows: 10, year: 2, quote: 'The polar bear crosses in quiet cold.',       author: 'Jack London'         },
+    { month: 2, name: 'February', shortName: 'Feb', season: WINTER_Y2, cols: 12, rows: 12, year: 2, quote: 'The land lay white beneath the starlight.',   author: 'Robert Service'      },
+    { month: 3, name: 'December', shortName: 'Dec', season: WINTER_Y2, cols: 12, rows: 12, year: 2, quote: 'Deep in the winter, an invincible summer.',   author: 'Albert Camus'        },
 ];

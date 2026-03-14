@@ -141,9 +141,9 @@ export default class ToolkitScene extends Phaser.Scene {
         }).setOrigin(0.5);
         this.setupGroup.push(seasonLabel);
 
-        const seasonNames = ['Winter', 'Spring', 'Summer', 'Fall'] as const;
+        const seasonNames = ['Winter', 'Spring', 'Summer', 'Fall', 'Tutorial'] as const;
         seasonNames.forEach((name, i) => {
-            const x = W / 2 + (i - 1.5) * 140;
+            const x = W / 2 + (i - 2) * 120;
             const s = SEASONS[name];
             const active = name === this.seasonName;
             const btn = this.add.text(x, 350, name, {
@@ -873,17 +873,22 @@ export default class ToolkitScene extends Phaser.Scene {
             );
         }
 
-        // Gates
+        // Gates — draw a bar perpendicular to the passage between cells
         for (const gate of this.gates) {
-            const fx = gate.from.col * TILE + TILE / 2;
-            const fy = gate.from.row * TILE + TILE / 2;
-            const tx = gate.to.col * TILE + TILE / 2;
-            const ty = gate.to.row * TILE + TILE / 2;
-            const mx = (fx + tx) / 2, my = (fy + ty) / 2;
+            const mx = (gate.from.col + gate.to.col) * TILE / 2 + TILE / 2;
+            const my = (gate.from.row + gate.to.row) * TILE / 2 + TILE / 2;
+            const dc = gate.to.col - gate.from.col;
+            const half = TILE / 2 - 5;
 
             const gfx = this.add.graphics();
             gfx.lineStyle(6, s.gateColor, 1);
-            gfx.strokeLineShape(new Phaser.Geom.Line(fx, fy, tx, ty));
+            if (dc !== 0) {
+                // Horizontal neighbors → vertical bar
+                gfx.strokeLineShape(new Phaser.Geom.Line(mx, my - half, mx, my + half));
+            } else {
+                // Vertical neighbors → horizontal bar
+                gfx.strokeLineShape(new Phaser.Geom.Line(mx - half, my, mx + half, my));
+            }
             this.entityLayer.add(gfx);
 
             this.entityLayer.add(

@@ -244,10 +244,11 @@ export class Hazard {
     // ── Sprite dispatcher ─────────────────────────────────────────────────────
     private buildSprite(x: number, y: number, seasonName: string): Phaser.GameObjects.Container {
         switch (seasonName) {
-            case 'Spring': return this.buildFrog(x, y);
-            case 'Fall':   return this.buildFox(x, y);
-            case 'Winter': return this.buildOwl(x, y);
-            default:       return this.buildSnake(x, y);   // Summer
+            case 'Spring':   return this.buildFrog(x, y);
+            case 'Fall':     return this.buildFox(x, y);
+            case 'Winter':   return this.buildOwl(x, y);
+            case 'WinterY2': return this.buildWolf(x, y);
+            default:         return this.buildSnake(x, y);   // Summer
         }
     }
 
@@ -458,6 +459,69 @@ export class Hazard {
         this.scene.tweens.add({ targets: visual, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 2600, ease: 'Sine.easeInOut' });
         // Eye glow pulse
         this.scene.tweens.add({ targets: [eyeL, eyeR], alpha: { from: 0.75, to: 1.0 }, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
+
+        return outer;
+    }
+
+    // ── Wolf (WinterY2) ────────────────────────────────────────────────────────
+    private buildWolf(x: number, y: number): Phaser.GameObjects.Container {
+        const grey   = 0x808898;
+        const dark   = 0x404858;
+        const light  = 0xb0b8c8;
+        const white  = 0xd8dce8;
+
+        this.danger = this.scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+        // Tail — bushy, hangs down
+        const tail    = this.scene.add.ellipse(0, 20, 12, 16, dark, 0.85);
+        const tailTip = this.scene.add.circle(0, 27, 5, light, 0.9);
+
+        // Body — large, muscular
+        const body  = this.scene.add.ellipse(0, 5, 22, 24, grey);
+        const belly = this.scene.add.ellipse(0, 8, 14, 16, white, 0.4);
+
+        // Paws
+        const pawBL = this.scene.add.circle(-9, 16, 4, dark, 0.7);
+        const pawBR = this.scene.add.circle( 9, 16, 4, dark, 0.7);
+
+        // Head — angular, wolf-like
+        const head   = this.scene.add.ellipse(0, -10, 18, 16, grey);
+
+        // Snout — longer than fox
+        const snout  = this.scene.add.ellipse(0, -20, 10, 12, light);
+        const nose   = this.scene.add.circle(0, -25, 3.5, 0x222222);
+
+        // Pointed ears — tall and sharp
+        const earL  = this.scene.add.triangle(-10, -22, 0, -10, -6, 0, 6, 0, grey);
+        const earR  = this.scene.add.triangle( 10, -22, 0, -10, -6, 0, 6, 0, grey);
+        const earLi = this.scene.add.triangle(-10, -21, 0, -7, -4, 0, 4, 0, dark, 0.5);
+        const earRi = this.scene.add.triangle( 10, -21, 0, -7, -4, 0, 4, 0, dark, 0.5);
+
+        // Yellow-amber eyes
+        const eyeL = this.scene.add.circle(-6, -12, 3, 0xddaa00);
+        const eyeR = this.scene.add.circle( 6, -12, 3, 0xddaa00);
+        const pupL = this.scene.add.circle(-6, -12, 1.8, 0x111111);
+        const pupR = this.scene.add.circle( 6, -12, 1.8, 0x111111);
+
+        // Front paws
+        const pawFL = this.scene.add.circle(-8, 0, 4, dark, 0.6);
+        const pawFR = this.scene.add.circle( 8, 0, 4, dark, 0.6);
+
+        const visual = this.scene.add.container(0, 0, [
+            this.danger, tail, tailTip,
+            body, belly, pawBL, pawBR,
+            head, snout, nose,
+            earL, earR, earLi, earRi,
+            eyeL, eyeR, pupL, pupR,
+            pawFL, pawFR,
+        ]);
+        const outer = this.scene.add.container(x, y, [visual]);
+        outer.setDepth(3);
+
+        // Prowl sway
+        this.scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
+        // Tail wag — slow
+        this.scene.tweens.add({ targets: [tail, tailTip], angle: { from: -8, to: 8 }, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
 
         return outer;
     }

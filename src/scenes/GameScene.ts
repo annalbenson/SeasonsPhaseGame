@@ -8,6 +8,7 @@ import { Hazard } from '../hazard';
 import { FogOfWar } from '../fog';
 import { SkillManager, SkillContext } from '../skills';
 import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUtils';
+import { statsEvents, STAT } from '../statsEmitter';
 
 
 // Returns the first month of the season that contains `month`
@@ -370,6 +371,14 @@ export default class GameScene extends Phaser.Scene {
             (c) => this.worldX(c), (r) => this.worldY(r),
         );
         this.fog.revealAround(this.startCol, this.startRow, this.time.now);
+
+        // ── Stats ────────────────────────────────────────────────────────────
+        statsEvents.emit(STAT.MAZE_START, {
+            month: this.monthConfig.month,
+            gridSize: `${this.cols}x${this.rows}`,
+            hard: this.hardMode,
+            custom: !!this.customMap,
+        });
 
         // ── Fade in ───────────────────────────────────────────────────────────
         this.cameras.main.fadeIn(900, 0, 0, 0);
@@ -1096,6 +1105,7 @@ export default class GameScene extends Phaser.Scene {
             gate.open = true;
             gate.graphic.destroy();
             this.updateInventory();
+            statsEvents.emit(STAT.GATE_OPENED);
         }
 
         this.gridX = newX;
@@ -1154,6 +1164,7 @@ export default class GameScene extends Phaser.Scene {
         this.keyItems.delete(k);
         this.keyCount++;
         this.updateInventory();
+        statsEvents.emit(STAT.KEY_COLLECTED);
     }
 
     // ── Goal flower ───────────────────────────────────────────────────────────
@@ -1626,8 +1637,10 @@ export default class GameScene extends Phaser.Scene {
         const onCaught = () => {
             this.lives--;
             this.updateLives();
+            statsEvents.emit(STAT.CAUGHT);
 
             if (this.lives <= 0) {
+                statsEvents.emit(STAT.DEATH);
                 this.time.delayedCall(700, () => {
                     for (const h of this.hazards) h.destroy();
                     this.cameras.main.fadeOut(600, 0, 0, 0);
@@ -1891,6 +1904,7 @@ export default class GameScene extends Phaser.Scene {
 
         this.objectives.delete(k);
         this.objCompleted++;
+        statsEvents.emit(STAT.OBJ_COMPLETED);
 
         // Bloom/collect burst then destroy
         this.tweens.add({
@@ -1998,7 +2012,9 @@ export default class GameScene extends Phaser.Scene {
         const onCaught = () => {
             this.lives--;
             this.updateLives();
+            statsEvents.emit(STAT.CAUGHT);
             if (this.lives <= 0) {
+                statsEvents.emit(STAT.DEATH);
                 this.time.delayedCall(700, () => {
                     for (const h of this.hazards) h.destroy();
                     this.cameras.main.fadeOut(600, 0, 0, 0);
@@ -2044,6 +2060,7 @@ export default class GameScene extends Phaser.Scene {
     private checkGoal() {
         if (this.gridX !== this.goalCol || this.gridY !== this.goalRow) return;
         if (!this.objDone) return;
+        statsEvents.emit(STAT.MAZE_COMPLETE);
 
         // Custom map: return to toolkit on completion
         if (this.customMap) {

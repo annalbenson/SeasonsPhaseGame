@@ -1,10 +1,13 @@
 import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
+import { signOut, onAuthChange, isSignedIn, getDisplayName } from '../auth';
 
 const W = MAX_COLS * TILE + PANEL;
 const H = MAX_ROWS * TILE + HEADER;
 
 export default class TitleScene extends Phaser.Scene {
+    private authUnsub?: () => void;
+
     constructor() { super('TitleScene'); }
 
     preload() {
@@ -98,19 +101,63 @@ export default class TitleScene extends Phaser.Scene {
             });
         });
 
-        makeButton(W / 2, H / 2 + 130, 'How to Play', () => {
+        makeButton(W / 2, H / 2 + 130, 'Year Two', () => {
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('GameY2Scene', { monthIndex: 0, from: 'TitleScene' });
+            });
+        });
+
+        makeButton(W / 2, H / 2 + 190, 'How to Play', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('TutorialScene');
             });
         });
 
-        makeButton(W / 2, H / 2 + 190, 'Map Toolkit', () => {
+        makeButton(W / 2, H / 2 + 250, 'Map Toolkit', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('ToolkitScene');
             });
         });
+
+        makeButton(W / 2, H / 2 + 310, 'My Stats', () => {
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('StatsScene');
+            });
+        });
+
+        // ── Sign in / out ────────────────────────────────────────────────────
+        const authBtn = this.add.text(W / 2, H / 2 + 380, '', {
+            fontSize: '18px', color: '#556677',
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        authBtn.on('pointerover', () => authBtn.setColor('#aabbcc'));
+        authBtn.on('pointerout',  () => authBtn.setColor('#556677'));
+        authBtn.on('pointerdown', () => {
+            if (isSignedIn()) {
+                signOut();
+            } else {
+                this.cameras.main.fadeOut(500, 0, 0, 0);
+                this.cameras.main.once('camerafadeoutcomplete', () => {
+                    this.scene.start('AuthScene');
+                });
+            }
+        });
+
+        const updateAuthLabel = () => {
+            if (isSignedIn()) {
+                authBtn.setText(`Signed in as ${getDisplayName() ?? 'User'} (sign out)`);
+            } else {
+                authBtn.setText('Sign in');
+            }
+        };
+        updateAuthLabel();
+
+        // Listen for auth state changes
+        if (this.authUnsub) this.authUnsub();
+        this.authUnsub = onAuthChange(() => updateAuthLabel());
 
         // ── Music + persistent HUD ────────────────────────────────────────────
         if (!this.sound.get('bgm')?.isPlaying) {
@@ -122,5 +169,9 @@ export default class TitleScene extends Phaser.Scene {
 
         // ── Fade in from black ────────────────────────────────────────────────
         this.cameras.main.fadeIn(1400, 0, 0, 0);
+    }
+
+    shutdown() {
+        if (this.authUnsub) { this.authUnsub(); this.authUnsub = undefined; }
     }
 }

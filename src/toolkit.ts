@@ -5,7 +5,7 @@ import { Cell } from './mazeUtils';
 export interface CustomMapData {
     cols: number;
     rows: number;
-    seasonName: 'Winter' | 'Spring' | 'Summer' | 'Fall';
+    seasonName: 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial';
     cells: number[][];                      // wall bitmask grid
     start: Cell;
     goal: Cell;

@@ -179,9 +179,10 @@ export function addWeather(scene: Phaser.Scene, seasonName: string) {
     ensureTextures(scene);
 
     switch (seasonName) {
-        case 'Winter': addSnow(scene);   break;
-        case 'Spring': addRain(scene);   break;
-        case 'Summer': addHeat(scene);   break;
-        case 'Fall':   addLeaves(scene); break;
+        case 'Winter':   addSnow(scene);   break;
+        case 'WinterY2': addSnow(scene);   break;
+        case 'Spring':   addRain(scene);   break;
+        case 'Summer':   addHeat(scene);   break;
+        case 'Fall':     addLeaves(scene); break;
     }
 }

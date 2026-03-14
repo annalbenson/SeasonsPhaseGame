@@ -3,6 +3,7 @@ import { TILE } from './constants';
 import { WALLS } from './maze';
 import { Hazard } from './hazard';
 import { FogOfWar } from './fog';
+import { statsEvents, STAT } from './statsEmitter';
 
 // ── Skill system ─────────────────────────────────────────────────────────────
 // Each season has a unique active ability with a shared cooldown timer.
@@ -37,9 +38,10 @@ export interface SkillContext {
     checkHazardCollision(): void;
     setGrid(x: number, y: number): void;
     setMoving(m: boolean): void;
+    setSwimming?(active: boolean): void;
 }
 
-export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall';
+export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial' | 'WinterY2';
 
 export interface Skill {
     readonly name: string;
@@ -78,7 +80,10 @@ export class SkillManager {
         }
 
         const consumed = this.skill.activate(ctx);
-        if (consumed) this.startCooldown(now);
+        if (consumed) {
+            this.startCooldown(now);
+            statsEvents.emit(STAT.SKILL_USED, { skill: this.skill.name });
+        }
         this.updateText(now);
         return consumed;
     }
@@ -89,6 +94,7 @@ export class SkillManager {
         if (consumed) {
             this.armed = false;
             this.startCooldown(now);
+            statsEvents.emit(STAT.SKILL_USED, { skill: this.skill.name });
         }
         this.updateText(now);
         return consumed;
@@ -212,6 +218,7 @@ const STING: Skill = {
         }
         if (!nearest || bestDist > 1) return false; // no adjacent enemy
         nearest.stun(5000);
+        statsEvents.emit(STAT.MONSTER_STUNNED);
         ctx.scene.tweens.add({ targets: ctx.player, scaleX: 1.3, scaleY: 1.3, yoyo: true, duration: 200 });
         return true;
     },
@@ -277,6 +284,7 @@ const DASH: Skill = {
                 gate.open = true;
                 gate.graphic.destroy();
                 ctx.updateInventory();
+                statsEvents.emit(STAT.GATE_OPENED);
             }
             cx = nsx;
             cy = nsy;
@@ -316,9 +324,37 @@ const DASH: Skill = {
     },
 };
 
+const SWIM: Skill = {
+    name: 'SWIM',
+    label: 'swim — cross water!',
+    isDirectional: false,
+
+    activate(ctx) {
+        if (ctx.setSwimming) {
+            ctx.setSwimming(true);
+            // 10s swimming buff — visual feedback handled in GameScene
+            ctx.scene.time.delayedCall(10_000, () => {
+                if (ctx.setSwimming) ctx.setSwimming(false);
+            });
+            // Ripple effect
+            const ripple = ctx.scene.add.circle(
+                ctx.player.x, ctx.player.y, TILE * 2,
+                0x4090d0, 0.3,
+            ).setDepth(2.8);
+            ctx.scene.tweens.add({ targets: ripple, alpha: 0, scale: 2, duration: 600, onComplete: () => ripple.destroy() });
+            return true;
+        }
+        return false;
+    },
+
+    tryDirectional: () => false,
+};
+
 const SKILLS: Record<SeasonName, Skill> = {
-    Winter: HOP,
-    Spring: STING,
-    Summer: GLOW,
-    Fall:   DASH,
+    Winter:   HOP,
+    Spring:   STING,
+    Summer:   GLOW,
+    Fall:     DASH,
+    Tutorial: GLOW,
+    WinterY2: SWIM,
 };
