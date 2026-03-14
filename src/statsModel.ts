@@ -23,7 +23,7 @@ export interface UserStats {
     totalGatesOpened:        number;
     totalObjectivesCompleted:number;
     totalMonstersStunned:    number;
-    skillUses: { HOP: number; STING: number; GLOW: number; DASH: number };
+    skillUses: { BURROW: number; STING: number; GLOW: number; DASH: number };
 
     // Average time by grid size (sum + count for incremental updates)
     timeByGrid: Record<string, GridTimeEntry>;
@@ -45,7 +45,7 @@ export function emptyStats(): UserStats {
         totalGatesOpened:         0,
         totalObjectivesCompleted: 0,
         totalMonstersStunned:     0,
-        skillUses: { HOP: 0, STING: 0, GLOW: 0, DASH: 0 },
+        skillUses: { BURROW: 0, STING: 0, GLOW: 0, DASH: 0 },
         timeByGrid: {},
         monthly:    {},
     };

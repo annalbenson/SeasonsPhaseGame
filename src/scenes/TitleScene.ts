@@ -87,31 +87,31 @@ export default class TitleScene extends Phaser.Scene {
             return b;
         };
 
-        makeButton(W / 2, H / 2 + 10, 'New Game', () => {
+        makeButton(W / 2, H / 2 + 10, 'How to Play', () => {
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('TutorialScene');
+            });
+        });
+
+        makeButton(W / 2, H / 2 + 70, 'Year One', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene' });
             });
         });
 
-        makeButton(W / 2, H / 2 + 70, 'New Hard Game', () => {
+        makeButton(W / 2, H / 2 + 130, 'Year One (Hard Mode)', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene', hard: true });
             });
         });
 
-        makeButton(W / 2, H / 2 + 130, 'Year Two', () => {
+        makeButton(W / 2, H / 2 + 190, 'Year Two', () => {
             this.cameras.main.fadeOut(700, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('GameY2Scene', { monthIndex: 0, from: 'TitleScene' });
-            });
-        });
-
-        makeButton(W / 2, H / 2 + 190, 'How to Play', () => {
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('TutorialScene');
             });
         });
 

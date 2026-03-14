@@ -34,7 +34,7 @@ export function initStats() {
             objectivesCompleted: 0,
             monstersStunned:     0,
             timesCaught:         0,
-            skillUses:           { HOP: 0, STING: 0, GLOW: 0, DASH: 0 },
+            skillUses:           { BURROW: 0, STING: 0, GLOW: 0, DASH: 0 },
         };
     });
 
@@ -74,7 +74,7 @@ async function flushComplete() {
             totalObjectivesCompleted: increment(session.objectivesCompleted),
             totalMonstersStunned:     increment(session.monstersStunned),
             totalCaught:              increment(session.timesCaught),
-            'skillUses.HOP':          increment(session.skillUses['HOP'] ?? 0),
+            'skillUses.BURROW':       increment(session.skillUses['BURROW'] ?? 0),
             'skillUses.STING':        increment(session.skillUses['STING'] ?? 0),
             'skillUses.GLOW':         increment(session.skillUses['GLOW'] ?? 0),
             'skillUses.DASH':         increment(session.skillUses['DASH'] ?? 0),
@@ -116,7 +116,7 @@ async function flushDeath() {
             totalKeysCollected:       increment(session.keysCollected),
             totalGatesOpened:         increment(session.gatesOpened),
             totalObjectivesCompleted: increment(session.objectivesCompleted),
-            'skillUses.HOP':          increment(session.skillUses['HOP'] ?? 0),
+            'skillUses.BURROW':       increment(session.skillUses['BURROW'] ?? 0),
             'skillUses.STING':        increment(session.skillUses['STING'] ?? 0),
             'skillUses.GLOW':         increment(session.skillUses['GLOW'] ?? 0),
             'skillUses.DASH':         increment(session.skillUses['DASH'] ?? 0),
@@ -149,10 +149,10 @@ export async function getStats(): Promise<UserStats> {
             totalObjectivesCompleted: d.totalObjectivesCompleted ?? 0,
             totalMonstersStunned:     d.totalMonstersStunned ?? 0,
             skillUses: {
-                HOP:   d.skillUses?.HOP   ?? 0,
-                STING: d.skillUses?.STING ?? 0,
-                GLOW:  d.skillUses?.GLOW  ?? 0,
-                DASH:  d.skillUses?.DASH  ?? 0,
+                BURROW: d.skillUses?.BURROW ?? 0,
+                STING:  d.skillUses?.STING  ?? 0,
+                GLOW:   d.skillUses?.GLOW   ?? 0,
+                DASH:   d.skillUses?.DASH   ?? 0,
             },
             timeByGrid: d.timeByGrid ?? {},
             monthly:    d.monthly    ?? {},

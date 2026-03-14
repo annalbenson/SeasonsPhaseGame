@@ -49,7 +49,7 @@ const SEASON_THEMES: Record<string, SeasonThemeT> = {
         goalColor: 0x7ec8e8, bgColor: 0x080e18, accent: 0xc8e4f4, accentHex: '#c8e4f4',
         dimHex: '#7a9db8', textColor: '#b0ccdf', bushColor: 0xccddee, bushLight: 0xeef4ff,
         playerColor: 0xffffff, playerGlow: 0xc8e4f4, enemyColor: 0x6b4520,
-        sceneryColor: 0x556666, sceneryLight: 0x6a7a7a, skillName: 'HOP',
+        sceneryColor: 0x556666, sceneryLight: 0x6a7a7a, skillName: 'BURROW',
     },
     Spring: {
         floorLight: 0xf5b8cc, floorDark: 0xe088a8, wallColor: 0x5a1828,
@@ -165,18 +165,16 @@ const MAZE_STEP5 = carveMaze(3, 3, [
 ]);
 
 /*
- * Step 6 (4×3, Winter): HOP — corridor bends, rock blocks the way.
- *   [S]→[.]
- *         ↓
- *       [rock]   ← must hop over
- *         ↓
- *       [.]→[G]
+ * Step 6 (4×2, Winter): BURROW — enemy patrols, no bush to hide in.
+ *   [S]→[.]→[enemy]→[G]
+ *    ↓              ↑
+ *   [.]  →  [.]  → [.]
+ *   Player must burrow to hide when enemy approaches.
  */
-const MAZE_WINTER = carveMaze(4, 3, [
-    [0,0, 1,0],              // right
-    [1,0, 1,1],              // down into rock at (1,1)
-    [1,1, 1,2],              // down past rock
-    [1,2, 2,2], [2,2, 3,2],  // right to goal
+const MAZE_WINTER = carveMaze(4, 2, [
+    [0,0, 1,0], [1,0, 2,0], [2,0, 3,0],  // top corridor
+    [0,0, 0,1], [0,1, 1,1], [1,1, 2,1], [2,1, 3,1],  // bottom corridor
+    [3,1, 3,0],  // connect back up to goal
 ]);
 
 /*
@@ -220,10 +218,10 @@ const STEPS: StepConfig[] = [
     { cols: 4, rows: 3, hint: 'Hide in bushes when the creature is near!\nReach the flower to continue.', hardcoded: MAZE_STEP3 },
     { cols: 5, rows: 3, hint: 'Collect all treasures before\nthe exit unlocks.', hardcoded: MAZE_STEP4 },
     { cols: 3, rows: 3, hint: 'Fog hides the maze! Explore to reveal tiles.\nFog returns over time — move quickly!', hardcoded: MAZE_STEP5 },
-    { cols: 4, rows: 3, hint: 'Bunny can HOP over obstacles!\nPress SPACE then an arrow key.', season: 'Winter', hardcoded: MAZE_WINTER },
+    { cols: 4, rows: 2, hint: 'Bunny can BURROW to hide!\nSPACE to dig in, SPACE to emerge.', season: 'Winter', hardcoded: MAZE_WINTER },
     { cols: 3, rows: 2, hint: 'Bee can STING the nearest enemy!\nPress SPACE to stun it.', season: 'Spring', hardcoded: MAZE_SPRING },
     { cols: 3, rows: 2, hint: 'Fairy can GLOW to reveal the map!\nPress SPACE to light up the fog.', season: 'Summer', hardcoded: MAZE_SUMMER },
-    { cols: 4, rows: 2, hint: 'Squirrel can DASH 3 cells!\nPress SPACE then an arrow key.', season: 'Fall', hardcoded: MAZE_FALL },
+    { cols: 4, rows: 2, hint: 'Squirrel can DASH past enemies!\nPress SPACE then an arrow key.', season: 'Fall', hardcoded: MAZE_FALL },
 ];
 
 export default class TutorialScene extends Phaser.Scene {
@@ -276,6 +274,7 @@ export default class TutorialScene extends Phaser.Scene {
     // Skill tutorial state
     private skillUsed = false;
     private skillArmed = false;
+    private burrowEmerge: (() => void) | null = null;
     private sceneryBlocked = new Set<string>();
     private spaceKey!: Phaser.Input.Keyboard.Key;
     private skillHintText: Phaser.GameObjects.Text | null = null;
@@ -1009,12 +1008,18 @@ export default class TutorialScene extends Phaser.Scene {
         }
     }
 
-    // ── Step 6: Winter — Bunny HOP ─────────────────────────────────────────
+    // ── Step 6: Winter — Bunny BURROW ──────────────────────────────────────
     private buildWinterSkill() {
-        // Hardcoded rock at (1,1) — blocks the vertical corridor.
-        // Player approaches from (1,0) and hops south over the rock to (1,2).
-        this.drawSceneryBlock(1, 1);
-        this.showSkillHint('Press SPACE to use HOP');
+        // Enemy patrols the top corridor — player must burrow to hide.
+        this.enemyCol = 2;
+        this.enemyRow = 0;
+        const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
+        const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
+        this.enemySprite = this.buildTutEnemy(ex, ey, 'Winter');
+        this.stepGroup.add(this.enemySprite);
+        this.scheduleEnemyMove();
+
+        this.showSkillHint('Press SPACE to use BURROW');
     }
 
     // ── Step 7: Spring — Bee STING ─────────────────────────────────────────
@@ -1088,7 +1093,15 @@ export default class TutorialScene extends Phaser.Scene {
 
     // ── Step 9: Fall — Squirrel DASH ───────────────────────────────────────
     private buildFallSkill() {
-        // Straight corridor — DASH lets squirrel sprint 3 cells at once
+        // Enemy blocks the corridor — player must dash past it
+        this.enemyCol = 2;
+        this.enemyRow = 0;
+        const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
+        const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
+        this.enemySprite = this.buildTutEnemy(ex, ey, 'Fall');
+        this.stepGroup.add(this.enemySprite);
+        this.scheduleEnemyMove();
+
         this.showSkillHint('Press SPACE to use DASH');
     }
 
@@ -1137,6 +1150,12 @@ export default class TutorialScene extends Phaser.Scene {
             }
         }
 
+        // Allow SPACE to cancel burrow even while movement-locked
+        if (this.burrowEmerge && Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+            this.burrowEmerge();
+            return;
+        }
+
         if (this.moving) return;
 
         const K = Phaser.Input.Keyboard;
@@ -1157,7 +1176,6 @@ export default class TutorialScene extends Phaser.Scene {
 
         // Handle armed directional skills
         if (this.skillArmed && cfg?.season) {
-            if (cfg.season === 'Winter' && this.tryTutorialHop(dx, dy)) return;
             if (cfg.season === 'Fall'   && this.tryTutorialDash(dx, dy)) return;
             // If couldn't fire, disarm and do normal move
             this.skillArmed = false;
@@ -1282,56 +1300,44 @@ export default class TutorialScene extends Phaser.Scene {
             ).setDepth(9);
             this.tweens.add({ targets: flash, alpha: 0, scale: 1.5, duration: 600, onComplete: () => flash.destroy() });
             this.updateSkillHint();
+        } else if (cfg.season === 'Winter') {
+            // Burrow: hide in place, press SPACE again to emerge early
+            this.skillUsed = true;
+            this.isHiding = true;
+            this.moving = true; // lock movement
+
+            // Shrink into ground
+            this.tweens.add({
+                targets: this.player, scaleX: 0.5, scaleY: 0.3, alpha: 0.35,
+                duration: 300, ease: 'Back.easeIn',
+            });
+
+            // Dirt mound visual
+            const mound = this.add.ellipse(
+                this.player.x, this.player.y + 12, TILE * 0.6, TILE * 0.25,
+                0x8a7050, 0.6,
+            ).setDepth(1.9);
+            this.stepGroup.add(mound);
+
+            this.burrowEmerge = () => {
+                this.isHiding = false;
+                this.moving = false;
+                this.burrowEmerge = null;
+                this.tweens.add({
+                    targets: this.player, scaleX: 1, scaleY: 1, alpha: 1,
+                    duration: 300, ease: 'Back.easeOut',
+                });
+                this.tweens.add({
+                    targets: mound, alpha: 0, duration: 300,
+                    onComplete: () => mound.destroy(),
+                });
+            };
+            this.updateSkillHint();
         } else {
-            // Winter (Hop) and Fall (Dash) — arm directional mode
+            // Fall (Dash) — arm directional mode
             this.skillArmed = true;
             this.updateSkillHint();
         }
-    }
-
-    private tryTutorialHop(dx: number, dy: number): boolean {
-        const adjX = this.gridX + dx, adjY = this.gridY + dy;
-        const walls = this.cells[this.gridY][this.gridX];
-        if (dx ===  1 && (walls & WALLS.RIGHT))  return false;
-        if (dx === -1 && (walls & WALLS.LEFT))   return false;
-        if (dy ===  1 && (walls & WALLS.BOTTOM)) return false;
-        if (dy === -1 && (walls & WALLS.TOP))    return false;
-        if (!this.sceneryBlocked.has(`${adjX},${adjY}`)) return false;
-
-        const landX = this.gridX + dx * 2, landY = this.gridY + dy * 2;
-        if (landX < 0 || landX >= this.tutCols || landY < 0 || landY >= this.tutRows) return false;
-        const adjWalls = this.cells[adjY][adjX];
-        if (dx ===  1 && (adjWalls & WALLS.RIGHT))  return false;
-        if (dx === -1 && (adjWalls & WALLS.LEFT))   return false;
-        if (dy ===  1 && (adjWalls & WALLS.BOTTOM)) return false;
-        if (dy === -1 && (adjWalls & WALLS.TOP))    return false;
-        if (this.sceneryBlocked.has(`${landX},${landY}`)) return false;
-
-        this.skillUsed = true;
-        this.skillArmed = false;
-        this.gridX = landX;
-        this.gridY = landY;
-        this.moving = true;
-        this.slideDir = null;
-
-        this.tweens.add({
-            targets: this.player,
-            x: this.offsetX + landX * TILE + TILE / 2,
-            y: this.offsetY + landY * TILE + TILE / 2,
-            duration: 300,
-            ease: 'Sine.easeInOut',
-            onComplete: () => {
-                this.moving = false;
-                if (this.fogEnabled) this.revealTutorialFog(this.gridX, this.gridY);
-                this.collectKey();
-                this.checkObjective();
-                this.checkGoal();
-                this.checkEnemyCollision();
-            },
-        });
-        this.tweens.add({ targets: this.player, scaleY: 1.3, yoyo: true, duration: 150 });
-        this.updateSkillHint();
-        return true;
     }
 
     private tryTutorialDash(dx: number, dy: number): boolean {

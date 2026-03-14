@@ -221,8 +221,8 @@ export function buildSidePanel(
 
     const skillMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
         Winter: {
-            label: 'hop — jump obstacle!',
-            draw: (g, ly) => { g.fillStyle(0xc8e4f4, 0.9); g.fillTriangle(lx + 2, ly + 5, lx + 7, ly - 6, lx + 12, ly + 5); },
+            label: 'burrow — hide in place!',
+            draw: (g, ly) => { g.fillStyle(0x8a7050, 0.9); g.fillEllipse(lx + 7, ly + 2, 14, 8); g.fillStyle(0xc8e4f4, 0.7); g.fillCircle(lx + 7, ly - 2, 4); },
         },
         Spring: {
             label: 'sting — stun enemy!',

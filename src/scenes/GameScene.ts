@@ -11,7 +11,7 @@ import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUt
 import { statsEvents, STAT } from '../statsEmitter';
 import { createPlayerSprite, ensureSparkleTexture } from '../sprites';
 import { buildHeader, buildSidePanel } from '../sidePanel';
-import { PlacementCtx, placeScenery, placeBushes, placeBlockingRocks, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
+import { PlacementCtx, placeScenery, placeBushes, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
 
 
 // Returns the first month of the season that contains `month`
@@ -66,6 +66,7 @@ export default class GameScene extends Phaser.Scene {
     private sceneryBlocked = new Set<string>();
     private hazards: Hazard[] = [];
     private isHiding = false;
+    private burrowed = false;
     private gate1Cell: { col: number; row: number } | null = null;
 
     private lives = 3;
@@ -146,6 +147,7 @@ export default class GameScene extends Phaser.Scene {
         this.sceneryBlocked = new Set();
         this.hazards        = [];
         this.isHiding    = false;
+        this.burrowed    = false;
         this.gate1Cell   = null;
         this.lives       = 3;
         this.objectives  = new Map();
@@ -309,12 +311,7 @@ export default class GameScene extends Phaser.Scene {
             // 1. Scenery (blocking obstacles) — on widened cells + dead ends
             placeScenery(pCtx, widenedCells, season.name);
 
-            // 2. Winter blocking rocks — on corridors that require HOP to pass
-            if (season.name === 'Winter') {
-                placeBlockingRocks(pCtx, season.name);
-            }
-
-            // 3. Keys + gates
+            // 2. Keys + gates
             this.placePuzzleItems(season);
 
             // 4. Verify all keys are reachable from start
@@ -623,6 +620,7 @@ export default class GameScene extends Phaser.Scene {
             checkHazardCollision: () => this.checkHazardCollision(),
             setGrid: (x, y) => { this.gridX = x; this.gridY = y; },
             setMoving: (m) => { this.moving = m; this.slideDir = null; },
+            setBurrowed: (active) => { this.burrowed = active; },
         };
     }
 
@@ -644,13 +642,22 @@ export default class GameScene extends Phaser.Scene {
         // Skill cooldown tick
         this.skill.tick(this.time.now);
 
-        // Hiding state — fade fairy when inside a bush cell
-        const nowHiding = this.bushCells.has(`${this.gridX},${this.gridY}`);
+        // Hiding state — fade fairy when inside a bush cell or burrowed
+        const nowHiding = this.burrowed || this.bushCells.has(`${this.gridX},${this.gridY}`);
         if (nowHiding !== this.isHiding) {
             this.isHiding = nowHiding;
-            this.tweens.add({ targets: this.player, alpha: nowHiding ? 0.35 : 1.0, duration: 300 });
+            // Don't override alpha while burrowed (skill manages its own visual)
+            if (!this.burrowed) {
+                this.tweens.add({ targets: this.player, alpha: nowHiding ? 0.35 : 1.0, duration: 300 });
+            }
         }
         for (const h of this.hazards) h.setTarget(this.gridX, this.gridY, this.isHiding);
+
+        // Allow SPACE to cancel burrow even while movement-locked
+        if (this.burrowed && Phaser.Input.Keyboard.JustDown(this.skillKey)) {
+            this.skill.activate(this.skillCtx, this.time.now);
+            return;
+        }
 
         if (this.moving) return;
 
@@ -885,6 +892,8 @@ export default class GameScene extends Phaser.Scene {
         // Place enemies at ~33% and ~66% along the solution path
         const solPath = solvePath(this.cells, this.cols, this.rows,
             this.startCol, this.startRow, this.goalCol, this.goalRow, this.sceneryBlocked);
+
+        if (solPath.length === 0) return; // no path — skip enemy placement
 
         const pCtx = this.buildPlacementCtx();
         const enemyCount = 2;

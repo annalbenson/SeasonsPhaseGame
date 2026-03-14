@@ -3,7 +3,7 @@ import { TILE } from './constants';
 import { WALLS } from './maze';
 import { SeasonTheme } from './seasons';
 import { CustomMapData } from './toolkit';
-import { Cell, MOVE_DIRS, solvePath, floodFill, bfsDistanceMap } from './mazeUtils';
+import { Cell, solvePath, floodFill, bfsDistanceMap } from './mazeUtils';
 import { drawBushAt, drawScenery } from './scenery';
 import { buildObjectiveSprite } from './sprites';
 
@@ -162,132 +162,13 @@ export function guaranteeBushNear(
     drawBushAt(ctx.scene, ctx.mazeLayer, col, row, seasonName);
 }
 
-// ── Winter blocking rocks — require HOP to pass ─────────────────────────────
-
-export function placeBlockingRocks(ctx: PlacementCtx, seasonName: string): void {
-    const MIN_ROCKS = 2;
-    const count = Math.max(MIN_ROCKS, Math.floor(ctx.cols / 4));
-
-    const solPath = solvePath(ctx.cells, ctx.cols, ctx.rows,
-        ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow, ctx.sceneryBlocked);
-
-    const gateProtected = new Set<string>();
-    for (const { from, to } of ctx.gateEdges) {
-        gateProtected.add(`${from.col},${from.row}`);
-        gateProtected.add(`${to.col},${to.row}`);
-    }
-
-    // Check if a cell is a valid rock candidate
-    const isHoppable = (col: number, row: number): boolean => {
-        const key = `${col},${row}`;
-        if (ctx.sceneryBlocked.has(key)) return false;
-        if (ctx.bushCells.has(key)) return false;
-        if (gateProtected.has(key)) return false;
-        if (col === ctx.startCol && row === ctx.startRow) return false;
-        if (col === ctx.goalCol && row === ctx.goalRow) return false;
-        const distStart = Math.abs(col - ctx.startCol) + Math.abs(row - ctx.startRow);
-        const distGoal = Math.abs(col - ctx.goalCol) + Math.abs(row - ctx.goalRow);
-        if (distStart <= 2 || distGoal <= 2) return false;
-        const w = ctx.cells[row][col];
-        const hoppableH = !(w & WALLS.LEFT) && !(w & WALLS.RIGHT);
-        const hoppableV = !(w & WALLS.TOP) && !(w & WALLS.BOTTOM);
-        return hoppableH || hoppableV;
-    };
-
-    // Place rocks at evenly spaced percentages along the solution path.
-    // For each anchor, search nearby on-path cells for the best hoppable candidate.
-    const placed: Cell[] = [];
-    const minSpacing = Math.max(3, Math.floor(ctx.cols / 3));
-
-    for (let i = 0; i < count; i++) {
-        const frac = (i + 1) / (count + 1);
-        const anchorIdx = Math.min(Math.floor(solPath.length * frac), solPath.length - 1);
-
-        // Search outward from the anchor along the path for a valid hoppable cell
-        let best: Cell | null = null;
-        for (let offset = 0; offset < solPath.length; offset++) {
-            for (const dir of [1, -1]) {
-                const idx = anchorIdx + offset * dir;
-                if (idx < 0 || idx >= solPath.length) continue;
-                const c = solPath[idx];
-                if (!isHoppable(c.col, c.row)) continue;
-                // Enforce spacing from already-placed rocks
-                if (placed.some(p => Math.abs(p.col - c.col) + Math.abs(p.row - c.row) < minSpacing)) continue;
-                best = c;
-                break;
-            }
-            if (best) break;
-        }
-
-        if (!best) continue;
-
-        const key = `${best.col},${best.row}`;
-        ctx.sceneryBlocked.add(key);
-
-        if (hopAwareBfs(ctx)) {
-            drawScenery(ctx.scene, ctx.mazeLayer, best.col, best.row, seasonName);
-            placed.push(best);
-        } else {
-            ctx.sceneryBlocked.delete(key);
-        }
-    }
-}
-
-// ── BFS from start to goal that treats hop-over-scenery as a valid move ─────
-
-/** BFS that treats hop-over-scenery as a valid move. Returns all reachable cells. */
-export function hopAwareFloodFill(ctx: PlacementCtx): Set<string> {
-    const visited = new Set<string>();
-    const queue: Cell[] = [{ col: ctx.startCol, row: ctx.startRow }];
-    visited.add(`${ctx.startCol},${ctx.startRow}`);
-
-    while (queue.length > 0) {
-        const { col, row } = queue.shift()!;
-
-        for (const { dc, dr, wall } of MOVE_DIRS) {
-            if (ctx.cells[row][col] & wall) continue;
-            const nc = col + dc, nr = row + dr;
-            if (nc < 0 || nc >= ctx.cols || nr < 0 || nr >= ctx.rows) continue;
-            const nk = `${nc},${nr}`;
-
-            if (ctx.sceneryBlocked.has(nk)) {
-                const lc = col + dc * 2, lr = row + dr * 2;
-                if (lc < 0 || lc >= ctx.cols || lr < 0 || lr >= ctx.rows) continue;
-                const lk = `${lc},${lr}`;
-                if (visited.has(lk)) continue;
-                if (ctx.sceneryBlocked.has(lk)) continue;
-                const adjWalls = ctx.cells[nr][nc];
-                if (dc === 1 && (adjWalls & WALLS.RIGHT)) continue;
-                if (dc === -1 && (adjWalls & WALLS.LEFT)) continue;
-                if (dr === 1 && (adjWalls & WALLS.BOTTOM)) continue;
-                if (dr === -1 && (adjWalls & WALLS.TOP)) continue;
-                visited.add(lk);
-                queue.push({ col: lc, row: lr });
-            } else {
-                if (visited.has(nk)) continue;
-                visited.add(nk);
-                queue.push({ col: nc, row: nr });
-            }
-        }
-    }
-    return visited;
-}
-
-/** Check if goal is reachable from start via hop-aware BFS. */
-export function hopAwareBfs(ctx: PlacementCtx): boolean {
-    return hopAwareFloodFill(ctx).has(`${ctx.goalCol},${ctx.goalRow}`);
-}
-
 // ── Season objectives ────────────────────────────────────────────────────────
 
 export function placeObjectives(ctx: PlacementCtx, season: SeasonTheme): number {
     const count = Math.ceil(ctx.cols / 3); // 8→3, 10→4, 12→4
 
-    // Winter has blocking rocks the player can HOP over — use hop-aware reachability
-    // so objectives can land beyond rocks. (WinterY2 uses GameY2Scene, not this code.)
-    const reachable = season.name === 'Winter'
-        ? hopAwareFloodFill(ctx)
-        : floodFill(ctx.cells, ctx.cols, ctx.rows, ctx.startCol, ctx.startRow, ctx.sceneryBlocked);
+    const reachable = floodFill(ctx.cells, ctx.cols, ctx.rows,
+        ctx.startCol, ctx.startRow, ctx.sceneryBlocked);
 
     const avoid = new Set<string>([`${ctx.startCol},${ctx.startRow}`, `${ctx.goalCol},${ctx.goalRow}`]);
     for (const k of ctx.keyItems.keys()) avoid.add(k);
@@ -299,15 +180,10 @@ export function placeObjectives(ctx: PlacementCtx, season: SeasonTheme): number 
         candidateSet.add(key);
     }
 
-    // Solve the full path (for Winter, ignore scenery so we get a path through rocks)
-    const solPath = season.name === 'Winter'
-        ? solvePath(ctx.cells, ctx.cols, ctx.rows,
-            ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow)
-        : solvePath(ctx.cells, ctx.cols, ctx.rows,
-            ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow, ctx.sceneryBlocked);
+    const solPath = solvePath(ctx.cells, ctx.cols, ctx.rows,
+        ctx.startCol, ctx.startRow, ctx.goalCol, ctx.goalRow, ctx.sceneryBlocked);
     const pathSet = new Set(solPath.map(c => `${c.col},${c.row}`));
-    const distFromPath = bfsDistanceMap(ctx.cells, ctx.cols, ctx.rows, pathSet,
-        season.name === 'Winter' ? undefined : ctx.sceneryBlocked);
+    const distFromPath = bfsDistanceMap(ctx.cells, ctx.cols, ctx.rows, pathSet, ctx.sceneryBlocked);
 
     // Place objectives at evenly spaced percentages along the solution path.
     // For each anchor point, pick the farthest-from-path candidate within a
