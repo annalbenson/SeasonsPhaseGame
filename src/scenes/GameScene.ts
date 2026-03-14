@@ -655,7 +655,7 @@ export default class GameScene extends Phaser.Scene {
 
         // Allow SPACE to cancel burrow even while movement-locked
         if (this.burrowed && Phaser.Input.Keyboard.JustDown(this.skillKey)) {
-            this.skill.activate(this.skillCtx, this.time.now);
+            if (this.skillCtx.emergeBurrow) this.skillCtx.emergeBurrow();
             return;
         }
 
