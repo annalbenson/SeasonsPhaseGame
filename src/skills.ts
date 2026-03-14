@@ -106,10 +106,12 @@ export class SkillManager {
         this.updateText(now);
     }
 
-    /** Call each frame to check if cooldown expired. */
+    /** Call each frame to update cooldown display and check expiry. */
     tick(now: number) {
-        if (this.used && now >= this.cooldownEnd) {
-            this.used = false;
+        if (this.used) {
+            if (now >= this.cooldownEnd) {
+                this.used = false;
+            }
             this.updateText(now);
         }
     }

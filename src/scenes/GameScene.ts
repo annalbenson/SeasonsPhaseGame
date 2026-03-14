@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
+import { TILE, MAX_COLS, MAX_ROWS, HEADER } from '../constants';
 import { ALGORITHMS, AlgorithmKey, WALLS, OPPOSITE, widenCorridors } from '../maze';
 import { MONTHS, SEASONS, MonthConfig, SeasonTheme } from '../seasons';
 import { CustomMapData } from '../toolkit';
@@ -9,6 +9,9 @@ import { FogOfWar } from '../fog';
 import { SkillManager, SkillContext } from '../skills';
 import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUtils';
 import { statsEvents, STAT } from '../statsEmitter';
+import { createPlayerSprite, ensureSparkleTexture, buildObjectiveSprite } from '../sprites';
+import { drawBushAt, drawScenery } from '../scenery';
+import { buildHeader, buildSidePanel } from '../sidePanel';
 
 
 // Returns the first month of the season that contains `month`
@@ -28,11 +31,6 @@ interface Gate {
     toCol:   number; toRow:   number;
     graphic: Phaser.GameObjects.Rectangle;
     open: boolean;
-}
-
-// ── Helper: letter-spaced text (mimics title screen style) ───────────────────
-function spaced(text: string): string {
-    return text.toUpperCase().split('').join(' ');
 }
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
@@ -305,13 +303,13 @@ export default class GameScene extends Phaser.Scene {
         addWeather(this, season.name);
 
         // ── Fairy + sparkle trail ─────────────────────────────────────────────
-        this.createSparkleTexture();
+        ensureSparkleTexture(this);
 
         // Player lives in world space (not in mazeLayer) with y offset applied
         this.gridX = this.startCol; this.gridY = this.startRow;
         const startX = this.worldX(this.startCol);
         const startY = this.worldY(this.startRow);
-        this.player = this.createPlayerSprite(startX, startY, season);
+        this.player = createPlayerSprite(this, startX, startY, season);
         this.player.setDepth(2);
 
         if (this.customMap) {
@@ -339,7 +337,7 @@ export default class GameScene extends Phaser.Scene {
         }).setDepth(1.9);
 
         // ── Header strip ──────────────────────────────────────────────────────
-        this.buildHeader(season);
+        buildHeader(this, this.monthConfig, this.offsetX, this.offsetY, this.W);
 
         // ── Input ─────────────────────────────────────────────────────────────
         this.cursors = this.input.keyboard!.createCursorKeys();
@@ -363,7 +361,13 @@ export default class GameScene extends Phaser.Scene {
         this.skillKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
         // ── Side panel ────────────────────────────────────────────────────────
-        this.buildSidePanel(season);
+        const panelRefs = buildSidePanel(this, season, this.cols, this.rows, this.offsetX, this.offsetY, this.skill);
+        this.objText       = panelRefs.objText;
+        this.livesText     = panelRefs.livesText;
+        this.inventoryText = panelRefs.inventoryText;
+        this.updateObjText();
+        this.updateLives();
+        this.updateInventory();
 
         // ── Fog of war ────────────────────────────────────────────────────────
         this.fog = new FogOfWar(
@@ -382,441 +386,6 @@ export default class GameScene extends Phaser.Scene {
 
         // ── Fade in ───────────────────────────────────────────────────────────
         this.cameras.main.fadeIn(900, 0, 0, 0);
-    }
-
-    // ── Header strip ──────────────────────────────────────────────────────────
-    private buildHeader(season: MonthConfig['season']) {
-        const hx = this.offsetX + this.W / 2; // center over maze area
-
-        // Subtle separator line at the bottom of the header
-        this.add.rectangle(hx, HEADER + this.offsetY - 1, this.W, 1, season.uiAccent, 0.25).setDepth(3);
-
-        const accentHex = season.accentHex;
-
-        // Month name — spaced-out like the title screen
-        this.add.text(hx, this.offsetY + 32, spaced(this.monthConfig.name), {
-            fontSize:  '26px',
-            fontStyle: 'bold',
-            color:     accentHex,
-        }).setOrigin(0.5).setDepth(3);
-
-        // Season name — smaller, muted
-        this.add.text(hx, this.offsetY + 66, season.name, {
-            fontSize: '15px',
-            color:    `${accentHex}99`,
-        }).setOrigin(0.5).setDepth(3);
-
-        // Historical quote — italic, lightly tinted
-        this.add.text(hx, this.offsetY + 94, `"${this.monthConfig.quote}" — ${this.monthConfig.author}`, {
-            fontSize:  '14px',
-            fontStyle: 'italic',
-            color:     `${accentHex}66`,
-        }).setOrigin(0.5).setDepth(3);
-    }
-
-    // ── Side panel (objectives + legend) ─────────────────────────────────────
-    private buildSidePanel(season: SeasonTheme) {
-        const px    = this.offsetX + this.W;           // panel left edge
-        const pw    = PANEL;
-        const ph    = this.rows * TILE + HEADER;
-        const py    = this.offsetY;                    // panel top
-        const cx    = px + pw / 2;                // panel centre x
-        const depth = 3;
-
-        const accent  = season.uiAccent;
-        const accentH = season.accentHex;
-        const dimH    = season.panelDimHex;
-
-        // Panel background — slightly lighter than scene bg
-        const panelBg = (season.bgColor & 0xfefefe) + 0x0a0a0a;
-        this.add.rectangle(px + pw / 2, py + ph / 2, pw, ph, panelBg).setDepth(depth - 1);
-
-        // Thin left border
-        this.add.rectangle(px + 1, py + ph / 2, 1, ph, accent, 0.2).setDepth(depth);
-
-        // ── OBJECTIVES section ────────────────────────────────────────────────
-        let y = py + HEADER + 22;
-
-        this.add.text(cx, y, 'OBJECTIVES', {
-            fontSize: '14px', color: dimH, letterSpacing: 4,
-        }).setOrigin(0.5).setDepth(depth);
-
-        y += 26;
-        this.objText = this.add.text(cx, y, '', {
-            fontSize: '18px', color: accentH, align: 'center',
-        }).setOrigin(0.5, 0).setDepth(depth);
-        this.updateObjText();
-
-        y += 44;
-        // ── LIVES section ─────────────────────────────────────────────────────
-        this.add.text(cx, y, 'LIVES', {
-            fontSize: '14px', color: dimH, letterSpacing: 4,
-        }).setOrigin(0.5).setDepth(depth);
-
-        y += 24;
-        this.livesText = this.add.text(cx, y, '', {
-            fontSize: '20px', color: '#ff5577',
-        }).setOrigin(0.5, 0).setDepth(depth);
-        this.updateLives();
-
-        y += 40;
-        // ── INVENTORY section ─────────────────────────────────────────────────
-        this.add.text(cx, y, 'KEYS', {
-            fontSize: '14px', color: dimH, letterSpacing: 4,
-        }).setOrigin(0.5).setDepth(depth);
-
-        y += 24;
-        this.inventoryText = this.add.text(cx, y, '', {
-            fontSize: '20px', color: `#${season.keyColor.toString(16).padStart(6, '0')}`,
-        }).setOrigin(0.5, 0).setDepth(depth);
-        this.updateInventory();
-
-        y += 40;
-        // ── SKILL section ───────────────────────────────────────────────────
-        this.add.text(cx, y, 'SKILL', {
-            fontSize: '14px', color: dimH, letterSpacing: 4,
-        }).setOrigin(0.5).setDepth(depth);
-
-        y += 24;
-        this.skill.text = this.add.text(cx, y, '', {
-            fontSize: '16px', color: accentH, align: 'center',
-        }).setOrigin(0.5, 0).setDepth(depth);
-        this.skill.updateText(this.time.now);
-
-        // ── Divider ───────────────────────────────────────────────────────────
-        y += 44;
-        this.add.rectangle(cx, y, pw - 32, 1, accent, 0.2).setDepth(depth);
-
-        // ── LEGEND section ────────────────────────────────────────────────────
-        y += 20;
-        this.add.text(cx, y, 'LEGEND', {
-            fontSize: '14px', color: dimH, letterSpacing: 4,
-        }).setOrigin(0.5).setDepth(depth);
-
-        y += 22;
-        const lx = px + 20;   // swatch left edge
-        const tx = px + 40;   // label left edge
-        // Season-specific enemy info
-        const enemyMap: Record<string, { color: number; label: string }> = {
-            Spring: { color: 0x44aa22, label: 'frog — run!' },
-            Summer: { color: 0xcc5500, label: 'snake — run!' },
-            Fall:   { color: 0xdd5500, label: 'fox — run!' },
-            Winter: { color: 0x6b4520, label: 'owl — run!' },
-        };
-        const enemy = enemyMap[season.name] ?? enemyMap.Summer;
-
-        // Season-specific hiding spot info
-        const hideMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
-            Spring: {
-                label: 'tall grass — hide!',
-                draw: (g, ly) => {
-                    g.fillStyle(0x66bb33, 0.9); g.fillEllipse(lx + 4, ly - 2, 4, 10);
-                    g.fillStyle(0x88cc44, 0.9); g.fillEllipse(lx + 8, ly - 4, 4, 12);
-                    g.fillStyle(0x66bb33, 0.9); g.fillEllipse(lx + 12, ly - 1, 4, 9);
-                },
-            },
-            Summer: {
-                label: 'bush — hide!',
-                draw: (g, ly) => {
-                    g.fillStyle(0x228844, 0.85); g.fillCircle(lx + 3, ly + 1, 5);
-                    g.fillStyle(0x228844, 0.85); g.fillCircle(lx + 11, ly + 1, 5);
-                    g.fillStyle(0x228844, 0.90); g.fillCircle(lx + 7, ly - 3, 6);
-                },
-            },
-            Fall: {
-                label: 'leaf pile — hide!',
-                draw: (g, ly) => {
-                    g.fillStyle(0xd04010, 0.88); g.fillEllipse(lx + 3, ly, 6, 4);
-                    g.fillStyle(0xffaa00, 0.88); g.fillEllipse(lx + 8, ly - 2, 5, 4);
-                    g.fillStyle(0xe86820, 0.88); g.fillEllipse(lx + 12, ly + 1, 6, 4);
-                },
-            },
-            Winter: {
-                label: 'snow pile — hide!',
-                draw: (g, ly) => {
-                    g.fillStyle(0xddeeff, 0.9); g.fillCircle(lx + 3, ly + 1, 5);
-                    g.fillStyle(0xe8f4ff, 0.85); g.fillCircle(lx + 11, ly + 1, 4);
-                    g.fillStyle(0xffffff, 0.95); g.fillCircle(lx + 7, ly - 2, 6);
-                },
-            },
-        };
-        const hide = hideMap[season.name] ?? hideMap.Summer;
-
-        // Season-specific objective info
-        const objMap: Record<string, { color: number; label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
-            Spring: {
-                color: 0xff88aa, label: 'flower — collect!',
-                draw: (g, ly) => { g.fillStyle(0xff88aa, 0.9); g.fillCircle(lx + 7, ly, 5); g.fillStyle(0xffee44, 0.9); g.fillCircle(lx + 7, ly, 2); },
-            },
-            Summer: {
-                color: 0x44aaff, label: 'plant — water!',
-                draw: (g, ly) => { g.fillStyle(0x44aaff, 0.9); g.fillCircle(lx + 7, ly, 5); },
-            },
-            Fall: {
-                color: 0xc07030, label: 'acorn — plant!',
-                draw: (g, ly) => { g.fillStyle(0xc07030, 0.9); g.fillCircle(lx + 7, ly, 5); },
-            },
-            Winter: {
-                color: 0xddeeff, label: 'snowflake — collect!',
-                draw: (g, ly) => { g.fillStyle(0xddeeff, 0.9); g.fillCircle(lx + 7, ly, 5); },
-            },
-        };
-        const obj = objMap[season.name] ?? objMap.Spring;
-
-        // Season-specific scenery obstacles — all variants shown in legend
-        type LI = { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void };
-        const sceneryMap: Record<string, LI[]> = {
-            Spring: [
-                { label: 'boulder — go around!', draw: (g, ly) => { g.fillStyle(0x778877, 0.85); g.fillEllipse(lx + 7, ly, 12, 8); g.fillStyle(0x99aa99, 0.7); g.fillEllipse(lx + 6, ly - 1, 8, 5); } },
-                { label: 'pond — go around!', draw: (g, ly) => { g.fillStyle(0x4477aa, 0.5); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0x5599cc, 0.4); g.fillEllipse(lx + 5, ly - 1, 8, 5); } },
-                { label: 'flowers — go around!', draw: (g, ly) => { g.fillStyle(0xff88bb, 0.8); g.fillCircle(lx + 3, ly, 3); g.fillStyle(0xffaa44, 0.8); g.fillCircle(lx + 9, ly - 2, 3); g.fillStyle(0xcc77ff, 0.8); g.fillCircle(lx + 6, ly + 2, 3); } },
-            ],
-            Summer: [
-                { label: 'rock — go around!', draw: (g, ly) => { g.fillStyle(0x445544, 0.8); g.fillEllipse(lx + 7, ly, 12, 8); g.fillStyle(0x556655, 0.7); g.fillEllipse(lx + 5, ly - 1, 8, 5); } },
-                { label: 'log — go around!', draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.75); g.fillEllipse(lx + 7, ly, 14, 5); g.fillStyle(0x6a4a2a, 0.7); g.fillCircle(lx + 1, ly, 2.5); } },
-                { label: 'ferns — go around!', draw: (g, ly) => { g.fillStyle(0x2a7a3a, 0.65); g.fillEllipse(lx + 3, ly, 3, 8); g.fillEllipse(lx + 7, ly - 1, 3, 8); g.fillEllipse(lx + 11, ly, 3, 8); } },
-            ],
-            Fall: [
-                { label: 'mushrooms — go around!', draw: (g, ly) => { g.fillStyle(0xeeddcc, 0.8); g.fillEllipse(lx + 5, ly + 2, 4, 8); g.fillStyle(0xcc3322, 0.8); g.fillEllipse(lx + 5, ly - 3, 10, 6); } },
-                { label: 'stump — go around!', draw: (g, ly) => { g.fillStyle(0x5a3a1a, 0.8); g.fillEllipse(lx + 7, ly + 1, 12, 9); g.fillStyle(0x7a5a3a, 0.7); g.fillEllipse(lx + 7, ly - 1, 8, 6); } },
-                { label: 'pumpkins — go around!', draw: (g, ly) => { g.fillStyle(0xdd7722, 0.8); g.fillEllipse(lx + 5, ly, 10, 8); g.fillStyle(0xcc6611, 0.75); g.fillEllipse(lx + 11, ly + 1, 7, 6); } },
-            ],
-            Winter: [
-                { label: 'boulder — go around!', draw: (g, ly) => { g.fillStyle(0x556666, 0.8); g.fillEllipse(lx + 7, ly + 1, 14, 8); g.fillStyle(0x6a7a7a, 0.7); g.fillEllipse(lx + 5, ly - 1, 9, 5); } },
-                { label: 'rocks — go around!', draw: (g, ly) => { g.fillStyle(0x4a5a5a, 0.8); g.fillEllipse(lx + 4, ly, 8, 6); g.fillStyle(0x5a6a6a, 0.75); g.fillEllipse(lx + 10, ly - 1, 7, 5); } },
-                { label: 'stone slab — go around!', draw: (g, ly) => { g.fillStyle(0x4a5858, 0.8); g.fillEllipse(lx + 7, ly, 14, 6); g.fillStyle(0x5a6868, 0.7); g.fillEllipse(lx + 5, ly - 1, 10, 4); } },
-            ],
-        };
-        const sceneryItems = sceneryMap[season.name] ?? sceneryMap.Summer;
-
-        // Season-specific skill legend entry
-        const skillMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
-            Winter: {
-                label: 'hop — jump obstacle!',
-                draw: (g, ly) => { g.fillStyle(0xc8e4f4, 0.9); g.fillTriangle(lx + 2, ly + 5, lx + 7, ly - 6, lx + 12, ly + 5); },
-            },
-            Spring: {
-                label: 'sting — stun enemy!',
-                draw: (g, ly) => { g.fillStyle(0xffee22, 0.9); g.fillTriangle(lx + 3, ly - 6, lx + 7, ly + 6, lx + 11, ly - 6); },
-            },
-            Summer: {
-                label: 'glow — reveal fog!',
-                draw: (g, ly) => { g.fillStyle(0xaaffaa, 0.7); g.fillCircle(lx + 7, ly, 8); g.fillStyle(0xffffcc, 0.9); g.fillCircle(lx + 7, ly, 4); },
-            },
-            Fall: {
-                label: 'dash — sprint 3!',
-                draw: (g, ly) => { g.fillStyle(0xffcc88, 0.9); g.fillRect(lx, ly - 2, 4, 4); g.fillRect(lx + 5, ly - 2, 4, 4); g.fillRect(lx + 10, ly - 2, 4, 4); },
-            },
-        };
-        const skill = skillMap[season.name] ?? skillMap.Summer;
-
-        const legendItems: { draw: (g: Phaser.GameObjects.Graphics, ly: number) => void; label: string }[] = [
-            {
-                label: 'you',
-                draw: (g, ly) => { g.fillStyle(accent, 0.9); g.fillCircle(lx + 7, ly, 6); },
-            },
-            {
-                label: enemy.label,
-                draw: (g, ly) => { g.fillStyle(enemy.color, 0.9); g.fillCircle(lx + 7, ly, 6); },
-            },
-            hide,
-            ...sceneryItems,
-            obj,
-            skill,
-            {
-                label: 'key — collect!',
-                draw: (g, ly) => {
-                    g.fillStyle(season.keyColor, 1);
-                    g.fillRect(lx + 2, ly - 5, 10, 10);
-                },
-            },
-            {
-                label: 'gate — unlock!',
-                draw: (g, ly) => { g.fillStyle(season.gateColor, 1); g.fillRect(lx + 1, ly - 2, 13, 4); },
-            },
-            {
-                label: 'goal — reach it!',
-                draw: (g, ly) => { g.fillStyle(season.goalColor, 0.9); g.fillCircle(lx + 7, ly, 6); },
-            },
-        ];
-
-        const gfx = this.add.graphics().setDepth(depth);
-        for (const item of legendItems) {
-            item.draw(gfx, y + 7);
-            this.add.text(tx, y, item.label, {
-                fontSize: '15px', color: dimH,
-            }).setOrigin(0, 0).setDepth(depth);
-            y += 24;
-        }
-
-        // ── Divider ───────────────────────────────────────────────────────────
-        y += 6;
-        this.add.rectangle(cx, y, pw - 32, 1, accent, 0.2).setDepth(depth);
-
-        // ── Controls hint ─────────────────────────────────────────────────────
-        y += 18;
-        for (const line of ['SPACE  skill', 'R  new maze', 'M  menu', '↑↓←→  move', 'hold  slide']) {
-            this.add.text(cx, y, line, {
-                fontSize: '14px', color: `#ffffff55`,
-            }).setOrigin(0.5, 0).setDepth(depth);
-            y += 17;
-        }
-    }
-
-    // ── Player sprite dispatcher ──────────────────────────────────────────────
-    private createPlayerSprite(x: number, y: number, season: SeasonTheme): Phaser.GameObjects.Container {
-        switch (season.name) {
-            case 'Spring': return this.createBee(x, y);
-            case 'Fall':   return this.createSquirrel(x, y);
-            case 'Winter': return this.createBunny(x, y);
-            default:       return this.createFairy(x, y, 0xffffaa);   // warm yellow glow — visible on green
-        }
-    }
-
-    // ── Bee (Spring) ──────────────────────────────────────────────────────────
-    private createBee(x: number, y: number): Phaser.GameObjects.Container {
-        const glow   = this.add.circle(0, 0, 22, 0xffdd00, 0.18);
-
-        // Wings — translucent, one each side
-        const wingL  = this.add.ellipse(-17, 1, 22, 12, 0xccecff, 0.78);
-        const wingR  = this.add.ellipse( 17, 1, 22, 12, 0xccecff, 0.78);
-
-        // Body — yellow with dark stripes
-        const body    = this.add.ellipse(0,  3, 13, 20, 0xffdd00);
-        const stripe1 = this.add.ellipse(0, -1, 11,  5, 0x111100, 0.75);
-        const stripe2 = this.add.ellipse(0,  5, 11,  5, 0x111100, 0.75);
-        const stinger = this.add.ellipse(0, 14,  5,  8, 0x333300);
-
-        // Head
-        const head   = this.add.circle(0, -11, 7, 0xffcc00);
-
-        // Antennae tips
-        const antL   = this.add.circle(-5, -20, 2, 0x222200);
-        const antR   = this.add.circle( 5, -20, 2, 0x222200);
-
-        const visual = this.add.container(0, 0, [glow, wingL, wingR, body, stripe1, stripe2, stinger, head, antL, antR]);
-        const outer  = this.add.container(x, y, [visual]);
-
-        // Wing flutter
-        this.tweens.add({ targets: wingL, scaleX: 0.1, yoyo: true, repeat: -1, duration: 90, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: wingR, scaleX: 0.1, yoyo: true, repeat: -1, duration: 90, delay: 45, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.28 }, yoyo: true, repeat: -1, duration: 1200 });
-        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
-
-        return outer;
-    }
-
-    // ── Bunny (Winter) ────────────────────────────────────────────────────────
-    private createBunny(x: number, y: number): Phaser.GameObjects.Container {
-        const white = 0xe8f4ff;
-
-        const glow   = this.add.circle(0, 0, 22, 0xddeeff, 0.22);
-
-        // Ears
-        const earL     = this.add.ellipse(-9, -20, 8, 22, white);
-        const earR     = this.add.ellipse( 9, -20, 8, 22, white);
-        const innerEarL = this.add.ellipse(-9, -20, 4, 13, 0xffb8c8, 0.8);
-        const innerEarR = this.add.ellipse( 9, -20, 4, 13, 0xffb8c8, 0.8);
-
-        // Body + head
-        const body   = this.add.ellipse(0,  4, 20, 18, white);
-        const head   = this.add.circle( 0, -7,  9, 0xeef8ff);
-
-        // Fluffy tail
-        const tail   = this.add.circle(0, 13, 6, 0xffffff);
-
-        // Face
-        const eyeL   = this.add.circle(-4, -9, 2.5, 0x224488);
-        const eyeR   = this.add.circle( 4, -9, 2.5, 0x224488);
-        const nose   = this.add.circle( 0, -5, 1.8, 0xffaacc);
-
-        const visual = this.add.container(0, 0, [glow, tail, earL, earR, innerEarL, innerEarR, body, head, eyeL, eyeR, nose]);
-        const outer  = this.add.container(x, y, [visual]);
-
-        // Ear wiggle
-        this.tweens.add({ targets: [earL, innerEarL], angle: { from: -5, to: 5 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: [earR, innerEarR], angle: { from:  5, to: -5 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: glow, alpha: { from: 0.12, to: 0.32 }, yoyo: true, repeat: -1, duration: 1500 });
-        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 950, ease: 'Sine.easeInOut' });
-
-        return outer;
-    }
-
-    // ── Squirrel (Fall) ───────────────────────────────────────────────────────
-    private createSquirrel(x: number, y: number): Phaser.GameObjects.Container {
-        const brown   = 0xb05818;
-        const tailCol = 0xd88030;
-        const cream   = 0xffd090;
-
-        const glow = this.add.circle(0, 0, 22, tailCol, 0.15);
-
-        // Bushy tail — two overlapping ellipses curling to the right
-        const tailOuter = this.add.ellipse(11, 3, 22, 28, tailCol);
-        const tailInner = this.add.ellipse(12, 2, 13, 20, 0xe8a050, 0.65);
-
-        // Body
-        const body  = this.add.ellipse(-2, 4, 16, 20, brown);
-        const belly = this.add.ellipse(-2, 5, 10, 13, cream, 0.4);
-
-        // Head
-        const head  = this.add.circle(-3, -8, 8, brown);
-
-        // Ears — small rounded with pink inner
-        const earL   = this.add.ellipse(-9,  -14, 6, 8, brown);
-        const earR   = this.add.ellipse( 3,  -14, 6, 8, brown);
-        const earLi  = this.add.ellipse(-9,  -14, 3, 5, 0xffb8c8, 0.7);
-        const earRi  = this.add.ellipse( 3,  -14, 3, 5, 0xffb8c8, 0.7);
-
-        // Face
-        const eyeL = this.add.circle(-7, -10, 2.5, 0x331100);
-        const eyeR = this.add.circle( 0, -10, 2.5, 0x331100);
-        const nose = this.add.circle(-3,  -5, 1.8, 0x553322);
-
-        const visual = this.add.container(0, 0, [
-            glow, tailOuter, tailInner,
-            body, belly, head,
-            earL, earR, earLi, earRi,
-            eyeL, eyeR, nose,
-        ]);
-        const outer = this.add.container(x, y, [visual]);
-
-        // Tail fluff
-        this.tweens.add({ targets: [tailOuter, tailInner], scaleY: { from: 1, to: 1.1 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.22 }, yoyo: true, repeat: -1, duration: 1400 });
-        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 850, ease: 'Sine.easeInOut' });
-
-        return outer;
-    }
-
-    // ── Fairy construction ────────────────────────────────────────────────────
-    private createSparkleTexture() {
-        if (!this.textures.exists('sparkle')) {
-            const g = this.make.graphics({ add: false });
-            g.fillStyle(0xffffff, 1);
-            g.fillCircle(4, 4, 4);
-            g.generateTexture('sparkle', 8, 8);
-            g.destroy();
-        }
-    }
-
-    private createFairy(x: number, y: number, glowColor = 0xdd88ff): Phaser.GameObjects.Container {
-        const glow     = this.add.circle(0, 0, 22, glowColor, 0.22);
-        const wingL    = this.add.ellipse(-14, -1, 18, 28, 0xbbddff, 0.72);
-        const wingR    = this.add.ellipse( 14, -1, 18, 28, 0xbbddff, 0.72);
-        const body     = this.add.ellipse(0, 4, 11, 16, 0xff88cc);
-        const head     = this.add.circle(0, -8, 7, 0xffddee);
-        const antennaL = this.add.circle(-5, -17, 2, 0xff99cc);
-        const antennaR = this.add.circle( 5, -17, 2, 0xff99cc);
-
-        const visual = this.add.container(0, 0, [glow, wingL, wingR, body, head, antennaL, antennaR]);
-        const outer  = this.add.container(x, y, [visual]);
-
-        this.tweens.add({ targets: wingL, scaleX: 0.15, yoyo: true, repeat: -1, duration: 105, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: wingR, scaleX: 0.15, yoyo: true, repeat: -1, duration: 105, delay: 52, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: glow, alpha: { from: 0.12, to: 0.38 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: visual, y: 4, yoyo: true, repeat: -1, duration: 950, ease: 'Sine.easeInOut' });
-
-        return outer;
     }
 
     // ── Puzzle item placement ─────────────────────────────────────────────────
@@ -1243,71 +812,6 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
-    // ── Bush drawing (shared by placeBushes and guaranteeBushNear) ───────────
-    private drawBushAt(col: number, row: number, season: MonthConfig['season']) {
-        const cx = col * TILE + TILE / 2;
-        const cy = row * TILE + TILE / 2;
-
-        if (season.name === 'Fall') {
-            const leafColors = [0xd04010, 0xe86820, 0xffaa00, 0xf0d020, 0xc06010, 0xa03008, 0xd4a010];
-            const leaves = [
-                { x: -10, y:  -4, w: 10, h: 16, a: -35 },
-                { x:   4, y:  -8, w:  9, h: 15, a:  20 },
-                { x:  10, y:   5, w: 11, h: 15, a: -55 },
-                { x:  -5, y:   8, w: 10, h: 14, a:  40 },
-                { x:  -1, y:  -1, w:  9, h: 14, a:  10 },
-                { x:   8, y:  -3, w:  8, h: 13, a: -20 },
-                { x:  -8, y:   3, w:  7, h: 12, a:  60 },
-            ];
-            for (const l of leaves) {
-                const c = leafColors[Math.floor(Math.random() * leafColors.length)];
-                this.mazeLayer.add(this.add.ellipse(cx + l.x, cy + l.y, l.w, l.h, c, 0.88).setAngle(l.a));
-            }
-        } else if (season.name === 'Winter') {
-            this.mazeLayer.add([
-                this.add.circle(cx - 10, cy + 6, 10, 0xddeeff, 0.90),
-                this.add.circle(cx +  9, cy + 7,  9, 0xe8f4ff, 0.85),
-                this.add.circle(cx -  2, cy - 2, 13, 0xffffff, 0.95),
-                this.add.circle(cx +  5, cy - 5,  8, 0xf0f8ff, 0.80),
-                this.add.ellipse(cx, cy + 6, 30, 8, 0x8aaabb, 0.18),
-            ]);
-        } else if (season.name === 'Spring') {
-            const blades = [
-                { x: -9,  h: 22, a: -12 },
-                { x: -4,  h: 26, a:   5 },
-                { x:  1,  h: 24, a:  -6 },
-                { x:  6,  h: 20, a:  14 },
-                { x: 11,  h: 23, a:  -3 },
-                { x: -6,  h: 18, a:  20 },
-                { x:  4,  h: 19, a: -18 },
-            ];
-            for (const b of blades) {
-                const green = Math.random() < 0.5 ? 0x66bb33 : 0x88cc44;
-                this.mazeLayer.add(
-                    this.add.ellipse(cx + b.x, cy + 2, 5, b.h, green, 0.92).setAngle(b.a)
-                );
-                this.mazeLayer.add(
-                    this.add.circle(
-                        cx + b.x + Math.sin((b.a * Math.PI) / 180) * (b.h / 2 - 2),
-                        cy + 2   - Math.cos((b.a * Math.PI) / 180) * (b.h / 2 - 2),
-                        2.5, 0x558822, 0.85
-                    )
-                );
-            }
-        } else {
-            // Summer bushes — dark foliage with bright flower accents to pop against green floor
-            this.mazeLayer.add([
-                this.add.circle(cx - 9, cy + 5, 11, 0x165a30, 0.92),
-                this.add.circle(cx + 9, cy + 5, 11, 0x165a30, 0.92),
-                this.add.circle(cx,     cy - 3, 13, 0x1a6636, 0.95),
-                // Small flowers/berries for visibility
-                this.add.circle(cx - 6, cy - 5, 3, 0xff6688, 0.9),
-                this.add.circle(cx + 7, cy + 2, 2.5, 0xffdd44, 0.9),
-                this.add.circle(cx + 1, cy - 7, 2.5, 0xff88aa, 0.85),
-            ]);
-        }
-    }
-
     // ── Bush placement ────────────────────────────────────────────────────────
     private placeBushes(widenedCells: Set<string>, season: MonthConfig['season']) {
         for (const key of widenedCells) {
@@ -1316,7 +820,7 @@ export default class GameScene extends Phaser.Scene {
             if (col === this.goalCol  && row === this.goalRow)  continue;
             if (Math.random() > 0.65)                          continue;
             this.bushCells.add(key);
-            this.drawBushAt(col, row, season);
+            drawBushAt(this, this.mazeLayer, col, row, season.name);
         }
 
         // Guarantee bushes every ~5 steps along the main solution path so the
@@ -1341,7 +845,7 @@ export default class GameScene extends Phaser.Scene {
             if (col === this.startCol && row === this.startRow) continue;
             if (col === this.goalCol  && row === this.goalRow)  continue;
             this.sceneryBlocked.add(key);
-            this.drawScenery(col, row, season);
+            drawScenery(this, this.mazeLayer, col, row, season.name);
         }
 
         // Second pass: place scenery on dead-end cells (3 walls) across the grid
@@ -1374,7 +878,7 @@ export default class GameScene extends Phaser.Scene {
             const key = deadEnds[i];
             const [col, row] = key.split(',').map(Number);
             this.sceneryBlocked.add(key);
-            this.drawScenery(col, row, season);
+            drawScenery(this, this.mazeLayer, col, row, season.name);
         }
 
         // Bush spacing scales with grid: 8→4, 10→5, 12→6
@@ -1456,7 +960,7 @@ export default class GameScene extends Phaser.Scene {
             this.sceneryBlocked.add(key);
 
             if (this.hopAwareBfs()) {
-                this.drawScenery(c.col, c.row, season);
+                drawScenery(this, this.mazeLayer, c.col, c.row, season.name);
                 placed++;
             } else {
                 // Undo — this rock makes the level unsolvable even with HOP
@@ -1506,116 +1010,6 @@ export default class GameScene extends Phaser.Scene {
         return false;
     }
 
-    private drawScenery(col: number, row: number, season: MonthConfig['season']) {
-        const cx = col * TILE + TILE / 2;
-        const cy = row * TILE + TILE / 2;
-        const variant = Math.floor(Math.random() * 3);
-
-        if (season.name === 'Spring') {
-            if (variant === 0) {
-                // Boulder with moss
-                this.mazeLayer.add(this.add.ellipse(cx, cy + 4, 44, 32, 0x778877, 0.85));
-                this.mazeLayer.add(this.add.ellipse(cx - 2, cy - 2, 36, 26, 0x99aa99, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx + 8, cy - 8, 14, 8, 0x66aa44, 0.6));
-                this.mazeLayer.add(this.add.ellipse(cx - 10, cy - 6, 10, 6, 0x77bb55, 0.5));
-            } else if (variant === 1) {
-                // Pond
-                this.mazeLayer.add(this.add.ellipse(cx, cy, 46, 36, 0x4477aa, 0.5));
-                this.mazeLayer.add(this.add.ellipse(cx - 4, cy - 3, 30, 20, 0x5599cc, 0.4));
-                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 6, 8, 5, 0x77bbee, 0.3));
-                // Lily pad
-                this.mazeLayer.add(this.add.circle(cx - 8, cy + 4, 5, 0x44aa44, 0.6));
-            } else {
-                // Flower patch (dense wildflowers)
-                const colors = [0xff88bb, 0xffaa44, 0xcc77ff, 0xff6688, 0xffdd55];
-                for (let i = 0; i < 8; i++) {
-                    const fx = (Math.random() - 0.5) * 40;
-                    const fy = (Math.random() - 0.5) * 40;
-                    const c = colors[Math.floor(Math.random() * colors.length)];
-                    this.mazeLayer.add(this.add.circle(cx + fx, cy + fy, 5, c, 0.8));
-                    this.mazeLayer.add(this.add.circle(cx + fx, cy + fy, 2, 0xffee88, 0.9));
-                }
-            }
-        } else if (season.name === 'Summer') {
-            if (variant === 0) {
-                // Large mossy rock formation
-                this.mazeLayer.add(this.add.ellipse(cx + 6, cy + 6, 36, 28, 0x445544, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx - 6, cy - 2, 30, 24, 0x556655, 0.75));
-                this.mazeLayer.add(this.add.ellipse(cx, cy - 8, 20, 14, 0x668866, 0.7));
-                this.mazeLayer.add(this.add.ellipse(cx + 10, cy - 4, 12, 8, 0x448844, 0.6));
-            } else if (variant === 1) {
-                // Fallen log
-                this.mazeLayer.add(this.add.ellipse(cx, cy, 48, 16, 0x5a3a1a, 0.75).setAngle(Math.random() * 30 - 15));
-                this.mazeLayer.add(this.add.circle(cx - 20, cy, 8, 0x6a4a2a, 0.7));
-                this.mazeLayer.add(this.add.circle(cx + 20, cy, 7, 0x4a2a0a, 0.65));
-                // Moss on log
-                this.mazeLayer.add(this.add.ellipse(cx + 4, cy - 6, 16, 6, 0x448844, 0.5));
-            } else {
-                // Dense fern cluster
-                for (let i = 0; i < 6; i++) {
-                    const a = (i * 60) + Math.random() * 20;
-                    const r = 6 + Math.random() * 6;
-                    this.mazeLayer.add(
-                        this.add.ellipse(cx + Math.cos(a * 0.017) * r, cy + Math.sin(a * 0.017) * r,
-                            6, 24, 0x2a7a3a, 0.65).setAngle(a)
-                    );
-                }
-                this.mazeLayer.add(this.add.circle(cx, cy, 6, 0x1a5a2a, 0.7));
-            }
-        } else if (season.name === 'Fall') {
-            if (variant === 0) {
-                // Large mushroom cluster
-                // Stem + cap 1
-                this.mazeLayer.add(this.add.ellipse(cx - 10, cy + 8, 8, 18, 0xeeddcc, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx - 10, cy - 4, 22, 14, 0xcc3322, 0.8));
-                this.mazeLayer.add(this.add.circle(cx - 14, cy - 6, 2.5, 0xffeecc, 0.7));
-                this.mazeLayer.add(this.add.circle(cx - 6, cy - 8, 2, 0xffeecc, 0.7));
-                // Stem + cap 2 (smaller)
-                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 10, 6, 14, 0xeeddcc, 0.75));
-                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 2, 16, 10, 0xdd5533, 0.75));
-                this.mazeLayer.add(this.add.circle(cx + 8, cy + 1, 1.5, 0xffeecc, 0.6));
-            } else if (variant === 1) {
-                // Tree stump with rings
-                this.mazeLayer.add(this.add.ellipse(cx, cy + 4, 40, 32, 0x5a3a1a, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx, cy - 4, 34, 26, 0x7a5a3a, 0.75));
-                this.mazeLayer.add(this.add.circle(cx, cy - 4, 10, 0x8a6a4a, 0.6));
-                this.mazeLayer.add(this.add.circle(cx, cy - 4, 5, 0x9a7a5a, 0.5));
-            } else {
-                // Pumpkin patch
-                this.mazeLayer.add(this.add.ellipse(cx - 6, cy + 2, 28, 24, 0xdd7722, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx + 12, cy + 6, 20, 18, 0xcc6611, 0.75));
-                this.mazeLayer.add(this.add.ellipse(cx - 6, cy - 2, 4, 8, 0x338822, 0.7));
-                this.mazeLayer.add(this.add.ellipse(cx + 12, cy + 2, 3, 6, 0x338822, 0.65));
-            }
-        } else {
-            // Winter — grey rocks (distinct from white snow-pile hiding spots)
-            if (variant === 0) {
-                // Large boulder
-                this.mazeLayer.add(this.add.ellipse(cx + 2, cy + 4, 42, 30, 0x556666, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx - 2, cy - 2, 34, 24, 0x6a7a7a, 0.75));
-                this.mazeLayer.add(this.add.ellipse(cx + 6, cy - 8, 16, 10, 0x7a8a8a, 0.6));
-                // Snow dusting
-                this.mazeLayer.add(this.add.ellipse(cx - 4, cy - 10, 18, 5, 0xddeeff, 0.4));
-            } else if (variant === 1) {
-                // Rock cluster
-                this.mazeLayer.add(this.add.ellipse(cx - 8, cy + 4, 26, 22, 0x4a5a5a, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx + 10, cy + 2, 22, 18, 0x5a6a6a, 0.75));
-                this.mazeLayer.add(this.add.ellipse(cx + 2, cy - 6, 18, 16, 0x6a7a7a, 0.7));
-                // Snow in crevice
-                this.mazeLayer.add(this.add.ellipse(cx, cy + 8, 14, 4, 0xddeeff, 0.35));
-            } else {
-                // Flat stone slab
-                this.mazeLayer.add(this.add.ellipse(cx, cy + 2, 44, 24, 0x4a5858, 0.8));
-                this.mazeLayer.add(this.add.ellipse(cx - 2, cy - 2, 36, 18, 0x5a6868, 0.7));
-                // Crack detail
-                this.mazeLayer.add(this.add.ellipse(cx - 6, cy, 16, 1.5, 0x3a4a4a, 0.5).setAngle(15));
-                this.mazeLayer.add(this.add.ellipse(cx + 8, cy + 2, 10, 1.5, 0x3a4a4a, 0.45).setAngle(-25));
-                // Snow dusting
-                this.mazeLayer.add(this.add.ellipse(cx + 4, cy - 6, 14, 4, 0xddeeff, 0.35));
-            }
-        }
-    }
-
     // ── Guarantee a hiding spot near a given cell ─────────────────────────────
     private guaranteeBushNear(hCol: number, hRow: number, season: MonthConfig['season']) {
         // Already have a bush within Manhattan 2? Nothing to do.
@@ -1638,7 +1032,7 @@ export default class GameScene extends Phaser.Scene {
         if (valid.length === 0) return;
         const { col, row } = valid[Math.floor(Math.random() * valid.length)];
         this.bushCells.add(`${col},${row}`);
-        this.drawBushAt(col, row, season);
+        drawBushAt(this, this.mazeLayer, col, row, season.name);
     }
 
     // ── Hazard spawn ──────────────────────────────────────────────────────────
@@ -1824,85 +1218,10 @@ export default class GameScene extends Phaser.Scene {
         for (const { col, row } of placed) {
             const cx = this.worldX(col);
             const cy = this.worldY(row);
-            let container: Phaser.GameObjects.Container;
-            switch (season.name) {
-                case 'Spring': container = this.buildFlowerSprite(cx, cy);   break;
-                case 'Summer': container = this.buildPlantSprite(cx, cy);    break;
-                case 'Winter': container = this.buildSnowflakeSprite(cx, cy); break;
-                default:       container = this.buildAcornSprite(cx, cy);    break;
-            }
+            const container = buildObjectiveSprite(this, cx, cy, season.name);
             this.objectives.set(`${col},${row}`, container);
         }
         this.updateObjText();
-    }
-
-    private buildFlowerSprite(cx: number, cy: number): Phaser.GameObjects.Container {
-        const palette = [0xffb7c5, 0xcc88ff, 0xffee88, 0xffffff, 0xffaadd];
-        const pColor  = palette[Math.floor(Math.random() * palette.length)];
-        const parts: Phaser.GameObjects.GameObject[] = [
-            this.add.circle(0, 0, 24, 0xffffff, 0.72),               // contrast disc
-        ];
-        for (let i = 0; i < 5; i++) {
-            const rad = (i * 72 * Math.PI) / 180;
-            parts.push(
-                this.add.ellipse(Math.sin(rad) * 8, -Math.cos(rad) * 8, 7, 14, pColor, 0.9)
-                    .setAngle(i * 72),
-            );
-        }
-        parts.push(this.add.circle(0, 0, 5, 0xffe066));
-        const c = this.add.container(cx, cy, parts).setDepth(1.8);
-        this.tweens.add({ targets: c, scaleX: 1.1, scaleY: 1.1, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
-        return c;
-    }
-
-    private buildPlantSprite(cx: number, cy: number): Phaser.GameObjects.Container {
-        const parts: Phaser.GameObjects.GameObject[] = [
-            this.add.circle(0, 2, 24, 0xffffff, 0.72),               // contrast disc
-            this.add.rectangle(0, 12,  16, 12, 0x8b5e3c),            // pot body
-            this.add.rectangle(0,  6,  20,  5, 0xaa7b4e),            // pot rim
-            this.add.rectangle(0, -2,   3, 12, 0x559933),            // stem
-            this.add.ellipse(-9, -6, 12,  8, 0x55aa22, 0.9).setAngle(-30),
-            this.add.ellipse( 9, -6, 12,  8, 0x55aa22, 0.9).setAngle( 30),
-            this.add.ellipse( 0,-14, 10,  6, 0x66bb33, 0.9),
-        ];
-        const c = this.add.container(cx, cy, parts).setDepth(1.8);
-        this.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
-        return c;
-    }
-
-    private buildAcornSprite(cx: number, cy: number): Phaser.GameObjects.Container {
-        const parts: Phaser.GameObjects.GameObject[] = [
-            this.add.circle(0, 0, 24, 0xffffff, 0.72),               // contrast disc
-            this.add.rectangle(0, -13,  3,  6, 0x5a3010),            // stem
-            this.add.ellipse(  0,  -7, 18, 10, 0x6b3f1e),            // cap
-            this.add.circle(  -5, -7,   2, 0x8b5e3c, 0.6),           // cap texture
-            this.add.circle(   5, -7,   2, 0x8b5e3c, 0.6),
-            this.add.ellipse(  0,   2, 16, 20, 0xc8852a),             // body
-            this.add.ellipse( -4,  -1,  5, 10, 0xdda050, 0.5),       // highlight
-        ];
-        const c = this.add.container(cx, cy, parts).setDepth(1.8);
-        this.tweens.add({ targets: c, angle: { from: -6, to: 6 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
-        return c;
-    }
-
-    private buildSnowflakeSprite(cx: number, cy: number): Phaser.GameObjects.Container {
-        const parts: Phaser.GameObjects.GameObject[] = [
-            this.add.circle(0, 0, 22, 0xddeeff, 0.55),          // soft glow disc
-        ];
-        // Six arms — each a thin rectangle + small diamond tip
-        for (let i = 0; i < 6; i++) {
-            const angleDeg = i * 60;
-            const arm = this.add.rectangle(0, -10, 3, 18, 0xffffff, 0.95).setAngle(angleDeg);
-            const tip = this.add.rectangle(0, -20, 4, 4, 0xddeeff, 0.9).setAngle(angleDeg + 45);
-            parts.push(arm, tip);
-        }
-        // Centre dot
-        parts.push(this.add.circle(0, 0, 4, 0xffffff));
-        const c = this.add.container(cx, cy, parts).setDepth(1.8);
-        // Slow spin + gentle drift
-        this.tweens.add({ targets: c, angle: 360, repeat: -1, duration: 8000, ease: 'Linear' });
-        this.tweens.add({ targets: c, y: cy - 6, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
-        return c;
     }
 
     private checkObjective() {
@@ -1957,13 +1276,13 @@ export default class GameScene extends Phaser.Scene {
         // Bushes (hiding spots)
         for (const { col, row } of cm.bushes) {
             this.bushCells.add(`${col},${row}`);
-            this.drawBushAt(col, row, season);
+            drawBushAt(this, this.mazeLayer, col, row, season.name);
         }
 
         // Scenic obstacles
         for (const { col, row } of cm.scenery) {
             this.sceneryBlocked.add(`${col},${row}`);
-            this.drawScenery(col, row, season);
+            drawScenery(this, this.mazeLayer, col, row, season.name);
         }
 
         // Keys
@@ -1997,13 +1316,7 @@ export default class GameScene extends Phaser.Scene {
         for (const { col, row } of cm.objectives) {
             const cx = this.worldX(col);
             const cy = this.worldY(row);
-            let container: Phaser.GameObjects.Container;
-            switch (season.name) {
-                case 'Spring': container = this.buildFlowerSprite(cx, cy);   break;
-                case 'Summer': container = this.buildPlantSprite(cx, cy);    break;
-                case 'Winter': container = this.buildSnowflakeSprite(cx, cy); break;
-                default:       container = this.buildAcornSprite(cx, cy);    break;
-            }
+            const container = buildObjectiveSprite(this, cx, cy, season.name);
             this.objectives.set(`${col},${row}`, container);
         }
         // If no objectives, mark as done immediately so goal is accessible

@@ -188,3 +188,15 @@ Prompt before wiping the entire map to prevent accidental loss.
 ## ✅ Bug: Stone next to gate breaks HOP (fixed)
 
 Fixed by adding `gateProtected` filtering to `placeBlockingRocks()` — rocks can no longer be placed on cells adjacent to gate edges, matching the existing protection in `placeBushes()`.
+
+---
+
+## Bug: Maze walls too thin
+
+Walls in the maze levels are hard to see when playing. Consider increasing the wall stroke width (currently 4px in GameScene `create()`) or adding a subtle shadow/glow to improve visibility.
+
+---
+
+## Idea: Season-specific music
+
+Different ambient music or soundtrack per season to enhance the atmosphere. Would need royalty-free tracks or procedural audio for each of the four seasons.
