@@ -3,6 +3,7 @@
 import { doc, setDoc, getDoc, increment, Timestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import { getUserId, getDisplayName } from './auth';
+import { log } from './logger';
 import { statsEvents, STAT } from './statsEmitter';
 import { type UserStats, emptyStats } from './statsModel';
 
@@ -95,7 +96,7 @@ async function flushComplete() {
             await setDoc(ref, { [`monthly.${yearMonth}.bestTimeMs`]: elapsed }, { merge: true });
         }
     } catch (e) {
-        console.warn('[Stats] flush failed:', e);
+        log.warn('stats', 'flush failed', e);
     }
 
     session = null;
@@ -122,7 +123,7 @@ async function flushDeath() {
             'skillUses.DASH':         increment(session.skillUses['DASH'] ?? 0),
         }, { merge: true });
     } catch (e) {
-        console.warn('[Stats] death flush failed:', e);
+        log.warn('stats', 'death flush failed', e);
     }
 
     session = null;
@@ -158,7 +159,7 @@ export async function getStats(): Promise<UserStats> {
             monthly:    d.monthly    ?? {},
         };
     } catch (e) {
-        console.warn('[Stats] read failed:', e);
+        log.warn('stats', 'read failed', e);
         return emptyStats();
     }
 }

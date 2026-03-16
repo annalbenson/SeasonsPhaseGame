@@ -13,6 +13,7 @@ import { createPlayerSprite, ensureSparkleTexture } from '../sprites';
 import { buildHeader, buildSidePanel } from '../sidePanel';
 import { PlacementCtx, placeScenery, placeBushes, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
 import { PLAYER_MOVE_DURATION, DEPTH } from '../gameplay';
+import { log } from '../logger';
 
 
 // Returns the first month of the season that contains `month`
@@ -480,7 +481,7 @@ export default class GameScene extends Phaser.Scene {
         for (let i = 0; i < zones.length - 1; i++) {
             const pos = pickOffPath(zones[i]);
             if (!pos) {
-                console.warn('[PhaseGame] Could not place key in zone', i, '— skipping gates.');
+                log.warn('maze', `could not place key in zone ${i} — skipping gates`);
                 this.gateEdges = [];
                 return;
             }
@@ -559,7 +560,7 @@ export default class GameScene extends Phaser.Scene {
         // Initially: at least one key must be reachable with all gates closed
         const reachable0 = bfs(this.startCol, this.startRow, openedGates);
         if (!allKeys.some(k => reachable0.has(k))) {
-            console.warn('[PhaseGame] No key reachable from start! Removing gates.');
+            log.warn('maze', 'no key reachable from start — removing gates');
             ok = false;
         }
 
@@ -572,7 +573,7 @@ export default class GameScene extends Phaser.Scene {
                 const reachable = bfs(this.startCol, this.startRow, openedGates);
                 const keysFound = allKeys.filter(k => reachable.has(k)).length;
                 if (keysFound < i + 1) {
-                    console.warn(`[PhaseGame] Key ${i + 1} unreachable after gate ${i}! Removing gates.`);
+                    log.warn('maze', `key ${i + 1} unreachable after gate ${i} — removing gates`);
                     ok = false;
                 }
             }

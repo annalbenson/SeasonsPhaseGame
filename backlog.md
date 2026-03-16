@@ -69,24 +69,31 @@ Players previously only visited ~42% of reachable cells. Fixed with zone-aware o
 
 ---
 
-## Idea: Seasons & Weather — active hindrances
+## TODO (Year Two): Design vision
 
-Weather currently visual-only. Could add active hindrances per month:
+**Narrative:** Four bears, four seasons — each heading home to feed their cubs. The environment is the opposition, not enemies. Weather hindrances replace roaming hazards. No hiding spots. Emphasis on movement, exploration, and the scrolling screen.
 
-| Month | Weather event | Hindrance mechanic |
-|-------|---------------|--------------------|
-| Jan   | Blizzard      | Periodic whiteout (reduced visibility) |
-| Feb   | Ice storm     | Ice cells cause directional drift |
-| Mar   | Rain showers  | Puddles block cells temporarily |
-| Apr   | Heavy rain    | Paths flood and close for N seconds |
-| May   | Mild / clear  | No hindrance — breather month |
-| Jun   | Heat haze     | Shimmer warps far tiles |
-| Jul   | Heat wave     | Move cooldown increases |
-| Aug   | Thunderstorm  | Lightning blocks random cells |
-| Sep   | Wind gusts    | Gusts push player one cell |
-| Oct   | Cold wind     | Gust phase every ~8 steps |
-| Nov   | First frost   | Key icons partially hidden under frost |
-| Dec   | Snowstorm     | Snowdrift tiles cost 2 moves |
+**Design pillars:** Movement & exploration > hiding & avoiding enemies.
+
+### Characters & Objectives
+
+| Season | Player | Objective | Narrative |
+|--------|--------|-----------|-----------|
+| Winter | Polar Bear | Gather fish for cubs | Navigating blizzards to reach the den |
+| Spring | Brown Bear | Collect honey for cubs | Foraging through spring rains |
+| Summer | Panda | Find bamboo for cubs | Pushing through summer heat |
+| Fall | Black Bear | Gather berries for cubs | Stocking up before first frost |
+
+No roaming hazard sprites. No hiding spots. Weather *is* the hazard.
+
+### Weather hindrances (one per season, intensifies over 3 months)
+
+| Season | Mechanic | Visual | Intensification |
+|--------|----------|--------|-----------------|
+| Spring | Flooded paths — some paths temporarily blocked, must route around | Rain cloud sprites | More paths flood, longer flood duration |
+| Summer | Heat exhaustion — bear must stop at water sources to cool off | Hot sun sprites | More frequent stops needed, water sources scarcer |
+| Fall | Wind gusts — push the bear off course | Grey cloud sprites | Stronger/more frequent gusts, longer push distance |
+| Winter | Snowdrifts — tiles cost extra moves, reduced visibility | Snowfall/blizzard | Heavier snow, more drift tiles, shorter visibility |
 
 ---
 
@@ -142,7 +149,7 @@ Stop doing bit-shifting at runtime to convert integer colors to hex strings. Sea
 Extracted: sprites.ts, scenery.ts, sidePanel.ts, entityPlacement.ts, gameplay.ts (constants). Remaining candidates: puzzle placement, maze rendering.
 
 ### Sprite construction is verbose
-~800 lines of `add.circle(...magic numbers...)` across GameScene and hazard.ts for procedural sprites. Data-driven definitions would be cleaner.
+All sprite factories consolidated in `sprites.ts` (player + enemy + objective). Still ~460 lines of `add.circle(...magic numbers...)`. Data-driven definitions would be cleaner but low priority.
 
 ### String-based cell keys
 `"col,row"` strings used as map keys everywhere. Works but is not type-safe and easy to typo.
@@ -230,8 +237,8 @@ GameY2Scene builds header and side panel locally (~90 lines) instead of importin
 ### TutorialScene reimplements fog
 TutorialScene has its own fog system (~200 lines) instead of using the extracted `FogOfWar` class.
 
-### TutorialScene builds creature sprites locally
-8 creature sprite builders in TutorialScene (~450 lines) instead of using `sprites.ts`. Also duplicates goal lock overlay and objective gem rendering in 3 places.
+### ✅ TutorialScene builds creature sprites locally
+Extracted 5 enemy sprite factories (frog, snake, fox, owl, wolf) into shared `createEnemySprite()` in `sprites.ts`. Both Hazard class and TutorialScene now use the shared factories. Tutorial enemies also gained full-detail tweens (tongue flicker, eye glow, etc.) that were missing from the simplified copies.
 
 ### ✅ Export shuffle from maze.ts
 Exported from `maze.ts`, removed duplicate from `terrain.ts`.

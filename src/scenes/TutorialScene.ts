@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { ALGORITHMS, WALLS } from '../maze';
 import { MOVE_DIRS } from '../mazeUtils';
+import { createEnemySprite } from '../sprites';
 
 const W = MAX_COLS * TILE + PANEL;
 const H = MAX_ROWS * TILE + HEADER;
@@ -862,18 +863,10 @@ export default class TutorialScene extends Phaser.Scene {
         }
     }
 
-    // ── Season-specific enemy sprites (mirrors Hazard class) ──────────────────
+    // ── Enemy sprites — delegates to shared factories in sprites.ts ──────────
     private buildTutEnemy(x: number, y: number, season?: string): Phaser.GameObjects.Container {
-        switch (season) {
-            case 'Spring': return this.buildTutFrog(x, y);
-            case 'Fall':   return this.buildTutFox(x, y);
-            case 'Winter': return this.buildTutOwl(x, y);
-            case 'Summer': return this.buildTutSnake(x, y);
-            default:       return this.buildTutGenericEnemy(x, y);
-        }
-    }
-
-    private buildTutGenericEnemy(x: number, y: number): Phaser.GameObjects.Container {
+        if (season) return createEnemySprite(this, x, y, season, 4);
+        // Generic purple enemy for early tutorial steps (no season context)
         const danger = this.add.circle(0, 0, 18, T.enemyColor, 0.15);
         const ebody = this.add.circle(0, 0, 10, T.enemyColor, 0.9);
         const eye1 = this.add.circle(-4, -3, 2.5, 0xffffff, 0.9);
@@ -881,95 +874,6 @@ export default class TutorialScene extends Phaser.Scene {
         const c = this.add.container(x, y, [danger, ebody, eye1, eye2]).setDepth(4);
         this.tweens.add({ targets: danger, alpha: { from: 0.1, to: 0.3 }, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
         return c;
-    }
-
-    private buildTutFrog(x: number, y: number): Phaser.GameObjects.Container {
-        const green = 0x44aa22, dark = 0x2a7a10, belly = 0x99cc44;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const legBL = this.add.ellipse(-15, 14, 16, 8, dark, 0.85).setAngle(-35);
-        const legBR = this.add.ellipse(15, 14, 16, 8, dark, 0.85).setAngle(35);
-        const legFL = this.add.ellipse(-16, -5, 10, 6, dark, 0.8).setAngle(-20);
-        const legFR = this.add.ellipse(16, -5, 10, 6, dark, 0.8).setAngle(20);
-        const body = this.add.circle(0, 4, 18, green);
-        const bellySpot = this.add.ellipse(0, 6, 22, 14, belly, 0.45);
-        const head = this.add.circle(0, -10, 12, 0x55bb33);
-        const mouth = this.add.ellipse(0, -4, 20, 5, dark, 0.65);
-        const eyeL = this.add.circle(-14, -12, 8, 0xffffff);
-        const eyeR = this.add.circle(14, -12, 8, 0xffffff);
-        const irisL = this.add.circle(-14, -12, 5, 0xcc8800);
-        const irisR = this.add.circle(14, -12, 5, 0xcc8800);
-        const pupL = this.add.circle(-14, -12, 2.5, 0x111111);
-        const pupR = this.add.circle(14, -12, 2.5, 0x111111);
-        const visual = this.add.container(0, 0, [danger, legBL, legBR, legFL, legFR, body, bellySpot, head, mouth, eyeL, eyeR, irisL, irisR, pupL, pupR]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
-        return outer;
-    }
-
-    private buildTutSnake(x: number, y: number): Phaser.GameObjects.Container {
-        const bodyCol = 0xcc5500, headCol = 0xdd6600, bellyCol = 0xffcc88;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const tail = this.add.circle(-13, -10, 4, bodyCol);
-        const s4 = this.add.circle(-18, -3, 6, bodyCol);
-        const s3 = this.add.circle(-17, 7, 7, bodyCol);
-        const s2 = this.add.circle(-11, 13, 8, bodyCol);
-        const s1 = this.add.circle(-4, 9, 9, bodyCol);
-        const head = this.add.ellipse(0, 0, 20, 14, headCol);
-        const belly = this.add.ellipse(0, 1, 12, 7, bellyCol, 0.80);
-        const eyeL = this.add.circle(-5, -4, 2.5, 0xffffff);
-        const pupL = this.add.circle(-5, -4, 1.5, 0x111111);
-        const eyeR = this.add.circle(4, -4, 2.5, 0xffffff);
-        const pupR = this.add.circle(4, -4, 1.5, 0x111111);
-        const visual = this.add.container(0, 0, [danger, tail, s4, s3, s2, s1, head, belly, eyeL, pupL, eyeR, pupR]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: visual, angle: { from: -7, to: 7 }, yoyo: true, repeat: -1, duration: 1300, ease: 'Sine.easeInOut' });
-        return outer;
-    }
-
-    private buildTutFox(x: number, y: number): Phaser.GameObjects.Container {
-        const orange = 0xdd5500, light = 0xee8833, cream = 0xffd090, dark = 0x221100;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const tail = this.add.ellipse(0, 17, 18, 14, light, 0.9);
-        const tailTip = this.add.circle(0, 23, 6, cream, 0.9);
-        const body = this.add.ellipse(0, 3, 18, 22, orange);
-        const belly = this.add.ellipse(0, 4, 10, 15, cream, 0.5);
-        const head = this.add.ellipse(0, -8, 16, 14, orange);
-        const snout = this.add.ellipse(0, -17, 8, 10, light);
-        const nose = this.add.circle(0, -21, 3, dark);
-        const earL = this.add.ellipse(-10, -13, 8, 12, orange);
-        const earR = this.add.ellipse(10, -13, 8, 12, orange);
-        const earLi = this.add.ellipse(-10, -13, 4, 7, dark, 0.45);
-        const earRi = this.add.ellipse(10, -13, 4, 7, dark, 0.45);
-        const eyeL = this.add.circle(-6, -10, 2.5, 0xdd9900);
-        const eyeR = this.add.circle(6, -10, 2.5, 0xdd9900);
-        const pupL = this.add.circle(-6, -10, 1.5, dark);
-        const pupR = this.add.circle(6, -10, 1.5, dark);
-        const visual = this.add.container(0, 0, [danger, tail, tailTip, body, belly, head, snout, nose, earL, earR, earLi, earRi, eyeL, eyeR, pupL, pupR]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: [tail, tailTip], angle: { from: -13, to: 13 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
-        return outer;
-    }
-
-    private buildTutOwl(x: number, y: number): Phaser.GameObjects.Container {
-        const brown = 0x6b4520, light = 0x9a6840, cream = 0xe8dcc8;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const body = this.add.circle(0, 5, 18, brown);
-        const wingL = this.add.ellipse(-14, 6, 12, 22, light, 0.75);
-        const wingR = this.add.ellipse(14, 6, 12, 22, light, 0.75);
-        const tail = this.add.ellipse(0, 19, 18, 10, light, 0.9);
-        const face = this.add.circle(0, -4, 13, cream);
-        const tuftL = this.add.ellipse(-8, -18, 7, 13, brown);
-        const tuftR = this.add.ellipse(8, -18, 7, 13, brown);
-        const eyeL = this.add.circle(-6, -6, 6, 0xffe060);
-        const eyeR = this.add.circle(6, -6, 6, 0xffe060);
-        const pupL = this.add.circle(-6, -6, 3.5, 0x111111);
-        const pupR = this.add.circle(6, -6, 3.5, 0x111111);
-        const beak = this.add.ellipse(0, -1, 9, 6, 0xcc8800);
-        const visual = this.add.container(0, 0, [danger, body, wingL, wingR, tail, face, tuftL, tuftR, eyeL, eyeR, pupL, pupR, beak]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: visual, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 2600, ease: 'Sine.easeInOut' });
-        return outer;
     }
 
     // ── Scenery obstacle drawing ─────────────────────────────────────────────

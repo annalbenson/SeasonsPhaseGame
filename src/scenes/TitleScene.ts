@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
+import { MONTHS_Y2 } from '../seasons';
 import { signOut, onAuthChange, isSignedIn, getDisplayName } from '../auth';
 
 const W = MAX_COLS * TILE + PANEL;
@@ -66,6 +67,14 @@ export default class TitleScene extends Phaser.Scene {
         }).setOrigin(0.5);
 
         // ── Buttons ───────────────────────────────────────────────────────────
+        const fadeAndStart = (scene: string, data?: object) => {
+            this.cameras.main.fadeOut(700, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start(scene, data);
+            });
+        };
+
+        /** Large primary button (centered, pulsing). */
         const makeButton = (x: number, y: number, label: string, onClick: () => void) => {
             const b = this.add.text(x, y, label, {
                 fontSize: '32px',
@@ -73,12 +82,8 @@ export default class TitleScene extends Phaser.Scene {
             }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
             const p = this.tweens.add({
-                targets:  b,
-                alpha:    { from: 0.6, to: 1.0 },
-                yoyo:     true,
-                repeat:   -1,
-                duration: 2000,
-                ease:     'Sine.easeInOut',
+                targets: b, alpha: { from: 0.6, to: 1.0 },
+                yoyo: true, repeat: -1, duration: 2000, ease: 'Sine.easeInOut',
             });
 
             b.on('pointerover', () => { p.pause(); b.setAlpha(1).setColor('#ffffff'); });
@@ -87,58 +92,76 @@ export default class TitleScene extends Phaser.Scene {
             return b;
         };
 
-        makeButton(W / 2, H / 2 + 10, 'How to Play', () => {
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('TutorialScene');
-            });
-        });
+        /** Small inline link for sub-options. */
+        const makeLink = (label: string, onClick: () => void) => {
+            const b = this.add.text(0, 0, label, {
+                fontSize: '18px',
+                color:    '#5a8ea8',
+            }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
 
-        makeButton(W / 2, H / 2 + 70, 'Year One', () => {
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene' });
-            });
-        });
+            b.on('pointerover', () => b.setColor('#ffffff'));
+            b.on('pointerout',  () => b.setColor('#5a8ea8'));
+            b.on('pointerdown', onClick);
+            return b;
+        };
 
-        makeButton(W / 2, H / 2 + 130, 'Year One (Hard Mode)', () => {
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene', hard: true });
-            });
-        });
+        /** Lay out an inline row of links with ' | ' separators, centered at (cx, y). */
+        const linkRow = (cx: number, y: number, items: { label: string; onClick: () => void }[]) => {
+            const links = items.map(it => makeLink(it.label, it.onClick));
+            const sepStyle = { fontSize: '18px', color: '#334455' };
+            const seps: Phaser.GameObjects.Text[] = [];
+            for (let i = 0; i < links.length - 1; i++) {
+                seps.push(this.add.text(0, 0, ' | ', sepStyle).setOrigin(0, 0.5));
+            }
+            // Measure total width
+            let totalW = 0;
+            for (const l of links) totalW += l.width;
+            for (const s of seps) totalW += s.width;
+            // Position left-to-right
+            let x = cx - totalW / 2;
+            for (let i = 0; i < links.length; i++) {
+                links[i].setPosition(x, y);
+                x += links[i].width;
+                if (i < seps.length) {
+                    seps[i].setPosition(x, y);
+                    x += seps[i].width;
+                }
+            }
+        };
 
-        makeButton(W / 2, H / 2 + 190, 'Year One (Random Start)', () => {
-            const month = Math.floor(Math.random() * 12) + 1;
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('QuoteScene', { month, isSeason: true, from: 'TitleScene' });
-            });
-        });
+        // How to Play
+        makeButton(W / 2, H / 2 + 10, 'How to Play', () => fadeAndStart('TutorialScene'));
 
-        makeButton(W / 2, H / 2 + 250, 'Year Two', () => {
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('GameY2Scene', { monthIndex: 0, from: 'TitleScene' });
-            });
-        });
+        // Year One — main button + sub-links
+        makeButton(W / 2, H / 2 + 80, 'Year One', () =>
+            fadeAndStart('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene' }));
+        linkRow(W / 2, H / 2 + 118, [
+            { label: 'Hard Mode', onClick: () =>
+                fadeAndStart('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene', hard: true }) },
+            { label: 'Random Start', onClick: () => {
+                const month = Math.floor(Math.random() * 12) + 1;
+                fadeAndStart('QuoteScene', { month, isSeason: true, from: 'TitleScene' });
+            }},
+        ]);
 
-        makeButton(W / 2, H / 2 + 310, 'Map Toolkit', () => {
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('ToolkitScene');
-            });
-        });
+        // Year Two — main button + sub-link
+        makeButton(W / 2, H / 2 + 180, 'Year Two', () =>
+            fadeAndStart('GameY2Scene', { monthIndex: 0, from: 'TitleScene' }));
+        linkRow(W / 2, H / 2 + 218, [
+            { label: 'Random Start', onClick: () => {
+                const monthIndex = Math.floor(Math.random() * MONTHS_Y2.length);
+                fadeAndStart('GameY2Scene', { monthIndex, from: 'TitleScene' });
+            }},
+        ]);
 
-        makeButton(W / 2, H / 2 + 370, 'My Stats', () => {
-            this.cameras.main.fadeOut(700, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('StatsScene');
-            });
-        });
+        // Utilities
+        linkRow(W / 2, H / 2 + 280, [
+            { label: 'Map Toolkit', onClick: () => fadeAndStart('ToolkitScene') },
+            { label: 'My Stats',    onClick: () => fadeAndStart('StatsScene') },
+        ]);
 
         // ── Sign in / out ────────────────────────────────────────────────────
-        const authBtn = this.add.text(W / 2, H / 2 + 440, '', {
+        const authBtn = this.add.text(W / 2, H / 2 + 340, '', {
             fontSize: '18px', color: '#556677',
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
         authBtn.on('pointerover', () => authBtn.setColor('#aabbcc'));
