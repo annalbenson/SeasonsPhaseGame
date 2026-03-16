@@ -4,6 +4,11 @@ import { WALLS } from './maze';
 import { Hazard } from './hazard';
 import { FogOfWar } from './fog';
 import { statsEvents, STAT } from './statsEmitter';
+import { SeasonName } from './seasons';
+import {
+    SKILL_COOLDOWN, STUN_DURATION, GLOW_RADIUS,
+    DASH_DISTANCE, SWIM_DURATION, DEPTH,
+} from './gameplay';
 
 // ── Skill system ─────────────────────────────────────────────────────────────
 // Each season has a unique active ability with a shared cooldown timer.
@@ -13,7 +18,7 @@ import { statsEvents, STAT } from './statsEmitter';
 //   Summer (GLOW)   — immediate: reveal a large fog area
 //   Fall   (DASH)   — directional: sprint 3 cells in one direction
 
-const DEFAULT_COOLDOWN = 15_000; // 15 seconds default
+const DEFAULT_COOLDOWN = SKILL_COOLDOWN;
 
 /** Shared state and scene references needed by all skills. */
 export interface SkillContext {
@@ -43,7 +48,8 @@ export interface SkillContext {
     setSwimming?(active: boolean): void;
 }
 
-export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial' | 'WinterY2';
+// Re-export so existing importers of SeasonName from skills.ts still work
+export type { SeasonName } from './seasons';
 
 export interface Skill {
     readonly name: string;
@@ -177,7 +183,7 @@ const BURROW: Skill = {
         const mound = ctx.scene.add.ellipse(
             ctx.player.x, ctx.player.y + 12, TILE * 0.6, TILE * 0.25,
             0x8a7050, 0.6,
-        ).setDepth(1.9);
+        ).setDepth(DEPTH.TRAIL);
 
         // Expose emerge so SPACE can end burrow
         ctx.emergeBurrow = () => {
@@ -216,7 +222,7 @@ const STING: Skill = {
             if (d < bestDist) { bestDist = d; nearest = h; }
         }
         if (!nearest || bestDist > 1) return false; // no adjacent enemy
-        nearest.stun(5000);
+        nearest.stun(STUN_DURATION);
         statsEvents.emit(STAT.MONSTER_STUNNED);
         ctx.scene.tweens.add({ targets: ctx.player, scaleX: 1.3, scaleY: 1.3, yoyo: true, duration: 200 });
         return true;
@@ -232,12 +238,12 @@ const GLOW: Skill = {
     cooldown: DEFAULT_COOLDOWN,
 
     activate(ctx) {
-        ctx.fog.revealArea(ctx.gridX, ctx.gridY, 4, ctx.scene.time.now);
+        ctx.fog.revealArea(ctx.gridX, ctx.gridY, GLOW_RADIUS, ctx.scene.time.now);
         // Bright flash effect
         const flash = ctx.scene.add.circle(
             ctx.player.x, ctx.player.y, TILE * 4,
             0xaaffaa, 0.4, // approximate — overridden per season below
-        ).setDepth(2.8);
+        ).setDepth(DEPTH.SKILL_FX);
         ctx.scene.tweens.add({ targets: flash, alpha: 0, scale: 1.5, duration: 600, onComplete: () => flash.destroy() });
         return true;
     },
@@ -269,7 +275,7 @@ const DASH: Skill = {
         // Collect up to 3 cells we can dash through
         const steps: { x: number; y: number }[] = [];
         let cx = ctx.gridX, cy = ctx.gridY;
-        for (let s = 0; s < 3; s++) {
+        for (let s = 0; s < DASH_DISTANCE; s++) {
             const w = ctx.cells[cy][cx];
             if (dx ===  1 && (w & WALLS.RIGHT))  break;
             if (dx === -1 && (w & WALLS.LEFT))   break;
@@ -335,14 +341,14 @@ const SWIM: Skill = {
         if (ctx.setSwimming) {
             ctx.setSwimming(true);
             // 10s swimming buff — visual feedback handled in GameScene
-            ctx.scene.time.delayedCall(10_000, () => {
+            ctx.scene.time.delayedCall(SWIM_DURATION, () => {
                 if (ctx.setSwimming) ctx.setSwimming(false);
             });
             // Ripple effect
             const ripple = ctx.scene.add.circle(
                 ctx.player.x, ctx.player.y, TILE * 2,
                 0x4090d0, 0.3,
-            ).setDepth(2.8);
+            ).setDepth(DEPTH.SKILL_FX);
             ctx.scene.tweens.add({ targets: ripple, alpha: 0, scale: 2, duration: 600, onComplete: () => ripple.destroy() });
             return true;
         }

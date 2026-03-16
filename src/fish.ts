@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { TILE, HEADER } from './constants';
 import { Terrain, isSwimmable } from './terrain';
+import { DEPTH } from './gameplay';
 
 // ── Fish — swims in water, flees from the polar bear at half hazard speed ──
 
@@ -151,7 +152,7 @@ export class Fish {
 
         const visual = this.scene.add.container(0, 0, [body, tail, dorsal, belly, eye, pupil, mouth]);
         const outer  = this.scene.add.container(x, y, [visual]);
-        outer.setDepth(1.8);
+        outer.setDepth(DEPTH.SPRITE);
 
         // Gentle swimming bob
         this.scene.tweens.add({

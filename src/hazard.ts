@@ -1,6 +1,11 @@
 import Phaser from 'phaser';
 import { TILE, HEADER } from './constants';
 import { WALLS, MOVE_DIRS as DIRS } from './maze';
+import {
+    HUNT_DISTANCE, PASSING_DISTANCE,
+    HAZARD_HUNT_DELAY, HAZARD_WANDER_MIN, HAZARD_WANDER_RAND,
+    HAZARD_HUNT_ANIM, HAZARD_WANDER_ANIM, DEPTH,
+} from './gameplay';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hazard — a season-specific predator that hunts the player.
@@ -81,8 +86,8 @@ export class Hazard {
 
         const dist = Math.abs(col - this.gridX) + Math.abs(row - this.gridY);
         const next: typeof this.state =
-            (!hiding && dist <= 5) ? 'hunting' :
-            ( hiding && dist <= 6) ? 'passing' :
+            (!hiding && dist <= HUNT_DISTANCE) ? 'hunting' :
+            ( hiding && dist <= PASSING_DISTANCE) ? 'passing' :
             'wandering';
 
         if (next !== this.state) {
@@ -157,7 +162,7 @@ export class Hazard {
     // ── Movement internals ────────────────────────────────────────────────────
     private scheduleMove() {
         if (this.dead) return;
-        const delay = this.state === 'hunting' ? 900 : 1500 + Math.random() * 600;
+        const delay = this.state === 'hunting' ? HAZARD_HUNT_DELAY : HAZARD_WANDER_MIN + Math.random() * HAZARD_WANDER_RAND;
         this.timer = this.scene.time.delayedCall(delay, () => this.move());
     }
 
@@ -187,7 +192,7 @@ export class Hazard {
             targets:  this.sprite,
             x:        this.gridX * TILE + TILE / 2 + this.ox,
             y:        this.gridY * TILE + TILE / 2 + HEADER + this.oy,
-            duration: this.state === 'hunting' ? 820 : 1400,
+            duration: this.state === 'hunting' ? HAZARD_HUNT_ANIM : HAZARD_WANDER_ANIM,
             ease:     'Sine.easeInOut',
             onComplete: () => {
                 if (this.dead) return;
@@ -288,7 +293,7 @@ export class Hazard {
             eyeL, pupL, eyeR, pupR, tongue,
         ]);
         const outer = this.scene.add.container(x, y, [visual]);
-        outer.setDepth(3);
+        outer.setDepth(DEPTH.HAZARD);
 
         this.scene.tweens.add({ targets: tongue, alpha: { from: 1, to: 0 }, yoyo: true, repeat: -1, duration: 190 });
         this.scene.tweens.add({ targets: visual, angle: { from: -7, to: 7 }, yoyo: true, repeat: -1, duration: 1300, ease: 'Sine.easeInOut' });
@@ -339,7 +344,7 @@ export class Hazard {
             eyeL, eyeR, irisL, irisR, pupL, pupR,
         ]);
         const outer = this.scene.add.container(x, y, [visual]);
-        outer.setDepth(3);
+        outer.setDepth(DEPTH.HAZARD);
 
         // Slow idle breathing bob
         this.scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
@@ -406,7 +411,7 @@ export class Hazard {
             pawFL, pawFR,
         ]);
         const outer = this.scene.add.container(x, y, [visual]);
-        outer.setDepth(3);
+        outer.setDepth(DEPTH.HAZARD);
 
         // Tail sway
         this.scene.tweens.add({ targets: [tail, tailTip], angle: { from: -13, to: 13 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
@@ -456,7 +461,7 @@ export class Hazard {
             eyeL, eyeR, pupL, pupR, glintL, glintR, beak,
         ]);
         const outer = this.scene.add.container(x, y, [visual]);
-        outer.setDepth(3);
+        outer.setDepth(DEPTH.HAZARD);
 
         // Slow head-turn (owls rotate their heads)
         this.scene.tweens.add({ targets: visual, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 2600, ease: 'Sine.easeInOut' });
@@ -519,7 +524,7 @@ export class Hazard {
             pawFL, pawFR,
         ]);
         const outer = this.scene.add.container(x, y, [visual]);
-        outer.setDepth(3);
+        outer.setDepth(DEPTH.HAZARD);
 
         // Prowl sway
         this.scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });

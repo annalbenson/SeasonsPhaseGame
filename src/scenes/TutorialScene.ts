@@ -34,7 +34,10 @@ interface Gate {
 }
 
 // ── Season color themes for skill tutorials ─────────────────────────────────
-interface SeasonThemeT {
+// Intentionally separate from SeasonTheme in seasons.ts — tutorial themes
+// include extra fields (bush/player/enemy/scenery colors, skillName) that
+// the main SeasonTheme doesn't carry.
+interface TutorialTheme {
     floorLight: number; floorDark: number; wallColor: number;
     goalColor: number; bgColor: number; accent: number; accentHex: string;
     dimHex: string; textColor: string; bushColor: number; bushLight: number;
@@ -43,7 +46,7 @@ interface SeasonThemeT {
     skillName: string;
 }
 
-const SEASON_THEMES: Record<string, SeasonThemeT> = {
+const SEASON_THEMES: Record<string, TutorialTheme> = {
     Winter: {
         floorLight: 0xb0ccdf, floorDark: 0x7a9db8, wallColor: 0x0e1c28,
         goalColor: 0x7ec8e8, bgColor: 0x080e18, accent: 0xc8e4f4, accentHex: '#c8e4f4',
@@ -336,7 +339,7 @@ export default class TutorialScene extends Phaser.Scene {
     }
 
     /** Active theme — switches to season theme for skill tutorial steps. */
-    private activeTheme(): SeasonThemeT | null {
+    private activeTheme(): TutorialTheme | null {
         const cfg = STEPS[this.step];
         return cfg?.season ? SEASON_THEMES[cfg.season] : null;
     }

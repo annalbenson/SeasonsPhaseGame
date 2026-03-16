@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
+import { DEPTH } from '../gameplay';
 import { MONTHS_Y2, SeasonTheme } from '../seasons';
 import { generateMountainMap, drawTerrain, Terrain, isWalkable, TerrainMap } from '../terrain';
 import { Hazard } from '../hazard';
@@ -136,7 +137,7 @@ export default class GameY2Scene extends Phaser.Scene {
         this.goalLock = this.add.circle(
             this.worldX(this.goalCol), this.worldY(this.goalRow),
             TILE / 2 - 2, 0x000000, 0.45,
-        ).setDepth(1.6);
+        ).setDepth(DEPTH.GOAL_LOCK);
 
         // Snow caves on land cells in forest zones
         this.placeSnowCaves();
@@ -158,7 +159,7 @@ export default class GameY2Scene extends Phaser.Scene {
         this.gridX = this.startCol;
         this.gridY = this.startRow;
         this.player = this.createPolarBear(this.worldX(this.startCol), this.worldY(this.startRow));
-        this.player.setDepth(2);
+        this.player.setDepth(DEPTH.PLAYER);
 
         // Wolves — one per forest zone (except start/goal zones)
         this.spawnWolves(season);
@@ -170,7 +171,7 @@ export default class GameY2Scene extends Phaser.Scene {
             lifespan: 400, frequency: 65, quantity: 1,
             tint: [0xffffff, 0xddeeff, 0xaaccff],
             blendMode: Phaser.BlendModes.ADD,
-        }).setDepth(1.9);
+        }).setDepth(DEPTH.TRAIL);
 
         // ── Camera scrolling ────────────────────────────────────────────────────
         const worldH = this.totalRows * TILE + HEADER;
@@ -388,7 +389,7 @@ export default class GameY2Scene extends Phaser.Scene {
             cave.fillRoundedRect(cx - 18, cy - 14, 36, 28, 10);
             cave.fillStyle(0x223344, 0.9);
             cave.fillEllipse(cx, cy + 2, 22, 16);
-            cave.setDepth(1.2);
+            cave.setDepth(DEPTH.SCENERY);
             this.mazeLayer.add(cave);
         }
     }
@@ -448,14 +449,14 @@ export default class GameY2Scene extends Phaser.Scene {
         const hx = this.offsetX + this.cols * TILE / 2;
         const W  = this.cols * TILE;
 
-        const bar = this.add.rectangle(hx, HEADER - 1, W, 1, season.uiAccent, 0.25).setDepth(3);
-        const bg  = this.add.rectangle(hx, HEADER / 2, CANVAS_W, HEADER, season.bgColor).setDepth(2.9);
+        const bar = this.add.rectangle(hx, HEADER - 1, W, 1, season.uiAccent, 0.25).setDepth(DEPTH.PANEL);
+        const bg  = this.add.rectangle(hx, HEADER / 2, CANVAS_W, HEADER, season.bgColor).setDepth(DEPTH.PANEL_BG);
 
         const a = season.accentHex;
-        const t1 = this.add.text(hx, 20, 'Y E A R   T W O', { fontSize: '12px', color: `${a}77` }).setOrigin(0.5).setDepth(3);
-        const t2 = this.add.text(hx, 42, spaced(cfg.name), { fontSize: '26px', fontStyle: 'bold', color: a }).setOrigin(0.5).setDepth(3);
-        const t3 = this.add.text(hx, 72, 'Arctic Winter', { fontSize: '15px', color: `${a}99` }).setOrigin(0.5).setDepth(3);
-        const t4 = this.add.text(hx, 98, `"${cfg.quote}" — ${cfg.author}`, { fontSize: '14px', fontStyle: 'italic', color: `${a}66` }).setOrigin(0.5).setDepth(3);
+        const t1 = this.add.text(hx, 20, 'Y E A R   T W O', { fontSize: '12px', color: `${a}77` }).setOrigin(0.5).setDepth(DEPTH.PANEL);
+        const t2 = this.add.text(hx, 42, spaced(cfg.name), { fontSize: '26px', fontStyle: 'bold', color: a }).setOrigin(0.5).setDepth(DEPTH.PANEL);
+        const t3 = this.add.text(hx, 72, 'Arctic Winter', { fontSize: '15px', color: `${a}99` }).setOrigin(0.5).setDepth(DEPTH.PANEL);
+        const t4 = this.add.text(hx, 98, `"${cfg.quote}" — ${cfg.author}`, { fontSize: '14px', fontStyle: 'italic', color: `${a}66` }).setOrigin(0.5).setDepth(DEPTH.PANEL);
 
         for (const o of [bar, bg, t1, t2, t3, t4]) o.setScrollFactor(0);
     }
@@ -560,5 +561,12 @@ export default class GameY2Scene extends Phaser.Scene {
             setMoving: (m) => { this.moving = m; },
             setSwimming: (active) => { this.swimming = active; },
         };
+    }
+
+    // ── Lifecycle cleanup ────────────────────────────────────────────────────
+    shutdown() {
+        this.destroyAll();
+        this.tweens.killAll();
+        this.time.removeAllEvents();
     }
 }

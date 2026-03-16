@@ -12,6 +12,7 @@ import { statsEvents, STAT } from '../statsEmitter';
 import { createPlayerSprite, ensureSparkleTexture } from '../sprites';
 import { buildHeader, buildSidePanel } from '../sidePanel';
 import { PlacementCtx, placeScenery, placeBushes, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
+import { PLAYER_MOVE_DURATION, DEPTH } from '../gameplay';
 
 
 // Returns the first month of the season that contains `month`
@@ -275,7 +276,7 @@ export default class GameScene extends Phaser.Scene {
             this.worldX(this.goalCol),
             this.worldY(this.goalRow),
             TILE / 2 - 2, 0x000000, 0.45,
-        ).setDepth(1.6);
+        ).setDepth(DEPTH.GOAL_LOCK);
 
         // Walls
         const g = this.add.graphics();
@@ -333,7 +334,7 @@ export default class GameScene extends Phaser.Scene {
         const startX = this.worldX(this.startCol);
         const startY = this.worldY(this.startRow);
         this.player = createPlayerSprite(this, startX, startY, season);
-        this.player.setDepth(2);
+        this.player.setDepth(DEPTH.PLAYER);
 
         if (this.customMap) {
             this.spawnCustomHazards(season);
@@ -357,7 +358,7 @@ export default class GameScene extends Phaser.Scene {
             quantity:  1,
             tint:      trailTints[season.name] ?? [fairyGlow, 0xffffff],
             blendMode: Phaser.BlendModes.ADD,
-        }).setDepth(1.9);
+        }).setDepth(DEPTH.TRAIL);
 
         // ── Header strip ──────────────────────────────────────────────────────
         buildHeader(this, this.monthConfig, this.offsetX, this.offsetY, this.W);
@@ -726,7 +727,7 @@ export default class GameScene extends Phaser.Scene {
             targets:  this.player,
             x:        this.worldX(this.gridX),
             y:        this.worldY(this.gridY),
-            duration: 120,
+            duration: PLAYER_MOVE_DURATION,
             ease:     'Power2',
             onComplete: () => {
                 this.moving = false;
@@ -828,7 +829,7 @@ export default class GameScene extends Phaser.Scene {
                 break;
         }
 
-        const flower = this.add.container(cx, cy, parts).setDepth(1.5);
+        const flower = this.add.container(cx, cy, parts).setDepth(DEPTH.BUSH);
 
         // All flowers breathe gently
         this.tweens.add({
@@ -1059,6 +1060,14 @@ export default class GameScene extends Phaser.Scene {
                 });
             });
         });
+    }
+
+    // ── Lifecycle cleanup ────────────────────────────────────────────────────
+    shutdown() {
+        for (const h of this.hazards) h.destroy();
+        this.hazards = [];
+        this.tweens.killAll();
+        this.time.removeAllEvents();
     }
 
 }

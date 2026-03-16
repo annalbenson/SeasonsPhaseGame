@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { SeasonTheme } from './seasons';
+import { DEPTH } from './gameplay';
 
 // ── Player sprite factory ─────────────────────────────────────────────────────
 // Pure construction functions — no game state, just scene.add calls and tweens.
@@ -171,7 +172,7 @@ function buildFlowerSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.
         );
     }
     parts.push(scene.add.circle(0, 0, 5, 0xffe066));
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, scaleX: 1.1, scaleY: 1.1, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
     return c;
 }
@@ -192,7 +193,7 @@ function buildBerrySprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.G
         scene.add.ellipse(0, -14, 10, 5, 0x338822, 0.9),
         scene.add.ellipse(0, -12,  2, 6, 0x336622, 0.8),
     ];
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
     return c;
 }
@@ -207,7 +208,7 @@ function buildAcornSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.G
         scene.add.ellipse(  0,   2, 16, 20, 0xc8852a),
         scene.add.ellipse( -4,  -1,  5, 10, 0xdda050, 0.5),
     ];
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, angle: { from: -6, to: 6 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
     return c;
 }
@@ -223,7 +224,7 @@ function buildSnowflakeSprite(scene: Phaser.Scene, cx: number, cy: number): Phas
         parts.push(arm, tip);
     }
     parts.push(scene.add.circle(0, 0, 4, 0xffffff));
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, angle: 360, repeat: -1, duration: 8000, ease: 'Linear' });
     scene.tweens.add({ targets: c, y: cy - 6, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
     return c;

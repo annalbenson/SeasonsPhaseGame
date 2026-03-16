@@ -19,8 +19,10 @@ function panelDim(c: number, factor: number, min: number): string {
     return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
+export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial' | 'WinterY2';
+
 export interface SeasonTheme {
-    name: 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial' | 'WinterY2';
+    name: SeasonName;
     floorLight: number;   // light checkerboard tile
     floorDark:  number;   // dark checkerboard tile
     wallColor:  number;   // maze wall lines
