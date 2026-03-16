@@ -91,17 +91,11 @@ describe('hazard default behaviors (no spawn)', () => {
         expect(h.isBlocked(0, 0)).toBe(false);
     });
 
-    it('wind: getWindPush returns null or push based on step count', () => {
+    it('wind: getWindPush returns null when no clouds spawned', () => {
         const h = createWeatherHazard('FallY2', 1)!;
-        // intensity 1 → pushInterval = 4, so first 3 calls return null
+        // Before spawn(), no clouds exist so wind push is always null
         expect(h.getWindPush(0, 0)).toBeNull();
-        expect(h.getWindPush(0, 0)).toBeNull();
-        expect(h.getWindPush(0, 0)).toBeNull();
-        // 4th call should push
-        const push = h.getWindPush(0, 0);
-        expect(push).not.toBeNull();
-        expect(typeof push!.dx).toBe('number');
-        expect(typeof push!.dy).toBe('number');
+        expect(h.getWindPush(5, 5)).toBeNull();
     });
 
     it('heat: getMoveCost accumulates heat', () => {

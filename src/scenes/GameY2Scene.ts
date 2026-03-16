@@ -229,6 +229,12 @@ export default class GameY2Scene extends Phaser.Scene {
         this.weatherHazard?.update(this.time.now, this.gridX, this.gridY);
         this.updateWeatherText();
 
+        // SPACE = voluntary rest (recover partial energy, costs a turn)
+        if (Phaser.Input.Keyboard.JustDown(this.cursors.space)) {
+            if (this.energy < this.energyMax) this.onVoluntaryRest();
+            return;
+        }
+
         let dx = 0, dy = 0;
         if (Phaser.Input.Keyboard.JustDown(this.cursors.left)  || Phaser.Input.Keyboard.JustDown(this.wasd.left))  dx = -1;
         if (Phaser.Input.Keyboard.JustDown(this.cursors.right) || Phaser.Input.Keyboard.JustDown(this.wasd.right)) dx =  1;
@@ -293,20 +299,37 @@ export default class GameY2Scene extends Phaser.Scene {
     // ── Cliff fall ──────────────────────────────────────────────────────────────
     private onCliffFall() {
         statsEvents.emit(STAT.CAUGHT);
-        this.drainEnergy(20);
+        this.moving = true;
 
         // Find the narrows zone the player is in/near and reset to its entry row
         const zone = this.terrain.zones.find(z =>
             z.type === 'narrows' &&
             this.gridY >= z.startRow && this.gridY < z.startRow + z.height);
         const resetRow = zone ? zone.startRow + zone.height - 1 : this.startRow;
-        const resetCol = Math.floor(this.cols / 2);
+
+        // Find an OPEN cell in the reset row (scan from center outward)
+        let resetCol = Math.floor(this.cols / 2);
+        const grid = this.terrain.grid;
+        if (grid[resetRow][resetCol] !== Terrain.OPEN) {
+            for (let d = 1; d < this.cols; d++) {
+                if (resetCol - d >= 0 && grid[resetRow][resetCol - d] === Terrain.OPEN) {
+                    resetCol = resetCol - d; break;
+                }
+                if (resetCol + d < this.cols && grid[resetRow][resetCol + d] === Terrain.OPEN) {
+                    resetCol = resetCol + d; break;
+                }
+            }
+        }
 
         this.gridX = resetCol;
         this.gridY = resetRow;
         this.player.setPosition(this.worldX(resetCol), this.worldY(resetRow));
         this.emitter.setPosition(this.player.x, this.player.y);
         this.fog.revealAround(resetCol, resetRow, this.time.now);
+
+        // Drain energy after repositioning — may trigger forced rest
+        this.drainEnergy(35);
+        if (this.energy > 0) this.moving = false;
     }
 
     // ── Energy system ─────────────────────────────────────────────────────────
@@ -318,25 +341,47 @@ export default class GameY2Scene extends Phaser.Scene {
         }
     }
 
-    private onRest() {
-        log.info('scene', 'bear resting to recover energy');
+    /** Voluntary rest (SPACE) — quick nap, recovers 30 energy. */
+    private onVoluntaryRest() {
+        log.info('scene', 'voluntary rest');
         this.moving = true;
 
-        // Zzz text above bear
+        const zx = this.player.x + 20;
+        const zy = this.player.y - 30;
+        const zzz = this.add.text(zx, zy, 'zz', {
+            fontSize: '16px', fontStyle: 'italic', color: '#aaccff',
+        }).setOrigin(0.5).setDepth(DEPTH.PLAYER + 1);
+        this.tweens.add({ targets: zzz, y: zy - 20, alpha: { from: 1, to: 0.3 },
+            duration: 1600, ease: 'Sine.easeOut' });
+
+        this.tweens.add({ targets: this.player, scaleY: 0.9, yoyo: true,
+            duration: 1000, ease: 'Sine.easeInOut' });
+
+        this.time.delayedCall(2000, () => {
+            zzz.destroy();
+            this.energy = Math.min(this.energyMax, this.energy + 30);
+            this.updateEnergyBar();
+            this.moving = false;
+        });
+    }
+
+    /** Forced rest (energy = 0) — longer nap, full recovery. */
+    private onRest() {
+        log.info('scene', 'bear exhausted — forced rest');
+        this.moving = true;
+
         const zx = this.player.x + 20;
         const zy = this.player.y - 30;
         const zzz = this.add.text(zx, zy, 'zzz', {
             fontSize: '20px', fontStyle: 'italic', color: '#aaccff',
         }).setOrigin(0.5).setDepth(DEPTH.PLAYER + 1);
         this.tweens.add({ targets: zzz, y: zy - 30, alpha: { from: 1, to: 0.3 },
-            duration: 1500, ease: 'Sine.easeOut' });
+            duration: 4000, ease: 'Sine.easeOut' });
 
-        // Shrink bear slightly while resting
         this.tweens.add({ targets: this.player, scaleY: 0.85, yoyo: true,
-            duration: 800, ease: 'Sine.easeInOut' });
+            duration: 2000, ease: 'Sine.easeInOut', repeat: 1 });
 
-        // Recover after a short pause
-        this.time.delayedCall(1800, () => {
+        this.time.delayedCall(5000, () => {
             zzz.destroy();
             this.energy = this.energyMax;
             this.updateEnergyBar();
@@ -612,15 +657,52 @@ export default class GameY2Scene extends Phaser.Scene {
 
         const lx = px + 20;
         const tx = px + 40;
-        const items = [
-            { label: `${info.bear} (you)`,        draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(info.bearColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
-            { label: `${info.objLabel.toLowerCase()} — collect`, draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(info.objColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
-            { label: 'tree — blocked',             draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x6b3a1f, 1); g.fillRect(lx + 5, ly, 4, 8); g.fillStyle(0x228b34, 1); g.fillCircle(lx + 7, ly - 3, 7); } },
-            { label: 'mountain — go around',       draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x384048, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x282e34, 0.85); g.fillTriangle(lx + 1, ly + 5, lx + 7, ly - 5, lx + 13, ly + 5); } },
-            { label: 'cliff — be careful',          draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x1a1018, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xff2200, 0.4); g.fillRect(lx + 2, ly - 3, 10, 6); } },
-            { label: 'water — slow swim',          draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x1858a0, 1); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x4090d0, 0.6); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly, lx + 12, ly)); } },
-            { label: 'goal — reach it!',           draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(season.goalColor, 0.7); g.fillRect(lx, ly - 5, 14, 10); } },
+
+        // Common legend items
+        const items: { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }[] = [
+            { label: `${info.bear} (you)`,        draw: (g, ly) => { g.fillStyle(info.bearColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
+            { label: `${info.objLabel.toLowerCase()} — collect`, draw: (g, ly) => { g.fillStyle(info.objColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
         ];
+
+        // Season-specific tree/bamboo
+        if (season.name === 'SummerY2') {
+            items.push({ label: 'bamboo — blocked', draw: (g, ly) => { g.fillStyle(0x44882a, 1); g.fillRect(lx + 4, ly - 5, 3, 12); g.fillRect(lx + 9, ly - 4, 3, 11); } });
+        } else {
+            items.push({ label: 'tree — blocked', draw: (g, ly) => { g.fillStyle(0x6b3a1f, 1); g.fillRect(lx + 5, ly, 4, 8); g.fillStyle(0x228b34, 1); g.fillCircle(lx + 7, ly - 3, 7); } });
+        }
+
+        // Common terrain
+        items.push(
+            { label: 'mountain — go around',   draw: (g, ly) => { g.fillStyle(0x384048, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x282e34, 0.85); g.fillTriangle(lx + 1, ly + 5, lx + 7, ly - 5, lx + 13, ly + 5); } },
+            { label: 'cliff — be careful',     draw: (g, ly) => { g.fillStyle(0x1a1018, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xff2200, 0.4); g.fillRect(lx + 2, ly - 3, 10, 6); } },
+        );
+
+        // Season-specific water description
+        if (season.name === 'SummerY2') {
+            items.push({ label: 'water — cools heat', draw: (g, ly) => { g.fillStyle(0x186848, 1); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x30a070, 0.6); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly, lx + 12, ly)); } });
+        } else {
+            items.push({ label: 'water — slow swim', draw: (g, ly) => { g.fillStyle(0x1858a0, 1); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x4090d0, 0.6); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly, lx + 12, ly)); } });
+        }
+
+        items.push(
+            { label: 'goal — reach it!', draw: (g, ly) => { g.fillStyle(season.goalColor, 0.7); g.fillRect(lx, ly - 5, 14, 10); } },
+        );
+
+        // Season-specific weather legend entries
+        switch (season.name) {
+            case 'WinterY2':
+                items.push({ label: 'snowdrift — extra energy', draw: (g, ly) => { g.fillStyle(0xe8eef4, 0.5); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xc8dce8, 0.4); g.fillCircle(lx + 4, ly, 3); g.fillCircle(lx + 10, ly - 1, 2); } });
+                break;
+            case 'SpringY2':
+                items.push({ label: 'flood — wait or reroute', draw: (g, ly) => { g.fillStyle(0x2060c0, 0.6); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x60a0e0, 0.5); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly - 1, lx + 12, ly - 1)); g.strokeLineShape(new Phaser.Geom.Line(lx + 1, ly + 2, lx + 11, ly + 2)); } });
+                break;
+            case 'SummerY2':
+                items.push({ label: 'heat — watch the meter', draw: (g, ly) => { g.fillStyle(0x222222, 0.6); g.fillRect(lx, ly - 3, 14, 6); g.fillStyle(0xff8833, 1); g.fillRect(lx + 1, ly - 2, 9, 4); } });
+                break;
+            case 'FallY2':
+                items.push({ label: 'cloud — blows you away', draw: (g, ly) => { g.fillStyle(0x8899aa, 0.6); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0x8899aa, 0.4); g.fillEllipse(lx + 4, ly - 2, 8, 6); } });
+                break;
+        }
 
         const gfx = this.add.graphics().setDepth(depth);
         gfx.setScrollFactor(0);
@@ -633,7 +715,7 @@ export default class GameY2Scene extends Phaser.Scene {
         y += 6;
         sf0(this.add.rectangle(cx, y, pw - 32, 1, season.uiAccent, 0.2).setDepth(depth));
         y += 18;
-        for (const line of ['R  new map', 'M  menu', '↑↓←→  move']) {
+        for (const line of ['↑↓←→  move', 'SPACE  rest', 'R  new map', 'M  menu']) {
             sf0(this.add.text(cx, y, line, { fontSize: '14px', color: '#ffffff55' }).setOrigin(0.5, 0).setDepth(depth));
             y += 17;
         }

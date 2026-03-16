@@ -72,11 +72,13 @@ export function generateMountainMap(cols: number, _rows: number, seasonName?: st
     }
 
     // Thread a running column so each zone starts where the previous one ended.
-    // Alternating bias pushes the path left/right per zone to create an S-curve.
+    // Process zones bottom-to-top (bear walks bottom→top) so the cursor
+    // exits each zone's top row and enters the next zone's bottom row.
     let cursor = center;
     let biasLeft = Math.random() < 0.5; // alternate direction each zone
 
-    for (const zone of zones) {
+    const zonesBottomUp = [...zones].reverse();
+    for (const zone of zonesBottomUp) {
         const top = zone.startRow;
         const bot = top + zone.height;
         // Drift probabilities: biased toward one side, then flip

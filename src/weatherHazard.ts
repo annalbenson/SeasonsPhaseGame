@@ -227,7 +227,8 @@ class FloodHazard implements WeatherHazard {
 }
 
 // ── 3. Fall Wind Gusts ──────────────────────────────────────────────────────
-// After moving, the bear may be pushed one tile by wind.
+// Roaming cloud sprites drift across the map. When the bear steps near a cloud,
+// the cloud's wind pushes the bear one tile.
 
 const WIND_DIRS: { dx: number; dy: number; label: string }[] = [
     { dx: 0, dy: -1, label: '↑' },
@@ -236,57 +237,175 @@ const WIND_DIRS: { dx: number; dy: number; label: string }[] = [
     { dx: -1, dy: 0, label: '←' },
 ];
 
+interface CloudSprite {
+    col: number;
+    row: number;
+    dirIndex: number;           // index into WIND_DIRS
+    gfx: Phaser.GameObjects.Container;
+}
+
 class WindHazard implements WeatherHazard {
     intensity: 1 | 2 | 3;
-    private dirIndex = 0;
-    private stepCount = 0;
-    private pushInterval: number;
-    private timer: Phaser.Time.TimerEvent | null = null;
-    windLabel = '';
+    private clouds: CloudSprite[] = [];
+    private terrain!: TerrainMap;
+    private scene!: Phaser.Scene;
+    private mazeLayer!: Phaser.GameObjects.Container;
+    private moveTimer: Phaser.Time.TimerEvent | null = null;
+    private windRange: number;  // tiles away that wind affects
+    private pushCooldown = 0;   // steps of immunity remaining after a push
 
     constructor(intensity: 1 | 2 | 3) {
         this.intensity = intensity;
-        // Push frequency: intensity 1 = every 4th step, 2 = every 3rd, 3 = every 2nd
-        this.pushInterval = 5 - intensity;
-        this.dirIndex = Math.floor(Math.random() * 4);
-        this.updateLabel();
+        this.windRange = 1 + Math.floor(intensity / 3); // 1 for i1/i2, 2 for i3
     }
 
-    private updateLabel() {
-        this.windLabel = `Wind ${WIND_DIRS[this.dirIndex].label}`;
-    }
+    spawn(scene: Phaser.Scene, terrain: TerrainMap, mazeLayer: Phaser.GameObjects.Container) {
+        this.scene = scene;
+        this.terrain = terrain;
+        this.mazeLayer = mazeLayer;
 
-    spawn(scene: Phaser.Scene) {
-        // Rotate wind direction periodically
-        const interval = Math.max(6000, 12000 - this.intensity * 2000);
-        this.timer = scene.time.addEvent({
+        // Find OPEN cells to place clouds (avoid start/goal)
+        const candidates: { col: number; row: number }[] = [];
+        for (let r = 0; r < terrain.rows; r++) {
+            for (let c = 0; c < terrain.cols; c++) {
+                if (terrain.grid[r][c] === Terrain.OPEN &&
+                    !(c === terrain.start.col && r === terrain.start.row) &&
+                    !(c === terrain.goal.col && r === terrain.goal.row)) {
+                    candidates.push({ col: c, row: r });
+                }
+            }
+        }
+
+        // Spawn 2-4 clouds based on intensity
+        const count = Math.min(this.intensity + 1, candidates.length);
+        const shuffled = candidates.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < count; i++) {
+            const { col, row } = shuffled[i];
+            const dirIndex = Math.floor(Math.random() * 4);
+            const gfx = this.buildCloudGraphic(scene, col, row, dirIndex);
+            mazeLayer.add(gfx);
+            this.clouds.push({ col, row, dirIndex, gfx });
+        }
+
+        // Clouds drift every few seconds
+        const interval = Math.max(2500, 5000 - this.intensity * 800);
+        this.moveTimer = scene.time.addEvent({
             delay: interval,
-            callback: () => {
-                this.dirIndex = (this.dirIndex + 1) % 4;
-                this.updateLabel();
-            },
+            callback: () => this.moveClouds(),
             loop: true,
         });
-        log.info('weather', `wind gusts: pushInterval=${this.pushInterval}, rotateInterval=${interval}ms`);
+
+        log.info('weather', `wind clouds: ${count} clouds, range=${this.windRange}, moveInterval=${interval}ms`);
     }
 
-    update() { /* timer-driven direction change */ }
+    private buildCloudGraphic(scene: Phaser.Scene, col: number, row: number, dirIndex: number): Phaser.GameObjects.Container {
+        const cx = col * TILE + TILE / 2;
+        const cy = row * TILE + TILE / 2;
+        const container = scene.add.container(cx, cy);
+
+        // Cloud body — overlapping ellipses for a puffy look
+        const cloudColor = 0x8899aa;
+        const e1 = scene.add.ellipse(0, 0, TILE * 0.7, TILE * 0.4, cloudColor, 0.6);
+        const e2 = scene.add.ellipse(-TILE * 0.15, -TILE * 0.08, TILE * 0.45, TILE * 0.35, cloudColor, 0.5);
+        const e3 = scene.add.ellipse(TILE * 0.15, -TILE * 0.06, TILE * 0.4, TILE * 0.3, cloudColor, 0.5);
+        container.add([e1, e2, e3]);
+
+        // Wind direction arrow
+        const dir = WIND_DIRS[dirIndex];
+        const arrowX = dir.dx * TILE * 0.3;
+        const arrowY = dir.dy * TILE * 0.3;
+        const arrow = scene.add.text(arrowX, arrowY, dir.label, {
+            fontSize: '16px', color: '#334455', fontStyle: 'bold',
+        }).setOrigin(0.5);
+        container.add(arrow);
+
+        container.setDepth(DEPTH.HAZARD);
+
+        // Gentle bobbing animation
+        scene.tweens.add({
+            targets: container, y: cy - 4,
+            yoyo: true, repeat: -1, duration: 1500 + Math.random() * 500,
+            ease: 'Sine.easeInOut',
+        });
+
+        return container;
+    }
+
+    private moveClouds() {
+        for (const cloud of this.clouds) {
+            const dir = WIND_DIRS[cloud.dirIndex];
+            let nc = cloud.col + dir.dx;
+            let nr = cloud.row + dir.dy;
+
+            // Bounce: if can't move forward, pick a new random direction
+            if (nc < 0 || nc >= this.terrain.cols || nr < 0 || nr >= this.terrain.rows ||
+                this.terrain.grid[nr][nc] === Terrain.ROCK || this.terrain.grid[nr][nc] === Terrain.CLIFF) {
+                cloud.dirIndex = Math.floor(Math.random() * 4);
+                // Update the arrow text
+                const arrow = cloud.gfx.list[cloud.gfx.list.length - 1] as Phaser.GameObjects.Text;
+                const newDir = WIND_DIRS[cloud.dirIndex];
+                arrow.setText(newDir.label);
+                arrow.setPosition(newDir.dx * TILE * 0.3, newDir.dy * TILE * 0.3);
+                return;
+            }
+
+            cloud.col = nc;
+            cloud.row = nr;
+
+            // Animate cloud drifting to new position
+            const targetX = nc * TILE + TILE / 2;
+            const targetY = nr * TILE + TILE / 2;
+            this.scene.tweens.add({
+                targets: cloud.gfx,
+                x: targetX, y: targetY,
+                duration: 800, ease: 'Sine.easeInOut',
+            });
+        }
+    }
+
+    update() { /* timer-driven cloud movement */ }
     isBlocked() { return false; }
     getMoveCost() { return 0; }
 
-    getWindPush(): { dx: number; dy: number } | null {
-        this.stepCount++;
-        if (this.stepCount % this.pushInterval !== 0) return null;
-        return { dx: WIND_DIRS[this.dirIndex].dx, dy: WIND_DIRS[this.dirIndex].dy };
+    getWindPush(col: number, row: number): { dx: number; dy: number } | null {
+        // Cooldown: after being pushed, immune for 3 steps so you can power through
+        if (this.pushCooldown > 0) {
+            this.pushCooldown--;
+            return null;
+        }
+
+        // Check if player is within range of any cloud — push AWAY from cloud
+        for (const cloud of this.clouds) {
+            const dist = Math.abs(col - cloud.col) + Math.abs(row - cloud.row);
+            if (dist <= this.windRange) {
+                const dcol = col - cloud.col;
+                const drow = row - cloud.row;
+                let push: { dx: number; dy: number };
+                if (dcol === 0 && drow === 0) {
+                    // Standing on the cloud — push in cloud's drift direction
+                    const dir = WIND_DIRS[cloud.dirIndex];
+                    push = { dx: dir.dx, dy: dir.dy };
+                } else if (Math.abs(dcol) >= Math.abs(drow)) {
+                    push = { dx: dcol > 0 ? 1 : -1, dy: 0 };
+                } else {
+                    push = { dx: 0, dy: drow > 0 ? 1 : -1 };
+                }
+                this.pushCooldown = 3;
+                return push;
+            }
+        }
+        return null;
     }
 
     getLabel(): string {
         const words = ['Gentle', 'Moderate', 'Strong'];
-        return `${words[this.intensity - 1]} winds ${WIND_DIRS[this.dirIndex].label}`;
+        return `${words[this.intensity - 1]} wind clouds (${this.clouds.length})`;
     }
 
     destroy() {
-        if (this.timer) this.timer.destroy();
+        if (this.moveTimer) this.moveTimer.destroy();
+        for (const cloud of this.clouds) cloud.gfx.destroy();
+        this.clouds = [];
     }
 }
 
