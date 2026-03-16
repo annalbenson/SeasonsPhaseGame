@@ -9,6 +9,7 @@ import { addWeather } from '../weather';
 import { WALLS } from '../maze';
 import { createY2PlayerSprite, buildY2ObjectiveSprite, ensureSparkleTexture } from '../sprites';
 import { log } from '../logger';
+import { WeatherHazard, createWeatherHazard, getIntensity } from '../weatherHazard';
 
 function spaced(t: string): string { return t.toUpperCase().split('').join(' '); }
 
@@ -64,6 +65,8 @@ export default class GameY2Scene extends Phaser.Scene {
     private goalRow  = 0;
 
     private sceneryBlocked = new Set<string>();
+    private weatherHazard: WeatherHazard | null = null;
+    private weatherText: Phaser.GameObjects.Text | null = null;
 
     /** Horizontal offset — left-align the map so the camera can scroll. */
     private get offsetX() { return 0; }
@@ -143,8 +146,10 @@ export default class GameY2Scene extends Phaser.Scene {
         // Spawn objectives on land cells
         this.spawnObjectives(season);
 
-        // Weather
+        // Weather particles + hazard
         addWeather(this, season.name);
+        this.weatherHazard = createWeatherHazard(season.name, getIntensity(this.monthIndex));
+        this.weatherHazard?.spawn(this, this.terrain, this.mazeLayer);
 
         // Sparkle texture
         ensureSparkleTexture(this);
@@ -221,6 +226,8 @@ export default class GameY2Scene extends Phaser.Scene {
     update() {
         if (this.moving) return;
         this.fog.updateDecay(this.time.now);
+        this.weatherHazard?.update(this.time.now, this.gridX, this.gridY);
+        this.updateWeatherText();
 
         let dx = 0, dy = 0;
         if (Phaser.Input.Keyboard.JustDown(this.cursors.left)  || Phaser.Input.Keyboard.JustDown(this.wasd.left))  dx = -1;
@@ -246,6 +253,9 @@ export default class GameY2Scene extends Phaser.Scene {
         // Allow walking on OPEN and WATER (swimming)
         if (!isWalkable(this.terrain.grid, nx, ny, this.cols, this.totalRows, true)) return;
 
+        // Spring flooding — blocked tile
+        if (this.weatherHazard?.isBlocked(nx, ny)) return;
+
         const onWater = this.terrain.grid[ny][nx] === Terrain.WATER;
         const duration = onWater ? 320 : 180;
 
@@ -258,10 +268,22 @@ export default class GameY2Scene extends Phaser.Scene {
             x: this.worldX(nx), y: this.worldY(ny),
             duration, ease: 'Sine.easeOut',
             onComplete: () => {
-                this.moving = false;
                 this.emitter.setPosition(this.player.x, this.player.y);
                 this.fog.revealAround(this.gridX, this.gridY, this.time.now);
                 this.drainEnergy(onWater ? 2 : 1);
+
+                // Weather: extra move cost (snowdrifts, heat)
+                const extraCost = this.weatherHazard?.getMoveCost(nx, ny, this.terrain.grid) ?? 0;
+                if (extraCost > 0) this.drainEnergy(extraCost);
+
+                // Weather: wind push
+                const push = this.weatherHazard?.getWindPush(nx, ny);
+                if (push) {
+                    this.applyWindPush(push.dx, push.dy);
+                    return; // applyWindPush handles moving=false
+                }
+
+                this.moving = false;
                 this.tryCollectObjective();
                 this.checkGoal();
             },
@@ -320,6 +342,41 @@ export default class GameY2Scene extends Phaser.Scene {
             this.updateEnergyBar();
             this.moving = false;
         });
+    }
+
+    // ── Wind push ────────────────────────────────────────────────────────────
+    private applyWindPush(dx: number, dy: number) {
+        const nx = this.gridX + dx, ny = this.gridY + dy;
+        // Only push if destination is safe
+        if (nx < 0 || nx >= this.cols || ny < 0 || ny >= this.totalRows) {
+            this.moving = false; this.tryCollectObjective(); this.checkGoal(); return;
+        }
+        if (!isWalkable(this.terrain.grid, nx, ny, this.cols, this.totalRows, true) ||
+            isCliff(this.terrain.grid, nx, ny, this.cols, this.totalRows) ||
+            (this.weatherHazard?.isBlocked(nx, ny))) {
+            this.moving = false; this.tryCollectObjective(); this.checkGoal(); return;
+        }
+
+        this.gridX = nx;
+        this.gridY = ny;
+        this.tweens.add({
+            targets: this.player,
+            x: this.worldX(nx), y: this.worldY(ny),
+            duration: 150, ease: 'Back.easeOut',
+            onComplete: () => {
+                this.moving = false;
+                this.emitter.setPosition(this.player.x, this.player.y);
+                this.fog.revealAround(this.gridX, this.gridY, this.time.now);
+                this.tryCollectObjective();
+                this.checkGoal();
+            },
+        });
+    }
+
+    private updateWeatherText() {
+        if (this.weatherText && this.weatherHazard) {
+            this.weatherText.setText(this.weatherHazard.getLabel());
+        }
     }
 
     // ── Objectives ─────────────────────────────────────────────────────────────
@@ -473,6 +530,7 @@ export default class GameY2Scene extends Phaser.Scene {
 
     private destroyAll() {
         for (const s of this.objSprites) s.destroy();
+        this.weatherHazard?.destroy();
     }
 
     // ── Header (fixed on screen) ───────────────────────────────────────────────
@@ -527,6 +585,23 @@ export default class GameY2Scene extends Phaser.Scene {
         this.energyBar = this.add.rectangle(cx, y, barW, 12, 0x44cc66).setDepth(depth);
         this.energyBar.setScrollFactor(0);
         this.updateEnergyBar();
+
+        // Heat bar (summer only)
+        if (this.weatherHazard && season.name === 'SummerY2') {
+            y += 22;
+            sf0(this.add.text(cx, y, 'HEAT', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
+            y += 18;
+            (this.weatherHazard as any).buildHeatBar?.(this, cx, y, barW, depth);
+        }
+
+        // Weather status
+        if (this.weatherHazard) {
+            y += 22;
+            this.weatherText = this.add.text(cx, y, this.weatherHazard.getLabel(), {
+                fontSize: '13px', fontStyle: 'italic', color: dim,
+            }).setOrigin(0.5).setDepth(depth);
+            this.weatherText.setScrollFactor(0);
+        }
 
         // Legend
         y += 40;

@@ -237,7 +237,7 @@ export function generateMountainMap(cols: number, _rows: number, seasonName?: st
 }
 
 /** BFS flood from start to goal over OPEN and WATER cells. */
-function bfsReachable(
+export function bfsReachable(
     grid: Terrain[][], cols: number, rows: number,
     start: { col: number; row: number },
     goal: { col: number; row: number },
