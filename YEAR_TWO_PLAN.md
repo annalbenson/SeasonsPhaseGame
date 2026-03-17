@@ -71,7 +71,74 @@ File: `src/weatherHazard.ts`
 - ~~Cliff fall: reset to zone entry (valid OPEN cell), drains 35 energy~~
 - ~~Side panel: energy bar, heat bar (summer), weather status, controls hint~~
 
-## Phase 6: Season-unique terrain features — NEXT
+## Phase 6: Year Two Tutorial — NEXT
+
+A dedicated tutorial for Year Two, separate from Year One's maze tutorial. Y1 teaches keys, gates, bushes, enemies, and skills. Y2 needs to teach terrain navigation, energy management, weather, and resting — completely different mechanics.
+
+### Why separate
+- Y1 is a maze game (walls, keys, gates, hiding from enemies). Y2 is a terrain exploration game (zones, weather, energy, scrolling maps).
+- Reusing Y1's tutorial would confuse players since none of those mechanics carry over.
+- New scene: `TutorialY2Scene.ts` (similar pattern to `TutorialScene.ts` but with Y2 mechanics).
+
+### Tutorial structure (4-5 guided levels)
+
+**Level 1: "Moving & Terrain"**
+- Small map with forest + mountain tiles
+- Teach: arrow keys to move, mountains are impassable, trees are blocked
+- Prompt: "Navigate to the goal tile"
+- No weather, no energy drain (or very slow drain)
+
+**Level 2: "Water & Cliffs"**
+- Map with a water zone and a narrows zone
+- Teach: water is swimmable but costs more energy, cliffs reset you to zone entry
+- Prompt: "Cross the water" then "Careful on the cliffs!"
+
+**Level 3: "Energy & Resting"**
+- Longer map with normal energy drain
+- Teach: energy bar drains per step, SPACE to rest (recovers 30), forced rest at 0
+- Prompt: "Press SPACE to take a nap when energy is low"
+
+**Level 4: "Collecting Food"**
+- Map with 2-3 food objectives scattered across zones
+- Teach: collect all food to unlock the goal
+- Prompt: "Gather all the fish to unlock the goal"
+
+**Level 5: "Weather" (optional, one example)**
+- Introduce one weather type (snowdrifts — simplest)
+- Teach: some tiles have weather effects, check the legend
+- Prompt: "Snowdrifts cost extra energy — plan your route"
+
+### Season intro tutorials
+Each season has unique weather and terrain mechanics. The first time a player enters a new season, they play a short 1-2 level tutorial for that season's unique features before starting the first real month.
+
+**Winter intro: "Snowdrifts & Blizzard"**
+- Level 1: Map with snowdrift tiles on the path. Teach: white tiles cost extra energy, plan your route.
+- Level 2 (after Phase 7): Blizzard fog — reduced visibility, find a snow cave to rest with bonus recovery.
+
+**Spring intro: "Flooding"**
+- Level 1: Map with water zone and flood tiles that cycle on/off. Teach: blue pulsing tiles block your path temporarily — wait or reroute.
+- Level 2 (after Phase 7): Rising water — water zone expands over time. Teach: collect honey uphill before the flood reaches you.
+
+**Summer intro: "Heat & Shade"**
+- Level 1: Map with heat meter active. Water tiles on one side, goal on the other. Teach: heat builds each step, water cools you off, overheating costs energy.
+- Level 2 (after Phase 7): Shade tiles near bamboo. Teach: shaded tiles slow heat buildup — use bamboo groves as rest points.
+
+**Fall intro: "Wind Clouds & Leaves"**
+- Level 1: Map with 1-2 wind clouds drifting around. Teach: clouds push you away, you're immune for 3 steps after a push — time your approach.
+- Level 2 (after Phase 7): Leaf-covered tiles. Teach: leaf piles hide paths and berries — explore them!
+
+### Implementation notes
+- Core tutorial (levels 1-5) plays once on first "How to Play" or first Y2 start
+- Season intros play automatically before the first month of each new season (Jan, Mar, Jun, Sep)
+- Season intros are skippable for returning players (small "skip" link)
+- Each level is a hand-crafted small grid (6-8 cols, 10-15 rows) — not randomly generated
+- Tooltip/prompt text appears at top or as floating text near the relevant mechanic
+- Player cannot advance to next tutorial level until completing the current one
+- Accessible from title screen: "Year Two" section shows "How to Play" link
+- On completion of core tutorial, transitions to January Y2 (first real level)
+- Season intro levels are added to TutorialY2Scene as the corresponding Phase 7 features are built
+
+## Phase 7: Season-unique terrain features
 
 Each season gets a unique terrain mechanic that changes how the player interacts with the map, beyond weather. Build in order:
 
@@ -101,7 +168,7 @@ Each season gets a unique terrain mechanic that changes how the player interacts
 - Stepping on a leaf pile has a small crunch animation
 - Strategic: explore leaf piles to find hidden paths and bonus berries
 
-## Phase 7: Exploration incentives
+## Phase 8: Exploration incentives
 
 ### Current State (measured via tests)
 Players only visit ~30% of the reachable map to collect all objectives and reach the goal. The path is too linear — BFS shortest path through objectives barely deviates from the main trail.
@@ -127,7 +194,7 @@ Players only visit ~30% of the reachable map to collect all objectives and reach
 - 3 stars: collected all bonus food + explored 80%+ of reachable cells
 - Stats tracks stars per month for completionists
 
-## Phase 8: Night Falls (time pressure)
+## Phase 9: Night Falls (time pressure)
 
 A soft timer that creates tension between exploring for bonus items and reaching the goal before dark.
 
@@ -150,6 +217,21 @@ A soft timer that creates tension between exploring for bonus items and reaching
 3. **Dusk** (~80% of threshold): warm orange tint, side panel shows sunset, fog radius shrinks by 1
 4. **Night** (100% threshold): deep blue tint, fog radius shrinks to minimum, energy drain ×2
 
+### Legend entries
+- **Sun/moon indicator** in side panel: a small arc or progress bar showing time of day
+  - Dawn: yellow sun icon on left
+  - Midday: sun at peak/center
+  - Dusk: orange sun icon on right, bar shifts warm
+  - Night: blue moon icon replaces sun
+- Legend row: "daylight — reach goal before dark"
+
+### Tutorial level: "Night Falls"
+- Added to core tutorial after level 5 (weather), or as a standalone intro
+- Small map with a low step threshold so night falls quickly
+- Teach: "Each step advances the clock. Reach the goal before nightfall!"
+- Player experiences dawn → dusk → night transition in ~15-20 steps
+- Shows that night is survivable but harder (fog closes in, energy drains faster)
+
 ### Implementation Notes
 - Step-based (not real-time) so the player controls pacing — each move advances the clock
 - Hook into `tryStep` to increment the day counter
@@ -157,7 +239,7 @@ A soft timer that creates tension between exploring for bonus items and reaching
 - Tint via camera post-processing or overlay rectangle with increasing alpha
 - Side panel: sun/moon arc graphic or simple "Day ████░░ Night" bar
 
-## Phase 9: Polish
+## Phase 10: Polish
 
 - Weather particle effects (rain, snow, heat shimmer, wind leaves)
 - Winter fog tightening animation (smooth radius change)

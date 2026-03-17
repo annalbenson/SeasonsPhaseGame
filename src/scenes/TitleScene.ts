@@ -129,13 +129,17 @@ export default class TitleScene extends Phaser.Scene {
             }
         };
 
-        // How to Play
+        // How to Play — with Year One / Year Two sub-links
         makeButton(W / 2, H / 2 + 10, 'How to Play', () => fadeAndStart('TutorialScene'));
+        linkRow(W / 2, H / 2 + 48, [
+            { label: 'Year One', onClick: () => fadeAndStart('TutorialScene') },
+            { label: 'Year Two', onClick: () => fadeAndStart('TutorialY2Scene', { from: 'TitleScene' }) },
+        ]);
 
         // Year One — main button + sub-links
-        makeButton(W / 2, H / 2 + 80, 'Year One', () =>
+        makeButton(W / 2, H / 2 + 100, 'Year One', () =>
             fadeAndStart('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene' }));
-        linkRow(W / 2, H / 2 + 118, [
+        linkRow(W / 2, H / 2 + 138, [
             { label: 'Hard Mode', onClick: () =>
                 fadeAndStart('QuoteScene', { month: 1, isSeason: true, from: 'TitleScene', hard: true }) },
             { label: 'Random Start', onClick: () => {
@@ -145,9 +149,9 @@ export default class TitleScene extends Phaser.Scene {
         ]);
 
         // Year Two — main button + sub-link
-        makeButton(W / 2, H / 2 + 180, 'Year Two', () =>
+        makeButton(W / 2, H / 2 + 200, 'Year Two', () =>
             fadeAndStart('GameY2Scene', { monthIndex: 0, from: 'TitleScene' }));
-        linkRow(W / 2, H / 2 + 218, [
+        linkRow(W / 2, H / 2 + 238, [
             { label: 'Random Start', onClick: () => {
                 const monthIndex = Math.floor(Math.random() * MONTHS_Y2.length);
                 fadeAndStart('GameY2Scene', { monthIndex, from: 'TitleScene' });
@@ -155,13 +159,13 @@ export default class TitleScene extends Phaser.Scene {
         ]);
 
         // Utilities
-        linkRow(W / 2, H / 2 + 280, [
+        linkRow(W / 2, H / 2 + 300, [
             { label: 'Map Toolkit', onClick: () => fadeAndStart('ToolkitScene') },
             { label: 'My Stats',    onClick: () => fadeAndStart('StatsScene') },
         ]);
 
         // ── Sign in / out ────────────────────────────────────────────────────
-        const authBtn = this.add.text(W / 2, H / 2 + 340, '', {
+        const authBtn = this.add.text(W / 2, H / 2 + 360, '', {
             fontSize: '18px', color: '#556677',
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
         authBtn.on('pointerover', () => authBtn.setColor('#aabbcc'));

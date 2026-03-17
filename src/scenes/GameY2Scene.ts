@@ -282,6 +282,13 @@ export default class GameY2Scene extends Phaser.Scene {
                 const extraCost = this.weatherHazard?.getMoveCost(nx, ny, this.terrain.grid) ?? 0;
                 if (extraCost > 0) this.drainEnergy(extraCost);
 
+                // If energy hit 0, forced rest is in progress — don't unlock movement
+                // but still check for objectives/goal at this tile
+                if (this.energy <= 0) {
+                    this.tryCollectObjective();
+                    return;
+                }
+
                 // Weather: wind push
                 const push = this.weatherHazard?.getWindPush(nx, ny);
                 if (push) {

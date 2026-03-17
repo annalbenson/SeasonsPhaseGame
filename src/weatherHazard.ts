@@ -129,7 +129,7 @@ class FloodHazard implements WeatherHazard {
         this.scene = scene;
         this.terrain = terrain;
         this.mazeLayer = mazeLayer;
-        this.maxFlooded = this.intensity + 1;
+        this.maxFlooded = this.intensity * 2 + 1; // 3, 5, 7
 
         // Find OPEN cells adjacent to WATER
         for (const zone of terrain.zones) {
@@ -148,15 +148,52 @@ class FloodHazard implements WeatherHazard {
             }
         }
 
+        // Flood some tiles immediately so the player sees them from the start
+        const initialCount = Math.min(this.intensity, this.candidates.length);
+        for (let i = 0; i < initialCount; i++) {
+            this.floodOneTile();
+        }
+
         // Start flood cycle
-        const interval = Math.max(5000, 10000 - this.intensity * 2000);
+        const interval = Math.max(4000, 8000 - this.intensity * 1500);
         this.timer = scene.time.addEvent({
             delay: interval,
             callback: () => this.cycle(),
             loop: true,
         });
 
-        log.info('weather', `flooding: ${this.candidates.length} candidates, max=${this.maxFlooded}, interval=${interval}ms`);
+        log.info('weather', `flooding: ${this.candidates.length} candidates, max=${this.maxFlooded}, initial=${initialCount}, interval=${interval}ms`);
+    }
+
+    /** Try to flood one safe tile. Returns true if a tile was flooded. */
+    private floodOneTile(): boolean {
+        if (this.flooded.size >= this.maxFlooded || this.candidates.length === 0) return false;
+        const available = this.candidates.filter(c => !this.flooded.has(`${c.col},${c.row}`));
+        for (const cand of available.sort(() => Math.random() - 0.5)) {
+            const key = `${cand.col},${cand.row}`;
+            // Safety: would flooding this tile disconnect start from goal?
+            const testGrid = this.terrain.grid.map(r => [...r]);
+            testGrid[cand.row][cand.col] = Terrain.ROCK;
+            for (const fk of this.flooded) {
+                const [fc, fr] = fk.split(',').map(Number);
+                testGrid[fr][fc] = Terrain.ROCK;
+            }
+            if (bfsReachable(testGrid, this.terrain.cols, this.terrain.rows,
+                this.terrain.start, this.terrain.goal)) {
+                this.flooded.add(key);
+                const cx = cand.col * TILE + TILE / 2;
+                const cy = cand.row * TILE + TILE / 2;
+                const overlay = this.scene.add.rectangle(cx, cy, TILE, TILE, 0x2060c0, 0.4);
+                this.mazeLayer.add(overlay);
+                this.scene.tweens.add({
+                    targets: overlay, alpha: { from: 0.2, to: 0.45 },
+                    yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut',
+                });
+                this.overlays.set(key, overlay);
+                return true;
+            }
+        }
+        return false;
     }
 
     private cycle() {
@@ -174,35 +211,8 @@ class FloodHazard implements WeatherHazard {
             }
         }
 
-        // Flood a new tile if under max
-        if (this.flooded.size < this.maxFlooded && this.candidates.length > 0) {
-            const shuffled = this.candidates.filter(c => !this.flooded.has(`${c.col},${c.row}`));
-            for (const cand of shuffled.sort(() => Math.random() - 0.5)) {
-                const key = `${cand.col},${cand.row}`;
-                // Safety: would flooding this tile disconnect start from goal?
-                const testGrid = this.terrain.grid.map(r => [...r]);
-                testGrid[cand.row][cand.col] = Terrain.ROCK; // simulate blocked
-                // Also block already-flooded tiles
-                for (const fk of this.flooded) {
-                    const [fc, fr] = fk.split(',').map(Number);
-                    testGrid[fr][fc] = Terrain.ROCK;
-                }
-                if (bfsReachable(testGrid, this.terrain.cols, this.terrain.rows,
-                    this.terrain.start, this.terrain.goal)) {
-                    this.flooded.add(key);
-                    const cx = cand.col * TILE + TILE / 2;
-                    const cy = cand.row * TILE + TILE / 2;
-                    const overlay = this.scene.add.rectangle(cx, cy, TILE, TILE, 0x2060c0, 0.4);
-                    this.mazeLayer.add(overlay);
-                    this.scene.tweens.add({
-                        targets: overlay, alpha: { from: 0.2, to: 0.45 },
-                        yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut',
-                    });
-                    this.overlays.set(key, overlay);
-                    break;
-                }
-            }
-        }
+        // Flood a new tile
+        this.floodOneTile();
     }
 
     update() { /* timer-driven */ }
