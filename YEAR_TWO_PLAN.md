@@ -101,17 +101,76 @@ Each season gets a unique terrain mechanic that changes how the player interacts
 - Stepping on a leaf pile has a small crunch animation
 - Strategic: explore leaf piles to find hidden paths and bonus berries
 
-## Phase 7: Polish
+## Phase 7: Exploration incentives
+
+### Current State (measured via tests)
+Players only visit ~30% of the reachable map to collect all objectives and reach the goal. The path is too linear — BFS shortest path through objectives barely deviates from the main trail.
+
+| Season | Avg Explore | Min | Max |
+|--------|-------------|-----|-----|
+| Winter | 39% | 32% | 45% |
+| Spring | 30% | 24% | 35% |
+| Summer | 30% | 22% | 36% |
+| Fall | 28% | 22% | 33% |
+
+### 7a. Bonus Food (all seasons)
+- Extra optional objectives placed in dead-end spurs and off-trail areas
+- Don't count toward the required total to unlock the goal
+- Count toward a score/star rating shown on the end screen (e.g. 3/3 required + 2/4 bonus = 5/7)
+- Encourages exploring branches the player would otherwise skip
+- Side panel shows "3/3 + 2 bonus" or similar
+
+### 7b. Star Rating
+- End screen shows 1-3 stars based on exploration and bonus collection
+- 1 star: completed level (collected required food, reached goal)
+- 2 stars: collected all bonus food
+- 3 stars: collected all bonus food + explored 80%+ of reachable cells
+- Stats tracks stars per month for completionists
+
+## Phase 8: Night Falls (time pressure)
+
+A soft timer that creates tension between exploring for bonus items and reaching the goal before dark.
+
+### Mechanic
+- Each level starts at "dawn" — a step counter or real-time timer tracks daylight remaining
+- **Sun/moon indicator** in the side panel shows time of day (sun arc or simple progress bar)
+- After a generous threshold, **dusk** begins: screen tint shifts warmer/darker, fog starts closing in
+- After a second threshold, **night falls**: fog tightens dramatically, energy drain doubles, screen very dark
+- The level does NOT end — the bear can still finish, but it's much harder
+- Night is punishing but survivable, matching the cozy-but-challenging tone
+
+### Scaling
+- Threshold scales with map size and objective count so completing the level normally always beats dusk
+- Exploring for bonus food / 3 stars means racing against nightfall
+- Intensity (month within season) makes night fall sooner
+
+### Visual Progression
+1. **Dawn** (start): normal lighting, full visibility
+2. **Midday** (~40% of threshold): sun at peak in indicator
+3. **Dusk** (~80% of threshold): warm orange tint, side panel shows sunset, fog radius shrinks by 1
+4. **Night** (100% threshold): deep blue tint, fog radius shrinks to minimum, energy drain ×2
+
+### Implementation Notes
+- Step-based (not real-time) so the player controls pacing — each move advances the clock
+- Hook into `tryStep` to increment the day counter
+- Reuse fog system for night visibility shrink
+- Tint via camera post-processing or overlay rectangle with increasing alpha
+- Side panel: sun/moon arc graphic or simple "Day ████░░ Night" bar
+
+## Phase 9: Polish
 
 - Weather particle effects (rain, snow, heat shimmer, wind leaves)
 - Winter fog tightening animation (smooth radius change)
-- Sound cues for weather events (optional)
+- Night transition animations (smooth tint shift)
+- Sound cues for weather events and nightfall (optional)
 - Leaf crunch, water splash, wind whoosh micro-animations
 
 ## Key Architectural Decisions
 
 - Weather checks inject into `tryStep` — loosely coupled
+- Night falls hooks into `tryStep` step counter — same pattern as weather
 - Scrolling camera with horizontal + vertical scroll
-- Terrain features hook into existing systems: fog radius (winter), terrain grid mutation (spring), getMoveCost overlay (summer), tile reveal on step (fall)
+- Terrain features hook into existing systems: fog radius (winter/night), terrain grid mutation (spring), getMoveCost overlay (summer), tile reveal on step (fall)
+- Exploration tracking: count unique cells visited per level for star rating
 - Reuse: fog.ts, maze shuffle, constants, gameplay depths, sidePanel pattern, stats
 - Extend: seasons.ts, sprites.ts, terrain.ts, gameplay.ts, weatherHazard.ts
