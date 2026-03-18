@@ -91,6 +91,9 @@ export default class GameY2Scene extends Phaser.Scene {
     private weatherHazard: WeatherHazard | null = null;
     private weatherText: Phaser.GameObjects.Text | null = null;
 
+    // Snow caves (Winter) — ROCK tiles that give double rest recovery
+    private snowCaves = new Set<string>();
+
     /** Horizontal offset — left-align the map so the camera can scroll. */
     private get offsetX() { return 0; }
     /** World X for a column. */
@@ -123,6 +126,7 @@ export default class GameY2Scene extends Phaser.Scene {
         this.energy         = 100;
         this.moving         = false;
         this.sceneryBlocked = new Set();
+        this.snowCaves      = new Set();
         this.stepCount      = 0;
         this.timeOfDay      = TimeOfDay.DAWN;
         this.tintOverlay    = null;
@@ -185,6 +189,16 @@ export default class GameY2Scene extends Phaser.Scene {
         addWeather(this, season.name);
         this.weatherHazard = createWeatherHazard(season.name, getIntensity(this.monthIndex));
         this.weatherHazard?.spawn(this, this.terrain, this.mazeLayer);
+
+        // Fall: hidden berries under leaf piles count toward bonus total
+        const hiddenBerryCount = this.weatherHazard?.getHiddenBerryCount?.() ?? 0;
+        if (hiddenBerryCount > 0) {
+            this.bonusTotal += hiddenBerryCount;
+            this.updateObjText();
+        }
+
+        // Winter: snow caves — pick reachable ROCK tiles adjacent to OPEN
+        if (season.name === 'WinterY2') this.spawnSnowCaves();
 
         // Sparkle texture
         ensureSparkleTexture(this);
@@ -341,8 +355,11 @@ export default class GameY2Scene extends Phaser.Scene {
                 const extraCost = this.weatherHazard?.getMoveCost(nx, ny, this.terrain.grid) ?? 0;
                 if (extraCost > 0) this.drainEnergy(extraCost);
 
-                // Reveal leaf piles (Fall)
-                this.weatherHazard?.revealLeaf?.(nx, ny);
+                // Reveal leaf piles (Fall) — may hide berries
+                const hadLeaf = this.weatherHazard?.revealLeaf?.(nx, ny);
+                if (hadLeaf && this.weatherHazard?.hasHiddenBerry?.(nx, ny)) {
+                    this.collectHiddenBerry(nx, ny);
+                }
 
                 // If energy hit 0, forced rest is in progress — don't unlock movement
                 // but still check for objectives/goal at this tile
@@ -409,6 +426,68 @@ export default class GameY2Scene extends Phaser.Scene {
         if (this.energy <= 0) {
             this.onRest();
         }
+    }
+
+    // ── Snow caves (Winter) ──────────────────────────────────────────────────────
+    private spawnSnowCaves() {
+        const grid = this.terrain.grid;
+        const candidates: { col: number; row: number }[] = [];
+        for (let r = 0; r < this.totalRows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+                if (grid[r][c] !== Terrain.ROCK) continue;
+                // Must be adjacent to at least one OPEN tile
+                const adjOpen = [[0,-1],[0,1],[-1,0],[1,0]].some(([dc, dr]) => {
+                    const nc = c + dc, nr = r + dr;
+                    return nr >= 0 && nr < this.totalRows && nc >= 0 && nc < this.cols
+                        && grid[nr][nc] === Terrain.OPEN;
+                });
+                if (adjOpen) candidates.push({ col: c, row: r });
+            }
+        }
+        const count = Math.min(2 + Math.floor(this.monthIndex / 4), 4, candidates.length);
+        const shuffled = candidates.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < count; i++) {
+            const { col, row } = shuffled[i];
+            this.snowCaves.add(`${col},${row}`);
+            // Draw cave entrance overlay
+            const cx = col * TILE + TILE / 2;
+            const cy = row * TILE + TILE / 2;
+            const g = this.add.graphics();
+            // Dark cave mouth
+            g.fillStyle(0x0a0808, 0.85);
+            g.fillEllipse(cx, cy + TILE * 0.15, TILE * 0.55, TILE * 0.45);
+            // Snow cap above
+            g.fillStyle(0xe8eef4, 0.8);
+            g.fillEllipse(cx, cy - TILE * 0.15, TILE * 0.6, TILE * 0.2);
+            g.setDepth(DEPTH.SCENERY);
+            this.mazeLayer.add(g);
+        }
+        log.info('scene', `snow caves: ${count}`);
+    }
+
+    /** True if player is adjacent to a snow cave tile. */
+    private isOnSnowCave(): boolean {
+        for (const [dc, dr] of [[0,-1],[0,1],[-1,0],[1,0],[0,0]]) {
+            if (this.snowCaves.has(`${this.gridX + dc},${this.gridY + dr}`)) return true;
+        }
+        return false;
+    }
+
+    // ── Hidden berry (Fall leaf piles) ────────────────────────────────────────
+    private collectHiddenBerry(col: number, row: number) {
+        this.bonusCollected++;
+        this.updateObjText();
+        // Brief berry sprite at the reveal position
+        const bx = col * TILE + TILE / 2;
+        const by = row * TILE + TILE / 2;
+        const berry = this.add.circle(bx, by, 8, 0xcc2244, 0.9).setDepth(DEPTH.SPRITE);
+        this.mazeLayer.add(berry);
+        this.tweens.add({
+            targets: berry, scaleX: 1.8, scaleY: 1.8, alpha: 0,
+            duration: 500, ease: 'Power2',
+            onComplete: () => berry.destroy(),
+        });
+        this.tweens.add({ targets: this.player, scaleY: 1.15, yoyo: true, duration: 120 });
     }
 
     // ── Night Falls ─────────────────────────────────────────────────────────────
@@ -536,17 +615,21 @@ export default class GameY2Scene extends Phaser.Scene {
         }
     }
 
-    /** Voluntary rest (SPACE) — quick nap, recovers 30 energy. */
+    /** Voluntary rest (SPACE) — quick nap, recovers 30 energy (60 near snow cave). */
     private onVoluntaryRest() {
-        log.info('scene', 'voluntary rest');
+        const shelter = this.isOnSnowCave();
+        const recovery = shelter ? 60 : 30;
+        log.info('scene', `voluntary rest${shelter ? ' (snow cave)' : ''}`);
         this.moving = true;
 
         const closedEyes = this.closeEyes();
 
         const zx = this.player.x + 20;
         const zy = this.player.y - 30;
-        const zzz = this.add.text(zx, zy, 'zz', {
-            fontSize: '16px', fontStyle: 'italic', color: '#aaccff',
+        const zzzText = shelter ? 'zz ❄' : 'zz';
+        const zzzColor = shelter ? '#aaeeff' : '#aaccff';
+        const zzz = this.add.text(zx, zy, zzzText, {
+            fontSize: '16px', fontStyle: 'italic', color: zzzColor,
         }).setOrigin(0.5).setDepth(DEPTH.PLAYER + 1);
         this.tweens.add({ targets: zzz, y: zy - 20, alpha: { from: 1, to: 0.3 },
             duration: 1600, ease: 'Sine.easeOut' });
@@ -557,31 +640,35 @@ export default class GameY2Scene extends Phaser.Scene {
         this.time.delayedCall(2000, () => {
             zzz.destroy();
             this.openEyes(closedEyes);
-            this.energy = Math.min(this.energyMax, this.energy + 30);
+            this.energy = Math.min(this.energyMax, this.energy + recovery);
             this.updateEnergyBar();
             this.moving = false;
         });
     }
 
-    /** Forced rest (energy = 0) — longer nap, full recovery. */
+    /** Forced rest (energy = 0) — longer nap, full recovery (faster near snow cave). */
     private onRest() {
-        log.info('scene', 'bear exhausted — forced rest');
+        const shelter = this.isOnSnowCave();
+        const duration = shelter ? 3000 : 5000;
+        log.info('scene', `bear exhausted — forced rest${shelter ? ' (snow cave)' : ''}`);
         this.moving = true;
 
         const closedEyes = this.closeEyes();
 
         const zx = this.player.x + 20;
         const zy = this.player.y - 30;
-        const zzz = this.add.text(zx, zy, 'zzz', {
-            fontSize: '20px', fontStyle: 'italic', color: '#aaccff',
+        const zzzText = shelter ? 'zzz ❄' : 'zzz';
+        const zzzColor = shelter ? '#aaeeff' : '#aaccff';
+        const zzz = this.add.text(zx, zy, zzzText, {
+            fontSize: '20px', fontStyle: 'italic', color: zzzColor,
         }).setOrigin(0.5).setDepth(DEPTH.PLAYER + 1);
         this.tweens.add({ targets: zzz, y: zy - 30, alpha: { from: 1, to: 0.3 },
-            duration: 4000, ease: 'Sine.easeOut' });
+            duration: duration * 0.8, ease: 'Sine.easeOut' });
 
         this.tweens.add({ targets: this.player, scaleY: 0.85, yoyo: true,
-            duration: 2000, ease: 'Sine.easeInOut', repeat: 1 });
+            duration: shelter ? 1500 : 2000, ease: 'Sine.easeInOut', repeat: 1 });
 
-        this.time.delayedCall(5000, () => {
+        this.time.delayedCall(duration, () => {
             zzz.destroy();
             this.openEyes(closedEyes);
             this.energy = this.energyMax;
@@ -807,10 +894,26 @@ export default class GameY2Scene extends Phaser.Scene {
         this.tweens.add({ targets: resultText, alpha: 1, duration: 400 });
 
         const last = this.monthIndex >= MONTHS_Y2.length - 1;
-        const nextData = last
-            ? { stars, explorePct, bonusCollected: this.bonusCollected, bonusTotal: this.bonusTotal }
-            : { monthIndex: this.monthIndex + 1, from: this.fromScene };
-        const nextScene = last ? 'EndScene' : 'GameY2Scene';
+        const nextMonth = this.monthIndex + 1;
+
+        // Season intro tutorials trigger before the first month of each new season
+        const SEASON_INTRO_MONTHS: Record<number, string> = {
+            2: 'SpringY2', 5: 'SummerY2', 8: 'FallY2',
+        };
+        const seasonIntro = SEASON_INTRO_MONTHS[nextMonth];
+
+        let nextScene: string;
+        let nextData: Record<string, unknown>;
+        if (last) {
+            nextScene = 'EndScene';
+            nextData = { stars, explorePct, bonusCollected: this.bonusCollected, bonusTotal: this.bonusTotal };
+        } else if (seasonIntro) {
+            nextScene = 'TutorialY2Scene';
+            nextData = { seasonIntro, targetMonthIndex: nextMonth, from: this.fromScene };
+        } else {
+            nextScene = 'GameY2Scene';
+            nextData = { monthIndex: nextMonth, from: this.fromScene };
+        }
 
         this.time.delayedCall(1800, () => {
             this.destroyAll();
@@ -990,6 +1093,7 @@ export default class GameY2Scene extends Phaser.Scene {
             case 'WinterY2':
                 items.push({ label: 'blizzard cloud — drifts', draw: (g, ly) => { g.fillStyle(0xc8d8e8, 0.6); g.fillEllipse(lx + 7, ly - 1, 14, 8); g.fillStyle(0xd8e4f0, 0.45); g.fillEllipse(lx + 4, ly - 3, 8, 6); g.fillStyle(0xffffff, 0.4); g.fillCircle(lx + 4, ly + 4, 1.5); g.fillCircle(lx + 9, ly + 5, 1); } });
                 items.push({ label: 'snowdrift — extra energy', draw: (g, ly) => { g.fillStyle(0xe8eef4, 0.5); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xc8dce8, 0.4); g.fillCircle(lx + 4, ly, 3); g.fillCircle(lx + 10, ly - 1, 2); } });
+                items.push({ label: 'snow cave — shelter + rest', draw: (g, ly) => { g.fillStyle(0x0a0808, 0.85); g.fillEllipse(lx + 7, ly + 1, 12, 8); g.fillStyle(0xe8eef4, 0.8); g.fillEllipse(lx + 7, ly - 3, 12, 4); } });
                 items.push({ label: 'blizzard — low visibility', draw: (g, ly) => { g.fillStyle(0xc0d0e0, 0.4); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xe0e8f0, 0.3); g.fillCircle(lx + 3, ly - 2, 2); g.fillCircle(lx + 8, ly + 1, 1.5); g.fillCircle(lx + 11, ly - 1, 1); } });
                 break;
             case 'SpringY2':
@@ -1004,7 +1108,7 @@ export default class GameY2Scene extends Phaser.Scene {
                 break;
             case 'FallY2':
                 items.push({ label: 'wind cloud — pushes you', draw: (g, ly) => { g.fillStyle(0x8899aa, 0.6); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0x8899aa, 0.4); g.fillEllipse(lx + 4, ly - 2, 8, 6); } });
-                items.push({ label: 'leaf pile — explore it!', draw: (g, ly) => { g.fillStyle(0x8b5e3c, 0.8); g.fillEllipse(lx + 7, ly, 12, 6); g.fillStyle(0xcc6622, 0.6); g.fillEllipse(lx + 4, ly - 1, 7, 4); g.fillEllipse(lx + 10, ly + 1, 6, 4); } });
+                items.push({ label: 'leaf pile — may hide berries!', draw: (g, ly) => { g.fillStyle(0x8b5e3c, 0.8); g.fillEllipse(lx + 7, ly, 12, 6); g.fillStyle(0xcc6622, 0.6); g.fillEllipse(lx + 4, ly - 1, 7, 4); g.fillEllipse(lx + 10, ly + 1, 6, 4); } });
                 break;
         }
 

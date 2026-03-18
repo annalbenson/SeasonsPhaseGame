@@ -21,6 +21,10 @@ export interface WeatherHazard {
     getWindPush(col: number, row: number): { dx: number; dy: number } | null;
     /** Reveal a leaf pile at (col, row). Returns true if a leaf was there. */
     revealLeaf?(col: number, row: number): boolean;
+    /** Check if a revealed leaf pile hid a berry (Fall only). Consumes the berry. */
+    hasHiddenBerry?(col: number, row: number): boolean;
+    /** Number of berries hidden under leaf piles (Fall only). */
+    getHiddenBerryCount?(): number;
     getLabel(): string;
     destroy(): void;
 }
@@ -496,6 +500,7 @@ class WindHazard implements WeatherHazard {
     private windRange: number;
     private pushCooldown = 0;
     private leafPiles = new Map<string, Phaser.GameObjects.Container>();
+    private hiddenBerries = new Set<string>();
 
     constructor(intensity: 1 | 2 | 3) {
         this.intensity = intensity;
@@ -561,7 +566,13 @@ class WindHazard implements WeatherHazard {
             mazeLayer.add(leafContainer);
             this.leafPiles.set(key, leafContainer);
         }
-        log.info('weather', `leaf piles: ${leafCount}`);
+        // Hide berries under some leaf piles
+        const berryCount = Math.min(1 + this.intensity, leafCount);
+        const leafKeys = [...this.leafPiles.keys()].sort(() => Math.random() - 0.5);
+        for (let i = 0; i < berryCount; i++) {
+            this.hiddenBerries.add(leafKeys[i]);
+        }
+        log.info('weather', `leaf piles: ${leafCount}, hidden berries: ${berryCount}`);
     }
 
     private buildCloud(scene: Phaser.Scene, col: number, row: number, dirIndex: number): Phaser.GameObjects.Container {
@@ -634,6 +645,19 @@ class WindHazard implements WeatherHazard {
         return true;
     }
 
+    hasHiddenBerry(col: number, row: number): boolean {
+        const key = `${col},${row}`;
+        if (this.hiddenBerries.has(key)) {
+            this.hiddenBerries.delete(key);
+            return true;
+        }
+        return false;
+    }
+
+    getHiddenBerryCount(): number {
+        return this.hiddenBerries.size;
+    }
+
     getWindPush(col: number, row: number): { dx: number; dy: number } | null {
         if (this.pushCooldown > 0) {
             this.pushCooldown--;
@@ -672,6 +696,7 @@ class WindHazard implements WeatherHazard {
         this.clouds = [];
         for (const pile of this.leafPiles.values()) pile.destroy();
         this.leafPiles.clear();
+        this.hiddenBerries.clear();
     }
 }
 

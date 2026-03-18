@@ -257,3 +257,29 @@ describe('FloodHazard mechanics', () => {
         expect(createWeatherHazard('SpringY2', 3)!.getLabel()).toMatch(/Heavy/i);
     });
 });
+
+describe('WindHazard hidden berries', () => {
+    it('hasHiddenBerry returns false before spawn', () => {
+        const h = createWeatherHazard('FallY2', 1)!;
+        expect(h.hasHiddenBerry?.(0, 0)).toBe(false);
+    });
+
+    it('getHiddenBerryCount returns 0 before spawn', () => {
+        const h = createWeatherHazard('FallY2', 1)!;
+        expect(h.getHiddenBerryCount?.()).toBe(0);
+    });
+
+    it('hasHiddenBerry is only on WindHazard (FallY2)', () => {
+        const winter = createWeatherHazard('WinterY2', 1)!;
+        const spring = createWeatherHazard('SpringY2', 1)!;
+        const summer = createWeatherHazard('SummerY2', 1)!;
+        expect(winter.hasHiddenBerry).toBeUndefined();
+        expect(spring.hasHiddenBerry).toBeUndefined();
+        expect(summer.hasHiddenBerry).toBeUndefined();
+    });
+
+    it('getHiddenBerryCount is only on WindHazard (FallY2)', () => {
+        const winter = createWeatherHazard('WinterY2', 1)!;
+        expect(winter.getHiddenBerryCount).toBeUndefined();
+    });
+});

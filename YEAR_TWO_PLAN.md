@@ -108,24 +108,26 @@ A dedicated tutorial for Year Two, separate from Year One's maze tutorial. Y1 te
 - Teach: some tiles have weather effects, check the legend
 - Prompt: "Snowdrifts cost extra energy — plan your route"
 
-### Season intro tutorials
-Each season has unique weather and terrain mechanics. The first time a player enters a new season, they play a short 1-2 level tutorial for that season's unique features before starting the first real month.
+### Season intro tutorials — DONE
+~~Each season has unique weather and terrain mechanics. The first time a player enters a new season, they play a short 1-2 level tutorial for that season's unique features before starting the first real month.~~
 
-**Winter intro: "Snowdrifts & Blizzard"**
-- Level 1: Map with snowdrift tiles on the path. Teach: white tiles cost extra energy, plan your route.
-- Level 2 (after Phase 7): Blizzard fog — reduced visibility, find a snow cave to rest with bonus recovery.
+~~**Winter intro: "Snowdrifts & Blizzard"**~~
+~~- Level 1: Snowdrift tiles with extra energy cost~~
+~~- Level 2: Blizzard fog + snow cave with bonus recovery~~
 
-**Spring intro: "Flooding"**
-- Level 1: Map with water zone and flood tiles that cycle on/off. Teach: blue pulsing tiles block your path temporarily — wait or reroute.
-- Level 2 (after Phase 7): Rising water — water zone expands over time. Teach: collect honey uphill before the flood reaches you.
+~~**Spring intro: "Flooding & Rising Water"**~~
+~~- Level 1: Cycling flood tiles (on/off every 3s)~~
+~~- Level 2: Rising water with honey objectives~~
 
-**Summer intro: "Heat & Shade"**
-- Level 1: Map with heat meter active. Water tiles on one side, goal on the other. Teach: heat builds each step, water cools you off, overheating costs energy.
-- Level 2 (after Phase 7): Shade tiles near bamboo. Teach: shaded tiles slow heat buildup — use bamboo groves as rest points.
+~~**Summer intro: "Heat & Shade"**~~
+~~- Level 1: Heat meter, water cools, overheating costs energy~~
+~~- Level 2: Bamboo shade tiles reduce heat gain~~
 
-**Fall intro: "Wind Clouds & Leaves"**
-- Level 1: Map with 1-2 wind clouds drifting around. Teach: clouds push you away, you're immune for 3 steps after a push — time your approach.
-- Level 2 (after Phase 7): Leaf-covered tiles. Teach: leaf piles hide paths and berries — explore them!
+~~**Fall intro: "Wind Clouds & Leaves"**~~
+~~- Level 1: Wind cloud pushes with 3-step cooldown~~
+~~- Level 2: Leaf piles hide paths (and may hide berries)~~
+
+~~Season intros triggered from GameY2Scene.checkGoal() at month boundaries (index 2/5/8). Skippable via "skip →" button.~~
 
 ### Implementation notes
 - Core tutorial (levels 1-5) plays once on first "How to Play" or first Y2 start
@@ -146,7 +148,7 @@ Each season gets a unique terrain mechanic that changes how the player interacts
 - ~~Fog radius shrinks with weather intensity (intensity 1 = 4 tiles, 2 = 3, 3 = 2)~~
 - ~~Fog parameterized via `revealRadius` in `fog.ts`~~
 - ~~Legend entry: "blizzard — low visibility"~~
-- Snow caves (future): scenic ROCK tiles become shelters with double energy recovery
+- ~~Snow caves: ROCK tiles adjacent to OPEN become shelters — voluntary rest +60 (double), forced rest 3s (faster)~~
 
 ### 7b. Spring — Rising Water — DONE
 - ~~Water zones permanently expand over time — OPEN tiles adjacent to WATER convert to WATER~~
@@ -167,7 +169,7 @@ Each season gets a unique terrain mechanic that changes how the player interacts
 - ~~Leaf piles look like brown/orange obstacles until stepped on~~
 - ~~Stepping on a leaf pile plays crunch animation (scale + fade)~~
 - ~~Legend entry: "leaf pile — explore it!"~~
-- Bonus berries hidden under leaves (Phase 8)
+- ~~Bonus berries hidden under leaves — `hasHiddenBerry()` + `getHiddenBerryCount()` on WindHazard, collected on leaf reveal~~
 
 ## Phase 8: Exploration incentives — DONE
 
