@@ -71,7 +71,7 @@ File: `src/weatherHazard.ts`
 - ~~Cliff fall: reset to zone entry (valid OPEN cell), drains 35 energy~~
 - ~~Side panel: energy bar, heat bar (summer), weather status, controls hint~~
 
-## Phase 6: Year Two Tutorial — NEXT
+## Phase 6: Year Two Tutorial — DONE
 
 A dedicated tutorial for Year Two, separate from Year One's maze tutorial. Y1 teaches keys, gates, bushes, enemies, and skills. Y2 needs to teach terrain navigation, energy management, weather, and resting — completely different mechanics.
 
@@ -138,106 +138,83 @@ Each season has unique weather and terrain mechanics. The first time a player en
 - On completion of core tutorial, transitions to January Y2 (first real level)
 - Season intro levels are added to TutorialY2Scene as the corresponding Phase 7 features are built
 
-## Phase 7: Season-unique terrain features
+## Phase 7: Season-unique terrain features — DONE
 
-Each season gets a unique terrain mechanic that changes how the player interacts with the map, beyond weather. Build in order:
+Each season gets a unique terrain mechanic that changes how the player interacts with the map, beyond weather.
 
-### 6a. Winter — Blizzard Fog
-- Fog radius shrinks with weather intensity (intensity 1 = 4 tiles, 2 = 3, 3 = 2)
-- Fog already exists (`fog.ts`) — parameterize the reveal radius
-- **Snow caves**: scenic ROCK tiles in forest zones become shelters; resting adjacent to a cave restores double energy
-- Strategic: explore carefully with limited vision, use caves to recover
+### 7a. Winter — Blizzard Fog — DONE
+- ~~Fog radius shrinks with weather intensity (intensity 1 = 4 tiles, 2 = 3, 3 = 2)~~
+- ~~Fog parameterized via `revealRadius` in `fog.ts`~~
+- ~~Legend entry: "blizzard — low visibility"~~
+- Snow caves (future): scenic ROCK tiles become shelters with double energy recovery
 
-### 6b. Spring — Rising Water
-- Water zones grow by 1 row every N seconds (N scales with intensity)
-- OPEN tiles at water zone edges become WATER over time
-- BFS safety check: never flood a tile that would disconnect start from goal
-- Creates urgency — the longer you take, the less map is available
-- Strategic: collect honey near trees (uphill) before the water reaches you
+### 7b. Spring — Rising Water — DONE
+- ~~Water zones permanently expand over time — OPEN tiles adjacent to WATER convert to WATER~~
+- ~~Timer-based: interval scales with intensity (15s/20s/25s)~~
+- ~~BFS safety check: never flood a tile that would disconnect start from goal~~
+- ~~Visual: water overlay fades in over 1.5s~~
+- ~~Legend entry: "rising water — hurry!"~~
+- ~~Runs alongside existing flood cycle~~
 
-### 6c. Summer — Shade Tiles
-- New terrain type or overlay: OPEN tiles adjacent to BAMBOO count as "shaded"
-- Shaded tiles reduce heat gain (half rate or zero) instead of full heat per step
-- Visual: subtle dappled shadow overlay on shaded tiles
-- Strategic: route through bamboo grove edges to manage heat, not just beeline to water
+### 7c. Summer — Shade Tiles — DONE
+- ~~OPEN tiles adjacent to BAMBOO count as "shaded"~~
+- ~~Shaded tiles reduce heat gain by half~~
+- ~~Visual: dappled shadow overlay (dark ellipses at 12% opacity)~~
+- ~~Legend entry: "shade — less heat"~~
 
-### 6d. Fall — Leaf Cover
-- Some OPEN tiles in forest zones spawn with a leaf pile overlay
-- Leaf tiles look like obstacles (brown/orange pile) until the bear steps on them, revealing the OPEN path underneath
-- Some leaf piles hide berries (objectives) — rewards exploration
-- Stepping on a leaf pile has a small crunch animation
-- Strategic: explore leaf piles to find hidden paths and bonus berries
+### 7d. Fall — Leaf Cover — DONE
+- ~~OPEN tiles in forest zones spawn with leaf pile overlays (3 + intensity*2 piles)~~
+- ~~Leaf piles look like brown/orange obstacles until stepped on~~
+- ~~Stepping on a leaf pile plays crunch animation (scale + fade)~~
+- ~~Legend entry: "leaf pile — explore it!"~~
+- Bonus berries hidden under leaves (Phase 8)
 
-## Phase 8: Exploration incentives
+## Phase 8: Exploration incentives — DONE
 
-### Current State (measured via tests)
-Players only visit ~30% of the reachable map to collect all objectives and reach the goal. The path is too linear — BFS shortest path through objectives barely deviates from the main trail.
+### 8a. Bonus Food (all seasons) — DONE
+- ~~Extra optional objectives placed off-trail (1-3 per level, scaling with month)~~
+- ~~Bonus sprites rendered at 75% scale + 85% alpha to distinguish from required~~
+- ~~Don't count toward goal unlock~~
+- ~~Side panel shows "3/3 +2 bonus" format~~
+- ~~Collecting bonus triggers smaller bounce animation~~
 
-| Season | Avg Explore | Min | Max |
-|--------|-------------|-----|-----|
-| Winter | 39% | 32% | 45% |
-| Spring | 30% | 24% | 35% |
-| Summer | 30% | 22% | 36% |
-| Fall | 28% | 22% | 33% |
+### 8b. Star Rating — DONE
+- ~~BFS-based reachable cell count at level start~~
+- ~~Visited cells tracked per step~~
+- ~~Star calculation: 1★ = complete, 2★ = all bonus, 3★ = all bonus + 80% explored~~
+- ~~Brief star result overlay shown on goal (1.8s before transition)~~
+- ~~End screen shows stars, explore %, and bonus count~~
+- ~~Data passed via scene transition: stars, explorePct, bonusCollected, bonusTotal~~
 
-### 7a. Bonus Food (all seasons)
-- Extra optional objectives placed in dead-end spurs and off-trail areas
-- Don't count toward the required total to unlock the goal
-- Count toward a score/star rating shown on the end screen (e.g. 3/3 required + 2/4 bonus = 5/7)
-- Encourages exploring branches the player would otherwise skip
-- Side panel shows "3/3 + 2 bonus" or similar
-
-### 7b. Star Rating
-- End screen shows 1-3 stars based on exploration and bonus collection
-- 1 star: completed level (collected required food, reached goal)
-- 2 stars: collected all bonus food
-- 3 stars: collected all bonus food + explored 80%+ of reachable cells
-- Stats tracks stars per month for completionists
-
-## Phase 9: Night Falls (time pressure)
+## Phase 9: Night Falls (time pressure) — DONE
 
 A soft timer that creates tension between exploring for bonus items and reaching the goal before dark.
 
 ### Mechanic
-- Each level starts at "dawn" — a step counter or real-time timer tracks daylight remaining
-- **Sun/moon indicator** in the side panel shows time of day (sun arc or simple progress bar)
-- After a generous threshold, **dusk** begins: screen tint shifts warmer/darker, fog starts closing in
-- After a second threshold, **night falls**: fog tightens dramatically, energy drain doubles, screen very dark
-- The level does NOT end — the bear can still finish, but it's much harder
-- Night is punishing but survivable, matching the cozy-but-challenging tone
+- ~~Each level starts at "dawn" — a step counter tracks daylight remaining~~
+- ~~**Sun/moon indicator** in the side panel shows time of day (daylight bar)~~
+- ~~After a generous threshold, **dusk** begins: screen tint shifts warmer/darker, fog starts closing in~~
+- ~~After a second threshold, **night falls**: fog tightens dramatically, energy drain doubles, screen very dark~~
+- ~~The level does NOT end — the bear can still finish, but it's much harder~~
 
 ### Scaling
-- Threshold scales with map size and objective count so completing the level normally always beats dusk
-- Exploring for bonus food / 3 stars means racing against nightfall
-- Intensity (month within season) makes night fall sooner
+- ~~Threshold = `reachable * 0.6 + objCount * 8 - intensity * 8` — generous for straight completion, tight for 3★~~
+- ~~Exploring for bonus food / 3 stars means racing against nightfall~~
+- ~~Intensity (month within season) makes night fall sooner~~
 
 ### Visual Progression
-1. **Dawn** (start): normal lighting, full visibility
-2. **Midday** (~40% of threshold): sun at peak in indicator
-3. **Dusk** (~80% of threshold): warm orange tint, side panel shows sunset, fog radius shrinks by 1
-4. **Night** (100% threshold): deep blue tint, fog radius shrinks to minimum, energy drain ×2
+1. ~~**Dawn** (start → 40%): normal lighting, full visibility, yellow sun icon~~
+2. ~~**Midday** (40% → 80%): sun at peak, no tint change~~
+3. ~~**Dusk** (80% → 100%): warm orange tint (0x331800, 15%), fog radius shrinks by 1, orange sun icon~~
+4. ~~**Night** (100%+): deep blue tint (0x000822, 35%), fog radius = 1, energy drain ×2, moon icon~~
 
-### Legend entries
-- **Sun/moon indicator** in side panel: a small arc or progress bar showing time of day
-  - Dawn: yellow sun icon on left
-  - Midday: sun at peak/center
-  - Dusk: orange sun icon on right, bar shifts warm
-  - Night: blue moon icon replaces sun
-- Legend row: "daylight — reach goal before dark"
-
-### Tutorial level: "Night Falls"
-- Added to core tutorial after level 5 (weather), or as a standalone intro
-- Small map with a low step threshold so night falls quickly
-- Teach: "Each step advances the clock. Reach the goal before nightfall!"
-- Player experiences dawn → dusk → night transition in ~15-20 steps
-- Shows that night is survivable but harder (fog closes in, energy drains faster)
-
-### Implementation Notes
-- Step-based (not real-time) so the player controls pacing — each move advances the clock
-- Hook into `tryStep` to increment the day counter
-- Reuse fog system for night visibility shrink
-- Tint via camera post-processing or overlay rectangle with increasing alpha
-- Side panel: sun/moon arc graphic or simple "Day ████░░ Night" bar
+### UI elements
+- ~~DAYLIGHT label + progress bar in side panel (shrinks as night approaches)~~
+- ~~Bar color shifts yellow → orange → blue~~
+- ~~Sun/moon icon: ☀ (dawn/midday/dusk) → ☽ (night)~~
+- ~~Legend row: "daylight — reach goal before dark"~~
+- ~~Tint overlay rectangle (scrollFactor 0) with tweened alpha transitions~~
+- ~~Fog `setRevealRadius()` method added to `fog.ts` for dynamic adjustment~~
 
 ## Phase 10: Polish
 

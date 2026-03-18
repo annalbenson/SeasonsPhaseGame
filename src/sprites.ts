@@ -481,8 +481,8 @@ function createBlackBear(scene: Phaser.Scene, x: number, y: number): Phaser.Game
     const head  = scene.add.circle(0, -8, 12, black);
     const snout = scene.add.ellipse(0, -3, 10, 7, snoutCol);
     const nose  = scene.add.circle(0, -5, 3, 0x111111);
-    const eyeL  = scene.add.circle(-5, -11, 2.5, 0x443322);
-    const eyeR  = scene.add.circle( 5, -11, 2.5, 0x443322);
+    const eyeL  = scene.add.circle(-5, -11, 2.5, 0xcc9944);
+    const eyeR  = scene.add.circle( 5, -11, 2.5, 0xcc9944);
     const pawL  = scene.add.circle(-10, 14, 5, dark);
     const pawR  = scene.add.circle( 10, 14, 5, dark);
     const visual = scene.add.container(0, 0, [glow, earL, earR, earLi, earRi, body, chest, head, snout, nose, eyeL, eyeR, pawL, pawR]);

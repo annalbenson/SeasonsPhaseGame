@@ -24,6 +24,7 @@ export class FogOfWar {
     private readonly rows: number;
     private readonly hardMode: boolean;
     private readonly scene: Phaser.Scene;
+    private revealRadius: number;
 
     constructor(
         scene: Phaser.Scene,
@@ -33,11 +34,13 @@ export class FogOfWar {
         season: SeasonTheme,
         worldX: (col: number) => number,
         worldY: (row: number) => number,
+        revealRadius = 2,
     ) {
         this.scene    = scene;
         this.cols     = cols;
         this.rows     = rows;
         this.hardMode = hardMode;
+        this.revealRadius = revealRadius;
 
         // Generate fog texture if it doesn't exist yet
         const fogKey = `fog_${season.name}`;
@@ -83,21 +86,30 @@ export class FogOfWar {
         }
     }
 
-    /** Reveal cells around a position (Chebyshev radius 2, fully lit at radius 1). */
+    /** Dynamically adjust the reveal radius (e.g. for night falls). */
+    setRevealRadius(r: number) {
+        this.revealRadius = Math.max(1, r);
+    }
+
+    /** Reveal cells around a position. Fully lit within litRadius, dimmed up to revealRadius. */
     revealAround(col: number, row: number, now: number) {
         const prevLit = new Set(this.lit);
         this.lit.clear();
 
-        for (let dr = -2; dr <= 2; dr++) {
-            for (let dc = -2; dc <= 2; dc++) {
+        const r = this.revealRadius;
+        const litR = Math.max(1, r - 1);
+
+        for (let dr = -r; dr <= r; dr++) {
+            for (let dc = -r; dc <= r; dc++) {
                 const nc = col + dc, nr = row + dr;
                 if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.rows) continue;
 
                 const dist = Math.max(Math.abs(dc), Math.abs(dr));
+                if (dist > r) continue;
                 const key  = `${nc},${nr}`;
                 const tile = this.tiles[nr][nc];
 
-                if (dist <= 1) {
+                if (dist <= litR) {
                     this.lit.add(key);
                     this.revealed.add(key);
                     this.lastLitTime.set(key, now);

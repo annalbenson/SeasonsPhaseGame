@@ -288,6 +288,23 @@ export function drawTerrain(
                     const light = (row + col) % 2 === 0;
                     container.add(scene.add.rectangle(cx, cy, TILE, TILE,
                         light ? season.floorLight : season.floorDark));
+                    // Shade overlay: OPEN tiles adjacent to BAMBOO (summer only)
+                    if (season.name === 'SummerY2') {
+                        const adjBamboo = [[0,-1],[0,1],[-1,0],[1,0]].some(([dc, dr]) => {
+                            const nc = col + dc, nr = row + dr;
+                            return nr >= 0 && nr < rows && nc >= 0 && nc < cols
+                                && grid[nr][nc] === Terrain.BAMBOO;
+                        });
+                        if (adjBamboo) {
+                            // Dappled shadow — a few dark ellipses
+                            const sg = scene.add.graphics();
+                            sg.fillStyle(0x000000, 0.12);
+                            sg.fillEllipse(cx - 12, cy - 8, 20, 12);
+                            sg.fillEllipse(cx + 10, cy + 6, 18, 10);
+                            sg.fillEllipse(cx - 4, cy + 12, 14, 8);
+                            container.add(sg);
+                        }
+                    }
                     break;
                 }
                 case Terrain.ROCK: {
@@ -309,14 +326,14 @@ export function drawTerrain(
                     g.fillStyle(0x141018, 0.6);
                     g.fillRect(cx - TILE / 2 + 4, cy - TILE / 2 + 4, TILE - 8, TILE - 8);
 
-                    // Draw cliff edge lips on sides adjacent to the OPEN path
+                    // Draw cliff edge lips on sides adjacent to walkable terrain
                     const dirs: [number, number, string][] = [[0,-1,'top'],[0,1,'bot'],[-1,0,'left'],[1,0,'right']];
                     let hasAdj = false;
                     for (const [dc, dr, side] of dirs) {
                         const nc = col + dc, nr = row + dr;
-                        const isOpen = nr >= 0 && nr < rows && nc >= 0 && nc < cols
-                            && grid[nr][nc] === Terrain.OPEN;
-                        if (!isOpen) continue;
+                        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+                        const adj = grid[nr][nc];
+                        if (adj !== Terrain.OPEN && adj !== Terrain.WATER) continue;
                         hasAdj = true;
                         const half = TILE / 2;
                         // Rocky ledge lip — jagged brown/tan edge

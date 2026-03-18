@@ -247,6 +247,38 @@ describe('bfsReachable', () => {
     });
 });
 
+describe('generateMountainMap — wide maps (15 cols)', () => {
+    it('15-col maps are reachable across 10 random generations per season', () => {
+        const seasons = ['WinterY2', 'SpringY2', 'SummerY2', 'FallY2'];
+        for (const season of seasons) {
+            for (let i = 0; i < 10; i++) {
+                const map = generateMountainMap(15, 7, season);
+                expect(bfsReachable(map.grid, map.cols, map.rows, map.start, map.goal),
+                    `${season} 15-col attempt ${i + 1}`).toBe(true);
+            }
+        }
+    });
+
+    it('forest zones have dead-end spurs (extra OPEN cells off main path)', () => {
+        // Generate a map and check that forest zones have OPEN cells beyond the 3-wide main path
+        const map = generateMountainMap(14, 6, 'FallY2');
+        const forestZones = map.zones.filter(z => z.type === 'forest');
+        let spurCells = 0;
+        for (const zone of forestZones) {
+            for (let r = zone.startRow; r < zone.startRow + zone.height; r++) {
+                let openInRow = 0;
+                for (let c = 0; c < map.cols; c++) {
+                    if (map.grid[r][c] === Terrain.OPEN) openInRow++;
+                }
+                // Main path is ~3 wide; any row with >3 OPEN cells has spur extensions
+                if (openInRow > 3) spurCells += openInRow - 3;
+            }
+        }
+        // At least some spurs should exist across the 4+ forest zones
+        expect(spurCells).toBeGreaterThan(0);
+    });
+});
+
 // ── BFS shortest path solver for explore % simulation ───────────────────────
 
 type Cell = { col: number; row: number };

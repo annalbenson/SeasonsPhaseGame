@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { DEPTH } from '../gameplay';
 import { MONTHS_Y2, SeasonTheme } from '../seasons';
-import { generateMountainMap, drawTerrain, Terrain, isWalkable, isCliff, TerrainMap } from '../terrain';
+import { generateMountainMap, drawTerrain, Terrain, isWalkable, isCliff, bfsReachable, TerrainMap } from '../terrain';
 import { FogOfWar } from '../fog';
 import { statsEvents, STAT } from '../statsEmitter';
 import { addWeather } from '../weather';
@@ -12,6 +12,9 @@ import { log } from '../logger';
 import { WeatherHazard, createWeatherHazard, getIntensity } from '../weatherHazard';
 
 function spaced(t: string): string { return t.toUpperCase().split('').join(' '); }
+
+/** Time-of-day phases for Phase 9: Night Falls. */
+const enum TimeOfDay { DAWN, MIDDAY, DUSK, NIGHT }
 
 const CANVAS_W = MAX_COLS * TILE + PANEL;
 const CANVAS_H = MAX_ROWS * TILE + HEADER;
@@ -57,6 +60,26 @@ export default class GameY2Scene extends Phaser.Scene {
     private objSprites: Phaser.GameObjects.Container[] = [];
     private objPositions: { col: number; row: number }[] = [];
 
+    // Bonus objectives (don't count toward goal unlock)
+    private bonusCollected = 0;
+    private bonusTotal     = 0;
+    private bonusSprites: Phaser.GameObjects.Container[] = [];
+    private bonusPositions: { col: number; row: number }[] = [];
+
+    // Exploration tracking (for star rating)
+    private visitedCells = new Set<string>();
+    private totalReachable = 0;
+
+    // Night Falls (Phase 9) — step-based day/night cycle
+    private stepCount = 0;
+    private nightThreshold = 80;  // steps before night falls (recalculated per level)
+    private timeOfDay: TimeOfDay = TimeOfDay.DAWN;
+    private baseFogRadius = 2;
+    private tintOverlay: Phaser.GameObjects.Rectangle | null = null;
+    private dayBar: Phaser.GameObjects.Rectangle | null = null;
+    private dayBarBg: Phaser.GameObjects.Rectangle | null = null;
+    private dayIcon: Phaser.GameObjects.Text | null = null;
+
     private fog!: FogOfWar;
 
     private startCol = 0;
@@ -91,9 +114,21 @@ export default class GameY2Scene extends Phaser.Scene {
         this.objText        = null;
         this.objSprites     = [];
         this.objPositions   = [];
+        this.bonusCollected = 0;
+        this.bonusTotal     = 0;
+        this.bonusSprites   = [];
+        this.bonusPositions = [];
+        this.visitedCells   = new Set();
+        this.totalReachable = 0;
         this.energy         = 100;
         this.moving         = false;
         this.sceneryBlocked = new Set();
+        this.stepCount      = 0;
+        this.timeOfDay      = TimeOfDay.DAWN;
+        this.tintOverlay    = null;
+        this.dayBar         = null;
+        this.dayBarBg       = null;
+        this.dayIcon        = null;
     }
 
     create() {
@@ -178,11 +213,33 @@ export default class GameY2Scene extends Phaser.Scene {
         this.cameras.main.setDeadzone(TILE * 3, TILE * 4);
 
         // ── Fog of war ──────────────────────────────────────────────────────────
+        // Winter blizzard fog: visibility shrinks with intensity
+        const fogRadius = season.name === 'WinterY2'
+            ? 5 - getIntensity(this.monthIndex) // intensity 1→4, 2→3, 3→2
+            : 2;
         this.fog = new FogOfWar(
             this, this.cols, this.totalRows, true, season,
             (c) => this.worldX(c), (r) => this.worldY(r),
+            fogRadius,
         );
         this.fog.revealAround(this.startCol, this.startRow, this.time.now);
+
+        // ── Exploration tracking ──────────────────────────────────────────────────
+        this.totalReachable = this.countReachable();
+        this.visitedCells.add(`${this.startCol},${this.startRow}`);
+
+        // ── Night Falls — step threshold ──────────────────────────────────────────
+        // Generous enough to complete normally, but exploring for bonus/3★ risks nightfall
+        const objCount = Math.min(2 + Math.floor(this.monthIndex / 3), 5);
+        const baseSteps = this.totalReachable * 0.6 + objCount * 8;
+        const intensityPenalty = getIntensity(this.monthIndex) * 8;
+        this.nightThreshold = Math.round(baseSteps - intensityPenalty);
+        this.baseFogRadius = fogRadius;
+
+        // Tint overlay — covers entire screen, fades in with day progression
+        this.tintOverlay = this.add.rectangle(
+            CANVAS_W / 2, CANVAS_H / 2, CANVAS_W * 2, CANVAS_H * 2, 0x000000, 0,
+        ).setDepth(DEPTH.FOG - 0.1).setScrollFactor(0);
 
         // ── UI (fixed on screen via scrollFactor 0) ─────────────────────────────
         this.buildHeader(season, cfg);
@@ -268,6 +325,7 @@ export default class GameY2Scene extends Phaser.Scene {
         this.gridX = nx;
         this.gridY = ny;
         this.moving = true;
+        this.visitedCells.add(`${nx},${ny}`);
 
         this.tweens.add({
             targets: this.player,
@@ -276,11 +334,15 @@ export default class GameY2Scene extends Phaser.Scene {
             onComplete: () => {
                 this.emitter.setPosition(this.player.x, this.player.y);
                 this.fog.revealAround(this.gridX, this.gridY, this.time.now);
+                this.advanceDayClock();
                 this.drainEnergy(onWater ? 2 : 1);
 
                 // Weather: extra move cost (snowdrifts, heat)
                 const extraCost = this.weatherHazard?.getMoveCost(nx, ny, this.terrain.grid) ?? 0;
                 if (extraCost > 0) this.drainEnergy(extraCost);
+
+                // Reveal leaf piles (Fall)
+                this.weatherHazard?.revealLeaf?.(nx, ny);
 
                 // If energy hit 0, forced rest is in progress — don't unlock movement
                 // but still check for objectives/goal at this tile
@@ -341,10 +403,136 @@ export default class GameY2Scene extends Phaser.Scene {
 
     // ── Energy system ─────────────────────────────────────────────────────────
     private drainEnergy(amount: number) {
-        this.energy = Math.max(0, this.energy - amount);
+        const drain = this.timeOfDay === TimeOfDay.NIGHT ? amount * 2 : amount;
+        this.energy = Math.max(0, this.energy - drain);
         this.updateEnergyBar();
         if (this.energy <= 0) {
             this.onRest();
+        }
+    }
+
+    // ── Night Falls ─────────────────────────────────────────────────────────────
+    private advanceDayClock() {
+        this.stepCount++;
+        const frac = this.stepCount / this.nightThreshold;
+
+        let newPhase: TimeOfDay;
+        if      (frac < 0.4)  newPhase = TimeOfDay.DAWN;
+        else if (frac < 0.8)  newPhase = TimeOfDay.MIDDAY;
+        else if (frac < 1.0)  newPhase = TimeOfDay.DUSK;
+        else                  newPhase = TimeOfDay.NIGHT;
+
+        if (newPhase !== this.timeOfDay) {
+            this.timeOfDay = newPhase;
+            this.applyTimeOfDay();
+        }
+
+        this.updateDayBar();
+    }
+
+    private applyTimeOfDay() {
+        // Tint overlay
+        if (this.tintOverlay) {
+            let color: number, alpha: number;
+            switch (this.timeOfDay) {
+                case TimeOfDay.DAWN:   color = 0x000000; alpha = 0;    break;
+                case TimeOfDay.MIDDAY: color = 0x000000; alpha = 0;    break;
+                case TimeOfDay.DUSK:   color = 0x331800; alpha = 0.15; break;
+                case TimeOfDay.NIGHT:  color = 0x000822; alpha = 0.35; break;
+            }
+            this.tintOverlay.setFillStyle(color);
+            this.tweens.add({
+                targets: this.tintOverlay,
+                alpha,
+                duration: 1200,
+                ease: 'Sine.easeInOut',
+            });
+        }
+
+        // Fog radius shrinks at dusk/night
+        let fogR: number;
+        switch (this.timeOfDay) {
+            case TimeOfDay.DAWN:   fogR = this.baseFogRadius;     break;
+            case TimeOfDay.MIDDAY: fogR = this.baseFogRadius;     break;
+            case TimeOfDay.DUSK:   fogR = Math.max(1, this.baseFogRadius - 1); break;
+            case TimeOfDay.NIGHT:  fogR = 1;                       break;
+        }
+        this.fog.setRevealRadius(fogR);
+
+        // Day icon update
+        if (this.dayIcon) {
+            switch (this.timeOfDay) {
+                case TimeOfDay.DAWN:   this.dayIcon.setText('☀').setColor('#ffdd44'); break;
+                case TimeOfDay.MIDDAY: this.dayIcon.setText('☀').setColor('#ffcc22'); break;
+                case TimeOfDay.DUSK:   this.dayIcon.setText('☀').setColor('#ff8833'); break;
+                case TimeOfDay.NIGHT:  this.dayIcon.setText('☽').setColor('#8899cc'); break;
+            }
+        }
+    }
+
+    private updateDayBar() {
+        if (!this.dayBar || !this.dayBarBg) return;
+        const frac = Math.min(1, this.stepCount / this.nightThreshold);
+        const fullW = this.dayBarBg.width;
+        this.dayBar.width = fullW * (1 - frac);  // shrinks as night approaches
+
+        // Color shifts: yellow → orange → blue
+        if (frac < 0.8) {
+            const t = frac / 0.8;  // 0→1 over dawn to dusk
+            const r = Math.round(255 - t * 80);
+            const g = Math.round(220 - t * 120);
+            const b = Math.round(60  + t * 40);
+            this.dayBar.setFillStyle(Phaser.Display.Color.GetColor(r, g, b));
+        } else {
+            const t = (frac - 0.8) / 0.2;
+            const r = Math.round(175 - t * 100);
+            const g = Math.round(100 - t * 50);
+            const b = Math.round(100 + t * 100);
+            this.dayBar.setFillStyle(Phaser.Display.Color.GetColor(r, g, b));
+        }
+    }
+
+    /** Close the bear's eyes (replace eye circles with thin closed-eye lines). */
+    private closeEyes(): Phaser.GameObjects.Graphics | null {
+        const visual = this.player.list[0] as Phaser.GameObjects.Container;
+        if (!visual) return null;
+        // Find the two eye circles by scanning for small circles near y=-10/-11
+        const eyes: Phaser.GameObjects.Arc[] = [];
+        for (const child of visual.list) {
+            if (child instanceof Phaser.GameObjects.Arc &&
+                child.y <= -9 && child.y >= -12 &&
+                child.radius <= 3 && child.radius >= 1) {
+                eyes.push(child);
+            }
+        }
+        if (eyes.length < 2) return null;
+        // Hide open eyes
+        for (const eye of eyes) eye.setVisible(false);
+        // Draw closed eyes (small curved lines)
+        const g = this.add.graphics();
+        for (const eye of eyes) {
+            g.lineStyle(2, 0x222222, 0.9);
+            g.beginPath();
+            g.arc(eye.x, eye.y, 3, 0, Math.PI, false);
+            g.strokePath();
+        }
+        visual.add(g);
+        return g;
+    }
+
+    /** Reopen the bear's eyes (restore eye circles, remove closed-eye graphics). */
+    private openEyes(closedGfx: Phaser.GameObjects.Graphics | null) {
+        const visual = this.player.list[0] as Phaser.GameObjects.Container;
+        if (!visual) return;
+        for (const child of visual.list) {
+            if (child instanceof Phaser.GameObjects.Arc &&
+                child.y <= -9 && child.y >= -12 &&
+                child.radius <= 3 && child.radius >= 1) {
+                child.setVisible(true);
+            }
+        }
+        if (closedGfx) {
+            closedGfx.destroy();
         }
     }
 
@@ -352,6 +540,8 @@ export default class GameY2Scene extends Phaser.Scene {
     private onVoluntaryRest() {
         log.info('scene', 'voluntary rest');
         this.moving = true;
+
+        const closedEyes = this.closeEyes();
 
         const zx = this.player.x + 20;
         const zy = this.player.y - 30;
@@ -366,6 +556,7 @@ export default class GameY2Scene extends Phaser.Scene {
 
         this.time.delayedCall(2000, () => {
             zzz.destroy();
+            this.openEyes(closedEyes);
             this.energy = Math.min(this.energyMax, this.energy + 30);
             this.updateEnergyBar();
             this.moving = false;
@@ -376,6 +567,8 @@ export default class GameY2Scene extends Phaser.Scene {
     private onRest() {
         log.info('scene', 'bear exhausted — forced rest');
         this.moving = true;
+
+        const closedEyes = this.closeEyes();
 
         const zx = this.player.x + 20;
         const zy = this.player.y - 30;
@@ -390,6 +583,7 @@ export default class GameY2Scene extends Phaser.Scene {
 
         this.time.delayedCall(5000, () => {
             zzz.destroy();
+            this.openEyes(closedEyes);
             this.energy = this.energyMax;
             this.updateEnergyBar();
             this.moving = false;
@@ -531,10 +725,33 @@ export default class GameY2Scene extends Phaser.Scene {
             this.objSprites.push(sprite);
             this.objPositions.push(pos);
         }
+
+        // ── Bonus objectives — placed in dead-end spurs and off-trail areas ──
+        const usedKeys = new Set(picked.map(p => `${p.col},${p.row}`));
+        usedKeys.add(`${this.startCol},${this.startRow}`);
+        usedKeys.add(`${this.goalCol},${this.goalRow}`);
+        const bonusCandidates = candidates.filter(c => !usedKeys.has(`${c.col},${c.row}`));
+        // Prefer cells far from the main path (dead-end spurs)
+        const bonusCount = Math.min(1 + Math.floor(this.monthIndex / 4), 3, bonusCandidates.length);
+        const bonusShuffled = bonusCandidates.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < bonusCount; i++) {
+            const pos = bonusShuffled[i];
+            const cx = pos.col * TILE + TILE / 2;
+            const cy = pos.row * TILE + TILE / 2;
+            const sprite = buildY2ObjectiveSprite(this, cx, cy, season.name);
+            // Make bonus objectives slightly smaller + sparkly tint
+            sprite.setScale(0.75);
+            sprite.setAlpha(0.85);
+            this.mazeLayer.add(sprite);
+            this.bonusSprites.push(sprite);
+            this.bonusPositions.push(pos);
+        }
+        this.bonusTotal = bonusCount;
         this.updateObjText();
     }
 
     private tryCollectObjective() {
+        // Check required objectives
         for (let i = this.objSprites.length - 1; i >= 0; i--) {
             const pos = this.objPositions[i];
             if (pos.col === this.gridX && pos.row === this.gridY) {
@@ -552,6 +769,19 @@ export default class GameY2Scene extends Phaser.Scene {
                 return;
             }
         }
+        // Check bonus objectives
+        for (let i = this.bonusSprites.length - 1; i >= 0; i--) {
+            const pos = this.bonusPositions[i];
+            if (pos.col === this.gridX && pos.row === this.gridY) {
+                this.bonusSprites[i].destroy();
+                this.bonusSprites.splice(i, 1);
+                this.bonusPositions.splice(i, 1);
+                this.bonusCollected++;
+                this.updateObjText();
+                this.tweens.add({ targets: this.player, scaleY: 1.15, yoyo: true, duration: 120 });
+                return;
+            }
+        }
     }
 
     // ── Goal ───────────────────────────────────────────────────────────────────
@@ -561,19 +791,31 @@ export default class GameY2Scene extends Phaser.Scene {
         statsEvents.emit(STAT.MAZE_COMPLETE);
         this.moving = true;
 
+        const stars = this.getStars();
+        const explorePct = this.totalReachable > 0
+            ? Math.round(this.visitedCells.size / this.totalReachable * 100) : 0;
+        const cfg = MONTHS_Y2[this.monthIndex];
+        log.info('scene', `goal reached: stars=${stars}, explore=${explorePct}%, bonus=${this.bonusCollected}/${this.bonusTotal}`);
+
+        // Show star result briefly
+        const starStr = '★'.repeat(stars) + '☆'.repeat(3 - stars);
+        const resultText = this.add.text(
+            (CANVAS_W - PANEL) / 2, HEADER + 60,
+            `${starStr}\n${this.objCollected}/${this.objTotal} food  +${this.bonusCollected} bonus  ${explorePct}% explored`,
+            { fontSize: '20px', color: '#ffe066', align: 'center', lineSpacing: 8 },
+        ).setOrigin(0.5).setDepth(DEPTH.PANEL + 10).setScrollFactor(0).setAlpha(0);
+        this.tweens.add({ targets: resultText, alpha: 1, duration: 400 });
+
         const last = this.monthIndex >= MONTHS_Y2.length - 1;
         const nextData = last
-            ? undefined
+            ? { stars, explorePct, bonusCollected: this.bonusCollected, bonusTotal: this.bonusTotal }
             : { monthIndex: this.monthIndex + 1, from: this.fromScene };
         const nextScene = last ? 'EndScene' : 'GameY2Scene';
-        log.info('scene', `goal reached, transitioning to ${nextScene}`, { last, monthIndex: this.monthIndex });
 
-        this.time.delayedCall(500, () => {
+        this.time.delayedCall(1800, () => {
             this.destroyAll();
-            log.debug('scene', 'fade out started');
             this.cameras.main.fadeOut(800, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
-                log.debug('scene', `fade out complete, starting ${nextScene}`);
                 this.cameras.main.resetFX();
                 this.scene.start(nextScene, nextData);
             });
@@ -582,7 +824,43 @@ export default class GameY2Scene extends Phaser.Scene {
 
     private destroyAll() {
         for (const s of this.objSprites) s.destroy();
+        for (const s of this.bonusSprites) s.destroy();
         this.weatherHazard?.destroy();
+    }
+
+    /** Count all OPEN + WATER cells reachable from start via BFS. */
+    private countReachable(): number {
+        const grid = this.terrain.grid;
+        const visited = new Set<number>();
+        const key = (c: number, r: number) => r * this.cols + c;
+        const queue: [number, number][] = [[this.startCol, this.startRow]];
+        visited.add(key(this.startCol, this.startRow));
+        while (queue.length > 0) {
+            const [c, r] = queue.shift()!;
+            for (const [dc, dr] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+                const nc = c + dc, nr = r + dr;
+                if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.totalRows) continue;
+                const k = key(nc, nr);
+                if (visited.has(k)) continue;
+                const t = grid[nr][nc];
+                if (t === Terrain.OPEN || t === Terrain.WATER) {
+                    visited.add(k);
+                    queue.push([nc, nr]);
+                }
+            }
+        }
+        return visited.size;
+    }
+
+    /** Calculate star rating: 1=complete, 2=all bonus, 3=all bonus + 80% explored. */
+    private getStars(): number {
+        if (this.bonusTotal > 0 && this.bonusCollected >= this.bonusTotal) {
+            const exploreFrac = this.totalReachable > 0
+                ? this.visitedCells.size / this.totalReachable : 0;
+            if (exploreFrac >= 0.8) return 3;
+            return 2;
+        }
+        return 1;
     }
 
     // ── Header (fixed on screen) ───────────────────────────────────────────────
@@ -655,6 +933,17 @@ export default class GameY2Scene extends Phaser.Scene {
             this.weatherText.setScrollFactor(0);
         }
 
+        // Daylight indicator (Night Falls)
+        y += 22;
+        sf0(this.add.text(cx, y, 'DAYLIGHT', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
+        y += 20;
+        this.dayBarBg = this.add.rectangle(cx, y, barW, 12, 0x222222, 0.6).setDepth(depth);
+        this.dayBarBg.setScrollFactor(0);
+        this.dayBar = this.add.rectangle(cx, y, barW, 12, 0xffdd44).setDepth(depth);
+        this.dayBar.setScrollFactor(0);
+        this.dayIcon = this.add.text(px + 18, y - 1, '☀', { fontSize: '14px', color: '#ffdd44' }).setOrigin(0.5).setDepth(depth);
+        this.dayIcon.setScrollFactor(0);
+
         // Legend
         y += 40;
         sf0(this.add.rectangle(cx, y, pw - 32, 1, season.uiAccent, 0.2).setDepth(depth));
@@ -693,21 +982,29 @@ export default class GameY2Scene extends Phaser.Scene {
 
         items.push(
             { label: 'goal — reach it!', draw: (g, ly) => { g.fillStyle(season.goalColor, 0.7); g.fillRect(lx, ly - 5, 14, 10); } },
+            { label: 'daylight — reach goal before dark', draw: (g, ly) => { g.fillStyle(0xffdd44, 0.8); g.fillCircle(lx + 7, ly, 5); g.fillStyle(0x333366, 0.6); g.fillCircle(lx + 7, ly, 2.5); } },
         );
 
         // Season-specific weather legend entries
         switch (season.name) {
             case 'WinterY2':
+                items.push({ label: 'blizzard cloud — drifts', draw: (g, ly) => { g.fillStyle(0xc8d8e8, 0.6); g.fillEllipse(lx + 7, ly - 1, 14, 8); g.fillStyle(0xd8e4f0, 0.45); g.fillEllipse(lx + 4, ly - 3, 8, 6); g.fillStyle(0xffffff, 0.4); g.fillCircle(lx + 4, ly + 4, 1.5); g.fillCircle(lx + 9, ly + 5, 1); } });
                 items.push({ label: 'snowdrift — extra energy', draw: (g, ly) => { g.fillStyle(0xe8eef4, 0.5); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xc8dce8, 0.4); g.fillCircle(lx + 4, ly, 3); g.fillCircle(lx + 10, ly - 1, 2); } });
+                items.push({ label: 'blizzard — low visibility', draw: (g, ly) => { g.fillStyle(0xc0d0e0, 0.4); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xe0e8f0, 0.3); g.fillCircle(lx + 3, ly - 2, 2); g.fillCircle(lx + 8, ly + 1, 1.5); g.fillCircle(lx + 11, ly - 1, 1); } });
                 break;
             case 'SpringY2':
+                items.push({ label: 'rain cloud — floods area', draw: (g, ly) => { g.fillStyle(0x405878, 0.6); g.fillEllipse(lx + 7, ly - 2, 14, 8); g.fillStyle(0x4a6080, 0.45); g.fillEllipse(lx + 4, ly - 4, 8, 6); g.lineStyle(1, 0x6090c0, 0.4); g.strokeLineShape(new Phaser.Geom.Line(lx + 4, ly + 3, lx + 4, ly + 6)); g.strokeLineShape(new Phaser.Geom.Line(lx + 7, ly + 2, lx + 7, ly + 6)); g.strokeLineShape(new Phaser.Geom.Line(lx + 10, ly + 3, lx + 10, ly + 6)); } });
                 items.push({ label: 'flood — wait or reroute', draw: (g, ly) => { g.fillStyle(0x2060c0, 0.6); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x60a0e0, 0.5); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly - 1, lx + 12, ly - 1)); g.strokeLineShape(new Phaser.Geom.Line(lx + 1, ly + 2, lx + 11, ly + 2)); } });
+                items.push({ label: 'rising water — hurry!', draw: (g, ly) => { g.fillStyle(0x1868a8, 0.7); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x48a0d8, 0.4); g.fillTriangle(lx + 2, ly + 3, lx + 7, ly - 3, lx + 12, ly + 3); } });
                 break;
             case 'SummerY2':
+                items.push({ label: 'heat cloud — more heat', draw: (g, ly) => { g.fillStyle(0xdd8833, 0.35); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0xffaa44, 0.25); g.fillEllipse(lx + 4, ly - 2, 8, 5); } });
+                items.push({ label: 'shade — less heat', draw: (g, ly) => { g.fillStyle(0x489028, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x000000, 0.15); g.fillEllipse(lx + 4, ly - 1, 8, 5); g.fillEllipse(lx + 10, ly + 2, 6, 4); } });
                 items.push({ label: 'heat — watch the meter', draw: (g, ly) => { g.fillStyle(0x222222, 0.6); g.fillRect(lx, ly - 3, 14, 6); g.fillStyle(0xff8833, 1); g.fillRect(lx + 1, ly - 2, 9, 4); } });
                 break;
             case 'FallY2':
-                items.push({ label: 'cloud — blows you away', draw: (g, ly) => { g.fillStyle(0x8899aa, 0.6); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0x8899aa, 0.4); g.fillEllipse(lx + 4, ly - 2, 8, 6); } });
+                items.push({ label: 'wind cloud — pushes you', draw: (g, ly) => { g.fillStyle(0x8899aa, 0.6); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0x8899aa, 0.4); g.fillEllipse(lx + 4, ly - 2, 8, 6); } });
+                items.push({ label: 'leaf pile — explore it!', draw: (g, ly) => { g.fillStyle(0x8b5e3c, 0.8); g.fillEllipse(lx + 7, ly, 12, 6); g.fillStyle(0xcc6622, 0.6); g.fillEllipse(lx + 4, ly - 1, 7, 4); g.fillEllipse(lx + 10, ly + 1, 6, 4); } });
                 break;
         }
 
@@ -730,7 +1027,12 @@ export default class GameY2Scene extends Phaser.Scene {
 
     // ── UI helpers ─────────────────────────────────────────────────────────────
     private updateObjText() {
-        if (this.objText) this.objText.setText(`${this.objCollected} / ${this.objTotal}`);
+        if (!this.objText) return;
+        let txt = `${this.objCollected} / ${this.objTotal}`;
+        if (this.bonusTotal > 0) {
+            txt += `  +${this.bonusCollected} bonus`;
+        }
+        this.objText.setText(txt);
     }
     private updateEnergyBar() {
         if (!this.energyBar) return;

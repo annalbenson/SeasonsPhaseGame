@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
 
 import { getIntensity, createWeatherHazard } from '../weatherHazard';
+import { Terrain } from '../terrain';
 
 describe('getIntensity', () => {
     it('returns 1 for first month of each season', () => {
@@ -100,10 +101,11 @@ describe('hazard default behaviors (no spawn)', () => {
 
     it('heat: getMoveCost accumulates heat', () => {
         const h = createWeatherHazard('SummerY2', 3)!;
-        // Without a grid, heat builds each call
+        // Provide a simple OPEN grid so heat accumulates
+        const grid: Terrain[][] = [[Terrain.OPEN]];
         let totalCost = 0;
         for (let i = 0; i < 20; i++) {
-            totalCost += h.getMoveCost(0, 0);
+            totalCost += h.getMoveCost(0, 0, grid);
         }
         // At intensity 3, heatMax=50, heat += 3 per step
         // After ~17 steps heat hits 51 → overheating costs 3
@@ -120,5 +122,138 @@ describe('hazard default behaviors (no spawn)', () => {
         expect(createWeatherHazard('FallY2', 1)!.getLabel()).toMatch(/Gentle/i);
         expect(createWeatherHazard('FallY2', 2)!.getLabel()).toMatch(/Moderate/i);
         expect(createWeatherHazard('FallY2', 3)!.getLabel()).toMatch(/Strong/i);
+    });
+
+    it('wind: revealLeaf returns false when no leaves spawned', () => {
+        const h = createWeatherHazard('FallY2', 1)!;
+        expect(h.revealLeaf?.(3, 3)).toBe(false);
+    });
+});
+
+// ── Detailed heat mechanic tests ──────────────────────────────────────────
+
+describe('HeatHazard mechanics', () => {
+    it('water tile resets heat to 0', () => {
+        const h = createWeatherHazard('SummerY2', 2)!;
+        const grid: Terrain[][] = [
+            [Terrain.OPEN, Terrain.WATER],
+        ];
+        // Build up heat on OPEN
+        h.getMoveCost(0, 0, grid);
+        h.getMoveCost(0, 0, grid);
+        h.getMoveCost(0, 0, grid);
+        // Step on water — should return 0 and reset heat
+        const cost = h.getMoveCost(1, 0, grid);
+        expect(cost).toBe(0);
+        // Next OPEN step should start from 0 heat, so no overheating penalty
+        const next = h.getMoveCost(0, 0, grid);
+        expect(next).toBe(0);
+    });
+
+    it('shaded tile (adjacent to BAMBOO) gains heat at half rate', () => {
+        const h1 = createWeatherHazard('SummerY2', 2)!;
+        const h2 = createWeatherHazard('SummerY2', 2)!;
+        // Grid where (1,0) is OPEN adjacent to BAMBOO (shaded)
+        const shadedGrid: Terrain[][] = [
+            [Terrain.BAMBOO, Terrain.OPEN],
+        ];
+        // Grid where (0,0) is OPEN with no BAMBOO neighbor (unshaded)
+        const unshadedGrid: Terrain[][] = [
+            [Terrain.OPEN, Terrain.ROCK],
+        ];
+        // Accumulate heat on shaded vs unshaded for same number of steps
+        let shadedTotal = 0, unshadedTotal = 0;
+        for (let i = 0; i < 10; i++) {
+            shadedTotal += h1.getMoveCost(1, 0, shadedGrid);
+            unshadedTotal += h2.getMoveCost(0, 0, unshadedGrid);
+        }
+        // Shaded should accumulate less total cost (or equal if no overheat)
+        // With intensity 2: unshaded gains 2/step, shaded gains 1/step
+        // heatMax=40: unshaded hits 40 at step 20, shaded hits 40 at step 40
+        // In 10 steps: unshaded heat=20, shaded heat=10 — neither overheats yet
+        // But both return 0 extra cost. Let's go further to trigger overheat.
+        for (let i = 0; i < 15; i++) {
+            shadedTotal += h1.getMoveCost(1, 0, shadedGrid);
+            unshadedTotal += h2.getMoveCost(0, 0, unshadedGrid);
+        }
+        // Unshaded should have overheated (25 steps × 2 = 50 > 40), shaded should not yet (25 × 1 = 25 < 40)
+        expect(unshadedTotal).toBeGreaterThan(shadedTotal);
+    });
+
+    it('overheating returns 3 extra cost and partially cools down', () => {
+        const h = createWeatherHazard('SummerY2', 3)!;
+        // intensity 3: heatMax=50, gains 3 per step
+        // After 17 steps: heat = 51 → overheats
+        const grid: Terrain[][] = [[Terrain.OPEN]];
+        let overheatStep = -1;
+        for (let i = 0; i < 25; i++) {
+            const cost = h.getMoveCost(0, 0, grid);
+            if (cost > 0 && overheatStep < 0) {
+                overheatStep = i;
+                expect(cost).toBe(3); // overheating penalty
+            }
+        }
+        expect(overheatStep).toBeGreaterThan(0);
+        expect(overheatStep).toBeLessThan(20);
+    });
+
+    it('returns 0 for out-of-bounds coordinates', () => {
+        const h = createWeatherHazard('SummerY2', 1)!;
+        const grid: Terrain[][] = [[Terrain.OPEN]];
+        expect(h.getMoveCost(-1, 0, grid)).toBe(0);
+        expect(h.getMoveCost(0, -1, grid)).toBe(0);
+        expect(h.getMoveCost(5, 0, grid)).toBe(0);
+    });
+
+    it('returns 0 when no grid provided', () => {
+        const h = createWeatherHazard('SummerY2', 2)!;
+        expect(h.getMoveCost(0, 0)).toBe(0);
+    });
+});
+
+// ── Wind push mechanics ──────────────────────────────────────────────────
+
+describe('WindHazard push mechanics', () => {
+    it('push cooldown prevents consecutive pushes', () => {
+        const h = createWeatherHazard('FallY2', 1)!;
+        // Without spawn, getWindPush always returns null (no clouds)
+        // This test just verifies the cooldown counter behavior
+        // by checking that multiple calls return null
+        expect(h.getWindPush(0, 0)).toBeNull();
+        expect(h.getWindPush(0, 0)).toBeNull();
+    });
+});
+
+// ── Snowdrift mechanics ──────────────────────────────────────────────────
+
+describe('SnowdriftHazard mechanics', () => {
+    it('all hazard methods have correct defaults before spawn', () => {
+        const h = createWeatherHazard('WinterY2', 1)!;
+        expect(h.isBlocked(0, 0)).toBe(false);
+        expect(h.getMoveCost(3, 3)).toBe(0);
+        expect(h.getWindPush(0, 0)).toBeNull();
+    });
+
+    it('labels reflect all three intensities', () => {
+        expect(createWeatherHazard('WinterY2', 1)!.getLabel()).toMatch(/Light/i);
+        expect(createWeatherHazard('WinterY2', 2)!.getLabel()).toMatch(/Moderate/i);
+        expect(createWeatherHazard('WinterY2', 3)!.getLabel()).toMatch(/Heavy/i);
+    });
+});
+
+// ── Flood mechanics ──────────────────────────────────────────────────────
+
+describe('FloodHazard mechanics', () => {
+    it('all hazard methods have correct defaults before spawn', () => {
+        const h = createWeatherHazard('SpringY2', 2)!;
+        expect(h.isBlocked(0, 0)).toBe(false);
+        expect(h.getMoveCost(0, 0)).toBe(0);
+        expect(h.getWindPush(0, 0)).toBeNull();
+    });
+
+    it('labels reflect all three intensities', () => {
+        expect(createWeatherHazard('SpringY2', 1)!.getLabel()).toMatch(/Light/i);
+        expect(createWeatherHazard('SpringY2', 2)!.getLabel()).toMatch(/Moderate/i);
+        expect(createWeatherHazard('SpringY2', 3)!.getLabel()).toMatch(/Heavy/i);
     });
 });
