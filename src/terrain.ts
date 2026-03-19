@@ -17,10 +17,11 @@ export enum Terrain {
     WATER  = 3,
     TREE   = 4,
     BAMBOO = 5,   // summer variant — panda bamboo forest
+    BOULDER = 6,  // ridge boulder — blocks movement, scenery
 }
 
 export interface ZoneInfo {
-    type: 'forest' | 'water' | 'narrows';
+    type: 'forest' | 'water' | 'narrows' | 'ridge';
     startRow: number;
     height:   number;
 }
@@ -49,7 +50,7 @@ function buildZoneLayout(): { zones: ZoneInfo[]; totalRows: number } {
     zones.push({ type: 'water',   startRow: r, height: 5 });  r += 5;
     zones.push({ type: 'forest',  startRow: r, height: 8 });  r += 8;   // main foraging area
     zones.push({ type: 'narrows', startRow: r, height: 3 });  r += 3;
-    zones.push({ type: 'forest',  startRow: r, height: 6 });  r += 6;
+    zones.push({ type: 'ridge',   startRow: r, height: 7 });  r += 7;   // lookout ridge
     zones.push({ type: 'water',   startRow: r, height: 5 });  r += 5;
     zones.push({ type: 'narrows', startRow: r, height: 3 });  r += 3;
     zones.push({ type: 'forest',  startRow: r, height: 3 });  r += 3;   // start area
@@ -117,8 +118,9 @@ export function generateMountainMap(cols: number, _rows: number, seasonName?: st
                 }
                 cursor = pathCenter;
 
-                // Dead-end spurs — diagonal winding branches off the main trail
-                const spurs = Math.floor(zone.height / 3);
+                // Dead-end spurs — winding branches off the main trail
+                // Skip very short zones (start/goal areas) — not enough room to wind
+                const spurs = zone.height <= 4 ? 0 : Math.floor(zone.height / 3);
                 for (let s = 0; s < spurs; s++) {
                     // Pick a random OPEN cell on the trail within this zone
                     const sr = top + 1 + Math.floor(Math.random() * Math.max(1, zone.height - 2));
@@ -205,6 +207,75 @@ export function generateMountainMap(cols: number, _rows: number, seasonName?: st
                     else if (d > 1 - driftR && bc + 1 < cols - bankW - 1) bc++;
                 }
                 cursor = bc;
+                break;
+            }
+
+            case 'ridge': {
+                // Switchback trail zigzagging up the ridge — shows elevation gain.
+                // Fill with ROCK, then carve a 2-wide zigzag path.
+                for (let r = top; r < bot; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        grid[r][c] = Terrain.ROCK;
+                    }
+                }
+                // Zigzag: alternate between sweeping left and right across the map.
+                // Each leg is 2 rows: one horizontal sweep + one vertical step.
+                const margin = 2; // don't touch the outermost columns
+                let rc = Math.max(margin, Math.min(cols - margin - 1, cursor));
+                let goingLeft = rc > cols / 2; // start by heading toward far side
+                const pathSet = new Set<string>();
+                const carve = (c: number, r: number) => {
+                    if (c >= 0 && c < cols && r >= top && r < bot) {
+                        grid[r][c] = Terrain.OPEN;
+                        pathSet.add(`${c},${r}`);
+                    }
+                };
+
+                for (let r = bot - 1; r >= top; ) {
+                    // Horizontal sweep across the map
+                    const target = goingLeft ? margin : cols - margin - 1;
+                    const step = goingLeft ? -1 : 1;
+                    while (rc !== target && r >= top) {
+                        carve(rc, r);
+                        carve(rc, r - 1 >= top ? r : r); // 2-wide in tight spots
+                        // Slight vertical drift every few columns for natural feel
+                        if (Math.random() < 0.3 && r - 1 >= top) {
+                            r--;
+                            carve(rc, r);
+                        }
+                        rc += step;
+                    }
+                    carve(rc, r); // finish the sweep
+                    // Vertical connector — step up 1-2 rows before reversing
+                    const vSteps = Math.min(2, r - top);
+                    for (let v = 0; v < vSteps; v++) {
+                        r--;
+                        if (r < top) break;
+                        carve(rc, r);
+                        // Widen the turn slightly
+                        carve(rc - step, r);
+                    }
+                    goingLeft = !goingLeft;
+                    if (r <= top) break;
+                }
+                // Make sure entry/exit rows are open at cursor
+                carve(rc, top);
+                cursor = rc;
+
+                // Scatter boulders on ROCK cells adjacent to the trail for scenery
+                for (let r = top; r < bot; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        if (grid[r][c] !== Terrain.ROCK) continue;
+                        const adjOpen = [[0,-1],[0,1],[-1,0],[1,0]].some(([dc,dr]) => {
+                            const nc2 = c + dc, nr = r + dr;
+                            return nr >= top && nr < bot && nc2 >= 0 && nc2 < cols
+                                && grid[nr][nc2] === Terrain.OPEN;
+                        });
+                        if (adjOpen && Math.random() < 0.3) {
+                            grid[r][c] = Terrain.BOULDER;
+                        }
+                    }
+                }
                 break;
             }
         }
@@ -473,6 +544,71 @@ export function drawTerrain(
                     g.fillEllipse(cx - 16, cy - 12, 10, 4);
                     g.fillEllipse(cx + 18, cy - 6, 10, 4);
                     container.add(g);
+                    break;
+                }
+                case Terrain.BOULDER: {
+                    // Ridge floor
+                    const ridgeFloor = (row + col) % 2 === 0 ? 0x8a9080 : 0x7e8676;
+                    container.add(scene.add.rectangle(cx, cy, TILE, TILE, ridgeFloor));
+                    const bg = scene.add.graphics();
+                    const seed = row * 7 + col * 13;
+                    // Slight offset so boulders aren't perfectly centered
+                    const bOx = (seed % 5) - 2;
+                    const bOy = (seed % 3) - 1;
+                    const half = TILE / 2;
+                    // Shadow beneath — nearly fills the tile
+                    bg.fillStyle(0x2a2e28, 0.45);
+                    bg.fillEllipse(cx + 3, cy + 6, TILE * 0.85, TILE * 0.55);
+                    if (season.name === 'WinterY2') {
+                        // Large grey granite mass with snow cap
+                        bg.fillStyle(0x6a7068, 1);
+                        bg.fillEllipse(cx + bOx, cy + bOy + 4, TILE * 0.88, TILE * 0.72);
+                        bg.fillStyle(0x585e56, 0.85);
+                        bg.fillEllipse(cx + bOx + 6, cy + bOy + 8, TILE * 0.6, TILE * 0.45);
+                        bg.fillStyle(0x7a807a, 0.6);
+                        bg.fillEllipse(cx + bOx - 8, cy + bOy - 2, TILE * 0.4, TILE * 0.35);
+                        // Snow on top
+                        bg.fillStyle(0xe8eef4, 0.8);
+                        bg.fillEllipse(cx + bOx, cy + bOy - half * 0.35, TILE * 0.65, TILE * 0.28);
+                        bg.fillStyle(0xd8dee8, 0.5);
+                        bg.fillEllipse(cx + bOx - 10, cy + bOy - half * 0.15, TILE * 0.25, TILE * 0.15);
+                    } else if (season.name === 'SpringY2') {
+                        // Mossy grey-green boulder
+                        bg.fillStyle(0x687860, 1);
+                        bg.fillEllipse(cx + bOx, cy + bOy + 4, TILE * 0.88, TILE * 0.72);
+                        bg.fillStyle(0x5a6a52, 0.85);
+                        bg.fillEllipse(cx + bOx + 6, cy + bOy + 8, TILE * 0.6, TILE * 0.45);
+                        bg.fillStyle(0x768e6a, 0.5);
+                        bg.fillEllipse(cx + bOx - 8, cy + bOy - 2, TILE * 0.4, TILE * 0.35);
+                        // Moss patches
+                        bg.fillStyle(0x44882a, 0.55);
+                        bg.fillEllipse(cx + bOx - 10, cy + bOy + 6, TILE * 0.3, TILE * 0.18);
+                        bg.fillEllipse(cx + bOx + 12, cy + bOy + 10, TILE * 0.22, TILE * 0.14);
+                    } else if (season.name === 'SummerY2') {
+                        // Sun-bleached warm grey
+                        bg.fillStyle(0x908878, 1);
+                        bg.fillEllipse(cx + bOx, cy + bOy + 4, TILE * 0.88, TILE * 0.72);
+                        bg.fillStyle(0x7a7268, 0.85);
+                        bg.fillEllipse(cx + bOx + 6, cy + bOy + 8, TILE * 0.6, TILE * 0.45);
+                        bg.fillStyle(0xa89e90, 0.5);
+                        bg.fillEllipse(cx + bOx - 8, cy + bOy - 4, TILE * 0.4, TILE * 0.3);
+                        // Highlight
+                        bg.fillStyle(0xc0b8a8, 0.35);
+                        bg.fillEllipse(cx + bOx - 4, cy + bOy - half * 0.25, TILE * 0.35, TILE * 0.18);
+                    } else {
+                        // Fall — dark boulder with orange lichen
+                        bg.fillStyle(0x5a5e58, 1);
+                        bg.fillEllipse(cx + bOx, cy + bOy + 4, TILE * 0.88, TILE * 0.72);
+                        bg.fillStyle(0x484c46, 0.85);
+                        bg.fillEllipse(cx + bOx + 6, cy + bOy + 8, TILE * 0.6, TILE * 0.45);
+                        bg.fillStyle(0x6a6e68, 0.5);
+                        bg.fillEllipse(cx + bOx - 8, cy + bOy - 2, TILE * 0.4, TILE * 0.35);
+                        // Orange lichen patches
+                        bg.fillStyle(0xcc8830, 0.55);
+                        bg.fillEllipse(cx + bOx + 10, cy + bOy - 4, TILE * 0.2, TILE * 0.14);
+                        bg.fillEllipse(cx + bOx - 12, cy + bOy + 4, TILE * 0.18, TILE * 0.12);
+                    }
+                    container.add(bg);
                     break;
                 }
                 case Terrain.WATER: {

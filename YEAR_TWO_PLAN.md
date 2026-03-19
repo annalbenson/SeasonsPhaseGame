@@ -218,7 +218,28 @@ A soft timer that creates tension between exploring for bonus items and reaching
 - ~~Tint overlay rectangle (scrollFactor 0) with tweened alpha transitions~~
 - ~~Fog `setRevealRadius()` method added to `fog.ts` for dynamic adjustment~~
 
-## Phase 10: Polish
+## Phase 10: Rocky Ridge Zone — DONE
+
+New "ridge" zone type added to the zone layout, replacing one forest zone mid-map.
+
+### Terrain
+- ~~Elevated open plateau with scattered BOULDER cells the bear weaves around~~
+- ~~Season-specific boulder rendering (snow-capped winter, mossy spring, sun-bleached summer, lichen fall)~~
+- ~~Ridge floor uses distinct lighter color to convey elevation~~
+- ~~35% boulder density on non-path cells; edge rows kept clear for connectivity~~
+
+### Lookout Mechanic
+- ~~Fog reveal radius +2 while bear is on the ridge~~
+- ~~Bonus stacks with time-of-day fog (still helps at dusk/night)~~
+- ~~Immediate extra reveal on ridge entry~~
+- ~~Fog radius restores on leaving ridge or cliff fall~~
+
+### Integration
+- ~~BOULDER added to cloud bounce checks in all weather hazards~~
+- ~~Legend entries for boulder and ridge lookout~~
+- ~~BFS reachability validated (boulders never block start→goal path)~~
+
+## Phase 11: Polish
 
 - Weather particle effects (rain, snow, heat shimmer, wind leaves)
 - Winter fog tightening animation (smooth radius change)

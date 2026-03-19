@@ -59,7 +59,8 @@ function moveWeatherClouds(
             terrain.grid[nr][nc] === Terrain.ROCK ||
             terrain.grid[nr][nc] === Terrain.CLIFF ||
             terrain.grid[nr][nc] === Terrain.TREE ||
-            terrain.grid[nr][nc] === Terrain.BAMBOO) {
+            terrain.grid[nr][nc] === Terrain.BAMBOO ||
+            terrain.grid[nr][nc] === Terrain.BOULDER) {
             cloud.dirIndex = Math.floor(Math.random() * 4);
             continue; // let other clouds still move
         }
@@ -633,7 +634,8 @@ class WindHazard implements WeatherHazard {
                 this.terrain.grid[nr][nc] === Terrain.ROCK ||
                 this.terrain.grid[nr][nc] === Terrain.CLIFF ||
                 this.terrain.grid[nr][nc] === Terrain.TREE ||
-                this.terrain.grid[nr][nc] === Terrain.BAMBOO) {
+                this.terrain.grid[nr][nc] === Terrain.BAMBOO ||
+                this.terrain.grid[nr][nc] === Terrain.BOULDER) {
                 cloud.dirIndex = Math.floor(Math.random() * 4);
                 const arrow = cloud.gfx.list[cloud.gfx.list.length - 1] as Phaser.GameObjects.Text;
                 const newDir = CLOUD_DIRS[cloud.dirIndex];

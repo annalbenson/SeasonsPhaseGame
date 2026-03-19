@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { DEPTH } from '../gameplay';
 import { MONTHS_Y2, SeasonTheme } from '../seasons';
-import { generateMountainMap, drawTerrain, Terrain, isWalkable, isCliff, bfsReachable, TerrainMap } from '../terrain';
+import { generateMountainMap, drawTerrain, Terrain, isWalkable, isCliff, bfsReachable, TerrainMap, ZoneInfo } from '../terrain';
 import { FogOfWar } from '../fog';
 import { statsEvents, STAT } from '../statsEmitter';
 import { addWeather } from '../weather';
@@ -76,9 +76,14 @@ export default class GameY2Scene extends Phaser.Scene {
     private timeOfDay: TimeOfDay = TimeOfDay.DAWN;
     private baseFogRadius = 2;
     private tintOverlay: Phaser.GameObjects.Rectangle | null = null;
+    private tintTween: Phaser.Tweens.Tween | null = null;
     private dayBar: Phaser.GameObjects.Rectangle | null = null;
     private dayBarBg: Phaser.GameObjects.Rectangle | null = null;
     private dayIcon: Phaser.GameObjects.Text | null = null;
+
+    // Ridge lookout — expanded fog while on ridge zone
+    private onRidge = false;
+    private readonly ridgeFogBonus = 2;
 
     private fog!: FogOfWar;
 
@@ -129,7 +134,9 @@ export default class GameY2Scene extends Phaser.Scene {
         this.snowCaves      = new Set();
         this.stepCount      = 0;
         this.timeOfDay      = TimeOfDay.DAWN;
+        this.onRidge        = false;
         this.tintOverlay    = null;
+        this.tintTween      = null;
         this.dayBar         = null;
         this.dayBarBg       = null;
         this.dayIcon        = null;
@@ -250,10 +257,12 @@ export default class GameY2Scene extends Phaser.Scene {
         this.nightThreshold = Math.round(baseSteps - intensityPenalty);
         this.baseFogRadius = fogRadius;
 
-        // Tint overlay — covers entire screen, fades in with day progression
+        // Tint overlay — covers entire screen, fades in with day progression.
+        // fillAlpha=1 always; gameObject alpha (controlled by tweens) drives visibility.
+        // Both must start at 0 or the first setFillStyle call exposes alpha=1 as a black flash.
         this.tintOverlay = this.add.rectangle(
-            CANVAS_W / 2, CANVAS_H / 2, CANVAS_W * 2, CANVAS_H * 2, 0x000000, 0,
-        ).setDepth(DEPTH.FOG - 0.1).setScrollFactor(0);
+            CANVAS_W / 2, CANVAS_H / 2, CANVAS_W * 2, CANVAS_H * 2, 0x000000, 1,
+        ).setDepth(DEPTH.FOG - 0.1).setScrollFactor(0).setAlpha(0);
 
         // ── UI (fixed on screen via scrollFactor 0) ─────────────────────────────
         this.buildHeader(season, cfg);
@@ -348,6 +357,7 @@ export default class GameY2Scene extends Phaser.Scene {
             onComplete: () => {
                 this.emitter.setPosition(this.player.x, this.player.y);
                 this.fog.revealAround(this.gridX, this.gridY, this.time.now);
+                this.updateRidgeLookout();
                 this.advanceDayClock();
                 this.drainEnergy(onWater ? 2 : 1);
 
@@ -409,8 +419,10 @@ export default class GameY2Scene extends Phaser.Scene {
 
         this.gridX = resetCol;
         this.gridY = resetRow;
+        this.onRidge = false;
         this.player.setPosition(this.worldX(resetCol), this.worldY(resetRow));
         this.emitter.setPosition(this.player.x, this.player.y);
+        this.updateFogForTimeAndRidge();
         this.fog.revealAround(resetCol, resetRow, this.time.now);
 
         // Drain energy after repositioning — may trigger forced rest
@@ -424,7 +436,44 @@ export default class GameY2Scene extends Phaser.Scene {
         this.energy = Math.max(0, this.energy - drain);
         this.updateEnergyBar();
         if (this.energy <= 0) {
+            // If exhausted while swimming, wash ashore first
+            if (this.terrain.grid[this.gridY]?.[this.gridX] === Terrain.WATER) {
+                this.washAshore();
+            }
             this.onRest();
+        }
+    }
+
+    /** Move the bear to the nearest OPEN cell (shore) when exhausted in water. */
+    private washAshore() {
+        const grid = this.terrain.grid;
+        // BFS from current position to find nearest OPEN cell
+        const visited = new Set<string>();
+        const queue: { col: number; row: number }[] = [{ col: this.gridX, row: this.gridY }];
+        visited.add(`${this.gridX},${this.gridY}`);
+
+        while (queue.length > 0) {
+            const { col, row } = queue.shift()!;
+            if (grid[row]?.[col] === Terrain.OPEN) {
+                this.gridX = col;
+                this.gridY = row;
+                this.player.setPosition(this.worldX(col), this.worldY(row));
+                this.emitter.setPosition(this.player.x, this.player.y);
+                this.fog.revealAround(col, row, this.time.now);
+                log.info('scene', `bear washed ashore at ${col},${row}`);
+                return;
+            }
+            for (const [dc, dr] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+                const nc = col + dc, nr = row + dr;
+                if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.totalRows) continue;
+                const key = `${nc},${nr}`;
+                if (visited.has(key)) continue;
+                const t = grid[nr][nc];
+                if (t === Terrain.WATER || t === Terrain.OPEN) {
+                    visited.add(key);
+                    queue.push({ col: nc, row: nr });
+                }
+            }
         }
     }
 
@@ -519,27 +568,23 @@ export default class GameY2Scene extends Phaser.Scene {
                 case TimeOfDay.DUSK:   color = 0x331800; alpha = 0.15; break;
                 case TimeOfDay.NIGHT:  color = 0x000822; alpha = 0.35; break;
             }
-            // Preserve current alpha while changing the fill color —
-            // setFillStyle(color) without an alpha arg resets fill alpha to 1,
-            // which causes a dark flash before the tween kicks in.
-            this.tintOverlay.setFillStyle(color, this.tintOverlay.alpha);
-            this.tweens.add({
+            // Kill any in-flight tint tween to prevent competing animations
+            // that cause dark flashes when multiple applyTimeOfDay calls overlap
+            if (this.tintTween) {
+                this.tintTween.stop();
+                this.tintTween = null;
+            }
+            this.tintOverlay.setFillStyle(color, 1);
+            this.tintTween = this.tweens.add({
                 targets: this.tintOverlay,
                 alpha,
                 duration: 1200,
                 ease: 'Sine.easeInOut',
+                onComplete: () => { this.tintTween = null; },
             });
         }
 
-        // Fog radius shrinks at dusk/night
-        let fogR: number;
-        switch (this.timeOfDay) {
-            case TimeOfDay.DAWN:   fogR = this.baseFogRadius;     break;
-            case TimeOfDay.MIDDAY: fogR = this.baseFogRadius;     break;
-            case TimeOfDay.DUSK:   fogR = Math.max(1, this.baseFogRadius - 1); break;
-            case TimeOfDay.NIGHT:  fogR = 1;                       break;
-        }
-        this.fog.setRevealRadius(fogR);
+        this.updateFogForTimeAndRidge();
 
         // Day icon update
         if (this.dayIcon) {
@@ -548,6 +593,36 @@ export default class GameY2Scene extends Phaser.Scene {
                 case TimeOfDay.MIDDAY: this.dayIcon.setText('☀').setColor('#ffcc22'); break;
                 case TimeOfDay.DUSK:   this.dayIcon.setText('☀').setColor('#ff8833'); break;
                 case TimeOfDay.NIGHT:  this.dayIcon.setText('☽').setColor('#8899cc'); break;
+            }
+        }
+    }
+
+    /** Update fog radius based on time-of-day and ridge bonus — no tint changes. */
+    private updateFogForTimeAndRidge() {
+        let fogR: number;
+        switch (this.timeOfDay) {
+            case TimeOfDay.DAWN:   fogR = this.baseFogRadius;     break;
+            case TimeOfDay.MIDDAY: fogR = this.baseFogRadius;     break;
+            case TimeOfDay.DUSK:   fogR = Math.max(1, this.baseFogRadius - 1); break;
+            case TimeOfDay.NIGHT:  fogR = 1;                       break;
+        }
+        if (this.onRidge) fogR += this.ridgeFogBonus;
+        this.fog.setRevealRadius(fogR);
+    }
+
+    private getZoneAt(row: number): ZoneInfo | undefined {
+        return this.terrain.zones.find(z => row >= z.startRow && row < z.startRow + z.height);
+    }
+
+    private updateRidgeLookout() {
+        const zone = this.getZoneAt(this.gridY);
+        const wasOnRidge = this.onRidge;
+        this.onRidge = zone?.type === 'ridge';
+        if (this.onRidge !== wasOnRidge) {
+            // Only update fog radius — don't touch the tint overlay
+            this.updateFogForTimeAndRidge();
+            if (this.onRidge) {
+                this.fog.revealAround(this.gridX, this.gridY, this.time.now);
             }
         }
     }
@@ -1076,6 +1151,8 @@ export default class GameY2Scene extends Phaser.Scene {
         // Common terrain
         items.push(
             { label: 'mountain — go around',   draw: (g, ly) => { g.fillStyle(0x384048, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x282e34, 0.85); g.fillTriangle(lx + 1, ly + 5, lx + 7, ly - 5, lx + 13, ly + 5); } },
+            { label: 'boulder — go around',    draw: (g, ly) => { g.fillStyle(0x8a9080, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x606860, 0.9); g.fillEllipse(lx + 7, ly, 10, 7); } },
+            { label: 'ridge — lookout view',   draw: (g, ly) => { g.fillStyle(0x8a9080, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xffdd44, 0.6); g.fillCircle(lx + 7, ly, 3); } },
             { label: 'cliff — be careful',     draw: (g, ly) => { g.fillStyle(0x1a1018, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xff2200, 0.4); g.fillRect(lx + 2, ly - 3, 10, 6); } },
         );
 

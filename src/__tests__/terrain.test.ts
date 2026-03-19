@@ -67,12 +67,32 @@ describe('generateMountainMap', () => {
         });
     }
 
-    it('contains all 3 zone types', () => {
+    it('contains all 4 zone types', () => {
         const map = generateMountainMap(14, 6, 'WinterY2');
         const types = new Set(map.zones.map(z => z.type));
         expect(types.has('forest')).toBe(true);
         expect(types.has('narrows')).toBe(true);
         expect(types.has('water')).toBe(true);
+        expect(types.has('ridge')).toBe(true);
+    });
+
+    it('ridge zones contain BOULDER cells', () => {
+        const map = generateMountainMap(14, 6, 'WinterY2');
+        const ridge = map.zones.find(z => z.type === 'ridge')!;
+        let hasBoulder = false;
+        for (let r = ridge.startRow; r < ridge.startRow + ridge.height; r++) {
+            for (let c = 0; c < map.cols; c++) {
+                if (map.grid[r][c] === Terrain.BOULDER) hasBoulder = true;
+            }
+        }
+        expect(hasBoulder).toBe(true);
+    });
+
+    it('ridge zones have a walkable path through boulders', () => {
+        for (let i = 0; i < 10; i++) {
+            const map = generateMountainMap(14, 6, 'WinterY2');
+            expect(bfsReachable(map.grid, map.cols, map.rows, map.start, map.goal)).toBe(true);
+        }
     });
 
     it('zones cover the full row range without gaps', () => {
