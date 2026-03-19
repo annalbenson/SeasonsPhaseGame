@@ -8,6 +8,7 @@ import { statsEvents, STAT } from '../statsEmitter';
 import { addWeather } from '../weather';
 import { WALLS } from '../maze';
 import { createY2PlayerSprite, buildY2ObjectiveSprite, ensureSparkleTexture } from '../sprites';
+import { findObjectiveCandidates, pickObjectivePositions, pickBonusPositions } from '../objectivePlacement';
 import { log } from '../logger';
 import { WeatherHazard, createWeatherHazard, getIntensity } from '../weatherHazard';
 import { Predator, spawnPredators } from '../predator';
@@ -797,94 +798,14 @@ export default class GameY2Scene extends Phaser.Scene {
 
     // ── Objectives ─────────────────────────────────────────────────────────────
     private spawnObjectives(season: SeasonTheme) {
-        const grid = this.terrain.grid;
-        const { cols } = this.terrain;
-        const rows = this.totalRows;
-        const notStartGoal = (c: { col: number; row: number }) =>
-            !(c.col === this.startCol && c.row === this.startRow) &&
-            !(c.col === this.goalCol  && c.row === this.goalRow);
+        const candidates = findObjectiveCandidates(
+            this.terrain, season.name,
+            this.startCol, this.startRow, this.goalCol, this.goalRow,
+        );
 
-        // Adjacency helper — true if any neighbour is the given terrain type
-        const adjTo = (col: number, row: number, t: Terrain) =>
-            [[0,-1],[0,1],[-1,0],[1,0]].some(([dc,dr]) => {
-                const nc = col + dc, nr = row + dr;
-                return nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc] === t;
-            });
-
-        // Build season-appropriate candidates
-        let candidates: { col: number; row: number }[];
-
-        switch (season.name) {
-            case 'WinterY2': {
-                // Fish spawn on WATER cells in water zones
-                candidates = [];
-                for (const zone of this.terrain.zones) {
-                    if (zone.type !== 'water') continue;
-                    for (let r = zone.startRow; r < zone.startRow + zone.height; r++) {
-                        for (let c = 0; c < cols; c++) {
-                            if (grid[r][c] === Terrain.WATER) candidates.push({ col: c, row: r });
-                        }
-                    }
-                }
-                break;
-            }
-            case 'SpringY2': {
-                // Honey spawns on OPEN cells adjacent to TREE cells
-                candidates = this.terrain.landCells.filter(c =>
-                    notStartGoal(c) && grid[c.row][c.col] === Terrain.OPEN && adjTo(c.col, c.row, Terrain.TREE),
-                );
-                break;
-            }
-            case 'SummerY2': {
-                // Bamboo shoots spawn on OPEN cells adjacent to BAMBOO cells
-                candidates = this.terrain.landCells.filter(c =>
-                    notStartGoal(c) && grid[c.row][c.col] === Terrain.OPEN && adjTo(c.col, c.row, Terrain.BAMBOO),
-                );
-                break;
-            }
-            case 'FallY2': {
-                // Berries spawn on OPEN cells in forest zones
-                candidates = [];
-                for (const zone of this.terrain.zones) {
-                    if (zone.type !== 'forest') continue;
-                    for (const lc of this.terrain.landCells) {
-                        if (lc.row >= zone.startRow && lc.row < zone.startRow + zone.height &&
-                            grid[lc.row][lc.col] === Terrain.OPEN && notStartGoal(lc)) {
-                            candidates.push(lc);
-                        }
-                    }
-                }
-                break;
-            }
-            default: {
-                candidates = this.terrain.landCells.filter(c =>
-                    notStartGoal(c) && grid[c.row][c.col] === Terrain.OPEN,
-                );
-            }
-        }
-
-        // Spread across zones
+        // Pick required objectives spread across zones
         const count = Math.min(2 + Math.floor(this.monthIndex / 3), 5);
-        const picked: { col: number; row: number }[] = [];
-
-        // For each zone that has candidates, pick one
-        for (const zone of this.terrain.zones) {
-            if (picked.length >= count) break;
-            const inZone = candidates.filter(c =>
-                c.row >= zone.startRow && c.row < zone.startRow + zone.height &&
-                !picked.some(p => p.col === c.col && p.row === c.row),
-            );
-            if (inZone.length > 0) {
-                picked.push(inZone[Math.floor(Math.random() * inZone.length)]);
-            }
-        }
-        // Fill remaining from all candidates
-        const remaining = candidates.filter(c => !picked.some(p => p.col === c.col && p.row === c.row));
-        while (picked.length < count && remaining.length > 0) {
-            const idx = Math.floor(Math.random() * remaining.length);
-            picked.push(remaining[idx]);
-            remaining.splice(idx, 1);
-        }
+        const picked = pickObjectivePositions(candidates, this.terrain.zones, count);
 
         this.objTotal = picked.length;
         for (const pos of picked) {
@@ -896,26 +817,23 @@ export default class GameY2Scene extends Phaser.Scene {
             this.objPositions.push(pos);
         }
 
-        // ── Bonus objectives — placed in dead-end spurs and off-trail areas ──
-        const usedKeys = new Set(picked.map(p => `${p.col},${p.row}`));
-        usedKeys.add(`${this.startCol},${this.startRow}`);
-        usedKeys.add(`${this.goalCol},${this.goalRow}`);
-        const bonusCandidates = candidates.filter(c => !usedKeys.has(`${c.col},${c.row}`));
-        // Prefer cells far from the main path (dead-end spurs)
-        const bonusCount = Math.min(1 + Math.floor(this.monthIndex / 4), 3, bonusCandidates.length);
-        const bonusShuffled = bonusCandidates.sort(() => Math.random() - 0.5);
-        for (let i = 0; i < bonusCount; i++) {
-            const pos = bonusShuffled[i];
+        // Bonus objectives — off-trail areas
+        const bonusCount = Math.min(1 + Math.floor(this.monthIndex / 4), 3);
+        const bonusPicked = pickBonusPositions(
+            candidates, picked,
+            this.startCol, this.startRow, this.goalCol, this.goalRow,
+            bonusCount,
+        );
+        for (const pos of bonusPicked) {
             const cx = pos.col * TILE + TILE / 2;
             const cy = pos.row * TILE + TILE / 2;
             const sprite = buildY2ObjectiveSprite(this, cx, cy, season.name, true);
-            // Bonus objectives slightly smaller than regular
             sprite.setScale(0.75);
             this.mazeLayer.add(sprite);
             this.bonusSprites.push(sprite);
             this.bonusPositions.push(pos);
         }
-        this.bonusTotal = bonusCount;
+        this.bonusTotal = bonusPicked.length;
         this.updateObjText();
     }
 
