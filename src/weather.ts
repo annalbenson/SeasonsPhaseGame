@@ -64,7 +64,7 @@ function addSnow(scene: Phaser.Scene) {
         lifespan:  { min: 8000, max: 14000 },
         frequency: 200,
         quantity:  2,
-    }).setDepth(1.5);
+    }).setDepth(1.5).setScrollFactor(0);
 
     // Near layer — larger, faster, falls over the player
     scene.add.particles(0, HEADER, 'snow', {
@@ -76,7 +76,7 @@ function addSnow(scene: Phaser.Scene) {
         lifespan:  { min: 4000, max: 7000 },
         frequency: 350,
         quantity:  1,
-    }).setDepth(2.5);   // above player for immersion
+    }).setDepth(2.5).setScrollFactor(0);
 }
 
 // ── Rain (Spring) ─────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ function addRain(scene: Phaser.Scene) {
         lifespan:  { min: 1500, max: 2100 },
         frequency: 18,
         quantity:  3,
-    }).setDepth(1.5);
+    }).setDepth(1.5).setScrollFactor(0);
 
     // Lighter mist layer — smaller, slower, more diffuse
     scene.add.particles(0, HEADER, 'raindrop', {
@@ -105,7 +105,7 @@ function addRain(scene: Phaser.Scene) {
         lifespan:  { min: 2200, max: 3000 },
         frequency: 40,
         quantity:  2,
-    }).setDepth(1.4);
+    }).setDepth(1.4).setScrollFactor(0);
 }
 
 // ── Heat shimmer (Summer) ─────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ function addHeat(scene: Phaser.Scene) {
         quantity:  2,
         tint:      [0xffee88, 0xffcc44, 0xffddaa, 0xffffff],
         blendMode: Phaser.BlendModes.ADD,
-    }).setDepth(1.5);
+    }).setDepth(1.5).setScrollFactor(0);
 
     // Occasional bright sun-glint particles scattered mid-maze
     scene.add.particles(0, HEADER + MAZE_H * 0.5, 'heatdot', {
@@ -138,7 +138,7 @@ function addHeat(scene: Phaser.Scene) {
         quantity:  1,
         tint:      [0xffffff, 0xffffcc, 0xffee88],
         blendMode: Phaser.BlendModes.ADD,
-    }).setDepth(1.5);
+    }).setDepth(1.5).setScrollFactor(0);
 }
 
 // ── Falling leaves (Fall) ─────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ function addLeaves(scene: Phaser.Scene) {
         lifespan:  { min: 5000, max: 9000 },
         frequency: 420,
         quantity:  1,
-    }).setDepth(1.5);
+    }).setDepth(1.5).setScrollFactor(0);
 
     // Lighter scattered wisp — smaller leaves, faster horizontal movement
     scene.add.particles(0, HEADER - 5, 'leaf', {
@@ -170,7 +170,7 @@ function addLeaves(scene: Phaser.Scene) {
         lifespan:  { min: 4000, max: 7000 },
         frequency: 600,
         quantity:  1,
-    }).setDepth(1.5);
+    }).setDepth(1.5).setScrollFactor(0);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -182,7 +182,10 @@ export function addWeather(scene: Phaser.Scene, seasonName: string) {
         case 'Winter':   addSnow(scene);   break;
         case 'WinterY2': addSnow(scene);   break;
         case 'Spring':   addRain(scene);   break;
+        case 'SpringY2': addRain(scene);   break;
         case 'Summer':   addHeat(scene);   break;
+        case 'SummerY2': addHeat(scene);   break;
         case 'Fall':     addLeaves(scene); break;
+        case 'FallY2':   addLeaves(scene); break;
     }
 }

@@ -496,27 +496,33 @@ function createBlackBear(scene: Phaser.Scene, x: number, y: number): Phaser.Game
 
 export function buildY2ObjectiveSprite(
     scene: Phaser.Scene, cx: number, cy: number, seasonName: string,
+    bonus = false,
 ): Phaser.GameObjects.Container {
     switch (seasonName) {
-        case 'SpringY2':  return buildHoneycombSprite(scene, cx, cy);
-        case 'SummerY2':  return buildBambooSprite(scene, cx, cy);
-        case 'FallY2':    return buildBerryBushSprite(scene, cx, cy);
-        default:          return buildFishSprite(scene, cx, cy); // WinterY2
+        case 'SpringY2':  return buildHoneycombSprite(scene, cx, cy, bonus);
+        case 'SummerY2':  return buildBambooSprite(scene, cx, cy, bonus);
+        case 'FallY2':    return buildBerryBushSprite(scene, cx, cy, bonus);
+        default:          return buildFishSprite(scene, cx, cy, bonus); // WinterY2
     }
 }
 
-function buildFishSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
+function buildFishSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: silvery-blue rare fish vs regular orange
+    const body  = bonus ? 0x66aadd : 0xff8844;
+    const tail  = bonus ? 0x4488bb : 0xee6622;
+    const belly = bonus ? 0x99ccee : 0xffcc88;
+    const glow  = bonus ? 0xaaddff : 0xffffff;
     const parts: Phaser.GameObjects.GameObject[] = [
-        scene.add.circle(0, 0, 22, 0xffffff, 0.60),
+        scene.add.circle(0, 0, 22, glow, 0.60),
         // Body
-        scene.add.ellipse(0, 0, 24, 14, 0xff8844),
+        scene.add.ellipse(0, 0, 24, 14, body),
         // Tail fin
-        scene.add.triangle(14, 0, 0, -8, 0, 8, 10, 0, 0xee6622),
+        scene.add.triangle(14, 0, 0, -8, 0, 8, 10, 0, tail),
         // Eye
         scene.add.circle(-6, -2, 3, 0xffffff),
         scene.add.circle(-6, -2, 1.5, 0x111111),
         // Belly highlight
-        scene.add.ellipse(0, 3, 16, 5, 0xffcc88, 0.6),
+        scene.add.ellipse(0, 3, 16, 5, belly, 0.6),
     ];
     const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, y: cy - 5, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
@@ -524,61 +530,75 @@ function buildFishSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.Ga
     return c;
 }
 
-function buildHoneycombSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
-    const gold = 0xffcc22, dark = 0xcc8800;
+function buildHoneycombSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: rich amber/rose crystallized honey vs regular gold
+    const cell = bonus ? 0xe8885a : 0xffcc22;
+    const dark = bonus ? 0xaa5533 : 0xcc8800;
+    const drip = bonus ? 0xdd7744 : 0xffaa00;
+    const glow = bonus ? 0xffccaa : 0xffffff;
     const parts: Phaser.GameObjects.GameObject[] = [
-        scene.add.circle(0, 0, 22, 0xffffff, 0.60),
+        scene.add.circle(0, 0, 22, glow, 0.60),
     ];
     // 7 hexagonal cells arranged in a honeycomb
     const offsets = [[0, 0], [-10, -6], [10, -6], [-10, 6], [10, 6], [0, -12], [0, 12]];
     for (const [ox, oy] of offsets) {
-        parts.push(scene.add.circle(ox, oy, 6, gold, 0.9));
+        parts.push(scene.add.circle(ox, oy, 6, cell, 0.9));
         parts.push(scene.add.circle(ox, oy, 3.5, dark, 0.5));
     }
     // Drip
-    parts.push(scene.add.ellipse(4, 16, 4, 7, 0xffaa00, 0.8));
+    parts.push(scene.add.ellipse(4, 16, 4, 7, drip, 0.8));
     const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
     return c;
 }
 
-function buildBambooSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
-    const green = 0x66bb44, dark = 0x448822, light = 0x88dd66;
+function buildBambooSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: golden bamboo vs regular green
+    const stalk = bonus ? 0xccaa44 : 0x66bb44;
+    const node  = bonus ? 0x998822 : 0x448822;
+    const leaf  = bonus ? 0xddcc55 : 0x88dd66;
+    const glow  = bonus ? 0xfff8cc : 0xffffff;
     const parts: Phaser.GameObjects.GameObject[] = [
-        scene.add.circle(0, 0, 22, 0xffffff, 0.60),
+        scene.add.circle(0, 0, 22, glow, 0.60),
         // Two bamboo stalks
-        scene.add.rectangle(-5, 0, 6, 28, green),
-        scene.add.rectangle( 5, 0, 6, 28, green),
+        scene.add.rectangle(-5, 0, 6, 28, stalk),
+        scene.add.rectangle( 5, 0, 6, 28, stalk),
         // Nodes
-        scene.add.rectangle(-5, -6, 8, 3, dark, 0.7),
-        scene.add.rectangle(-5,  6, 8, 3, dark, 0.7),
-        scene.add.rectangle( 5, -3, 8, 3, dark, 0.7),
-        scene.add.rectangle( 5,  9, 8, 3, dark, 0.7),
+        scene.add.rectangle(-5, -6, 8, 3, node, 0.7),
+        scene.add.rectangle(-5,  6, 8, 3, node, 0.7),
+        scene.add.rectangle( 5, -3, 8, 3, node, 0.7),
+        scene.add.rectangle( 5,  9, 8, 3, node, 0.7),
         // Leaves
-        scene.add.ellipse(-14, -8, 12, 5, light, 0.8).setAngle(-30),
-        scene.add.ellipse( 14, -4, 12, 5, light, 0.8).setAngle(25),
+        scene.add.ellipse(-14, -8, 12, 5, leaf, 0.8).setAngle(-30),
+        scene.add.ellipse( 14, -4, 12, 5, leaf, 0.8).setAngle(25),
     ];
     const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, angle: { from: -4, to: 4 }, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
     return c;
 }
 
-function buildBerryBushSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
-    const berries = [0xcc2244, 0xdd3355, 0xbb1133, 0xee4466];
-    const leaf = 0x558822;
+function buildBerryBushSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: purple/blue wild berries vs regular red/crimson
+    const berries = bonus
+        ? [0x6644bb, 0x7755cc, 0x5533aa, 0x8866dd]
+        : [0xcc2244, 0xdd3355, 0xbb1133, 0xee4466];
+    const leafCol  = bonus ? 0x446633 : 0x558822;
+    const leafDark = bonus ? 0x334422 : 0x447718;
+    const shine    = bonus ? 0xbb99ee : 0xff8899;
+    const glow     = bonus ? 0xddccff : 0xffffff;
     const parts: Phaser.GameObjects.GameObject[] = [
-        scene.add.circle(0, 0, 22, 0xffffff, 0.60),
+        scene.add.circle(0, 0, 22, glow, 0.60),
         // Leaves
-        scene.add.ellipse(-6, 4, 16, 10, leaf, 0.8).setAngle(-15),
-        scene.add.ellipse( 6, 4, 16, 10, leaf, 0.8).setAngle(15),
-        scene.add.ellipse( 0, -4, 14, 10, 0x447718, 0.7),
+        scene.add.ellipse(-6, 4, 16, 10, leafCol, 0.8).setAngle(-15),
+        scene.add.ellipse( 6, 4, 16, 10, leafCol, 0.8).setAngle(15),
+        scene.add.ellipse( 0, -4, 14, 10, leafDark, 0.7),
     ];
     // Berries scattered on top
     const berryPos = [[-5, -6], [5, -4], [-2, 2], [7, 1], [-8, -1], [2, -8]];
     for (let i = 0; i < berryPos.length; i++) {
         const [bx, by] = berryPos[i];
         parts.push(scene.add.circle(bx, by, 4, berries[i % berries.length]));
-        parts.push(scene.add.circle(bx - 1, by - 1, 1.5, 0xff8899, 0.6));
+        parts.push(scene.add.circle(bx - 1, by - 1, 1.5, shine, 0.6));
     }
     const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, scaleX: 1.06, scaleY: 1.06, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });

@@ -903,10 +903,9 @@ export default class GameY2Scene extends Phaser.Scene {
             const pos = bonusShuffled[i];
             const cx = pos.col * TILE + TILE / 2;
             const cy = pos.row * TILE + TILE / 2;
-            const sprite = buildY2ObjectiveSprite(this, cx, cy, season.name);
-            // Make bonus objectives slightly smaller + sparkly tint
+            const sprite = buildY2ObjectiveSprite(this, cx, cy, season.name, true);
+            // Bonus objectives slightly smaller than regular
             sprite.setScale(0.75);
-            sprite.setAlpha(0.85);
             this.mazeLayer.add(sprite);
             this.bonusSprites.push(sprite);
             this.bonusPositions.push(pos);
