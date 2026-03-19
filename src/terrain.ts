@@ -117,12 +117,12 @@ export function generateMountainMap(cols: number, _rows: number, seasonName?: st
                 }
                 cursor = pathCenter;
 
-                // Dead-end spurs — short 2-3 cell branches off the main trail
+                // Dead-end spurs — diagonal winding branches off the main trail
                 const spurs = Math.floor(zone.height / 3);
                 for (let s = 0; s < spurs; s++) {
                     // Pick a random OPEN cell on the trail within this zone
                     const sr = top + 1 + Math.floor(Math.random() * Math.max(1, zone.height - 2));
-                    if (sr >= bot) continue;
+                    if (sr >= bot - 1) continue;  // leave room to wander vertically
                     // Find trail cells in this row
                     const trailCols: number[] = [];
                     for (let c = 0; c < cols; c++) {
@@ -132,14 +132,29 @@ export function generateMountainMap(cols: number, _rows: number, seasonName?: st
                     // Pick an edge cell of the trail (leftmost or rightmost)
                     const goLeft = Math.random() < 0.5;
                     const startC = goLeft ? trailCols[0] : trailCols[trailCols.length - 1];
-                    const dir = goLeft ? -1 : 1;
-                    // Carve 2-3 cells in that direction
-                    const len = 2 + Math.floor(Math.random() * 2);
-                    for (let i = 1; i <= len; i++) {
-                        const nc2 = startC + dir * i;
-                        if (nc2 < 0 || nc2 >= cols) break;
-                        if (grid[sr][nc2] === Terrain.OPEN) break; // hit another path
-                        grid[sr][nc2] = Terrain.OPEN;
+                    const dirH = goLeft ? -1 : 1;
+                    // Carve 3-5 cells in a winding path — each step moves
+                    // sideways, then may also step up or down (L-shaped moves
+                    // so every cell is orthogonally reachable)
+                    const len = 3 + Math.floor(Math.random() * 3);
+                    let sc = startC;
+                    let srow = sr;
+                    for (let i = 0; i < len; i++) {
+                        // Horizontal step
+                        sc += dirH;
+                        if (sc < 0 || sc >= cols) break;
+                        if (grid[srow][sc] === Terrain.OPEN) break; // hit another path
+                        grid[srow][sc] = Terrain.OPEN;
+                        // Then optionally a vertical step (creates the winding shape)
+                        const vRoll = Math.random();
+                        let nextRow = srow;
+                        if (vRoll < 0.4 && srow - 1 > top) nextRow = srow - 1;
+                        else if (vRoll < 0.8 && srow + 1 < bot - 1) nextRow = srow + 1;
+                        if (nextRow !== srow) {
+                            if (grid[nextRow][sc] === Terrain.OPEN) break; // hit another path
+                            grid[nextRow][sc] = Terrain.OPEN;
+                            srow = nextRow;
+                        }
                     }
                 }
 
@@ -161,18 +176,33 @@ export function generateMountainMap(cols: number, _rows: number, seasonName?: st
             }
 
             case 'water': {
+                // Mountain banks on edges, water in the middle
+                const bankW = 2 + Math.floor(Math.random() * 2); // 2-3 cols of rock per side
                 for (let r = top; r < bot; r++) {
                     for (let c = 0; c < cols; c++) {
-                        grid[r][c] = Terrain.WATER;
+                        if (c < bankW || c >= cols - bankW) {
+                            grid[r][c] = Terrain.ROCK;
+                        } else {
+                            grid[r][c] = Terrain.WATER;
+                        }
                     }
                 }
-                let bc = cursor;
+                // Jagged bank edges — randomly extend rock 0-1 cells inward
+                for (let r = top; r < bot; r++) {
+                    if (Math.random() < 0.5 && bankW < cols / 2 - 1) {
+                        grid[r][bankW] = Terrain.ROCK;
+                    }
+                    if (Math.random() < 0.5 && cols - bankW - 1 >= cols / 2 + 1) {
+                        grid[r][cols - bankW - 1] = Terrain.ROCK;
+                    }
+                }
+                let bc = Math.max(bankW, Math.min(cols - bankW - 2, cursor));
                 for (let r = bot - 1; r >= top; r--) {
                     grid[r][bc] = Terrain.OPEN;
-                    if (bc + 1 < cols) grid[r][bc + 1] = Terrain.OPEN;
+                    if (bc + 1 < cols - bankW) grid[r][bc + 1] = Terrain.OPEN;
                     const d = Math.random();
-                    if (d < driftL && bc > 0) bc--;
-                    else if (d > 1 - driftR && bc + 1 < cols - 1) bc++;
+                    if (d < driftL && bc > bankW) bc--;
+                    else if (d > 1 - driftR && bc + 1 < cols - bankW - 1) bc++;
                 }
                 cursor = bc;
                 break;

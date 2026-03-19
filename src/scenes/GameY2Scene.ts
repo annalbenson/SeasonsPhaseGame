@@ -519,7 +519,10 @@ export default class GameY2Scene extends Phaser.Scene {
                 case TimeOfDay.DUSK:   color = 0x331800; alpha = 0.15; break;
                 case TimeOfDay.NIGHT:  color = 0x000822; alpha = 0.35; break;
             }
-            this.tintOverlay.setFillStyle(color);
+            // Preserve current alpha while changing the fill color —
+            // setFillStyle(color) without an alpha arg resets fill alpha to 1,
+            // which causes a dark flash before the tween kicks in.
+            this.tintOverlay.setFillStyle(color, this.tintOverlay.alpha);
             this.tweens.add({
                 targets: this.tintOverlay,
                 alpha,

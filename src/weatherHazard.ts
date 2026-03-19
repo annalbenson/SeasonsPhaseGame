@@ -381,6 +381,11 @@ class FloodHazard implements WeatherHazard {
                 this.flooded.delete(key);
                 const overlay = this.overlays.get(key);
                 if (overlay) {
+                    const waves = (overlay as any)._floodWaves as Phaser.GameObjects.Graphics | undefined;
+                    if (waves) {
+                        this.scene.tweens.add({ targets: waves, alpha: 0, duration: 600,
+                            onComplete: () => waves.destroy() });
+                    }
                     this.scene.tweens.add({
                         targets: overlay, alpha: 0, duration: 600,
                         onComplete: () => { overlay.destroy(); this.overlays.delete(key); },
@@ -407,12 +412,27 @@ class FloodHazard implements WeatherHazard {
                 if (!this.overlays.has(key)) {
                     const cx = c * TILE + TILE / 2;
                     const cy = r * TILE + TILE / 2;
-                    const overlay = this.scene.add.rectangle(cx, cy, TILE, TILE, 0x2060c0, 0.4);
+                    // Container with solid water fill + wave lines for clear visibility
+                    const overlay = this.scene.add.rectangle(cx, cy, TILE, TILE, 0x1858a0, 0.55);
                     this.mazeLayer.add(overlay);
+                    // Animated wave lines on top
+                    const waves = this.scene.add.graphics();
+                    waves.lineStyle(2, 0x60b8e8, 0.7);
+                    waves.strokeLineShape(new Phaser.Geom.Line(cx - 18, cy - 6, cx + 18, cy - 6));
+                    waves.strokeLineShape(new Phaser.Geom.Line(cx - 12, cy + 6, cx + 12, cy + 6));
+                    waves.lineStyle(1.5, 0x80d0f0, 0.5);
+                    waves.strokeLineShape(new Phaser.Geom.Line(cx - 14, cy, cx + 14, cy));
+                    this.mazeLayer.add(waves);
                     this.scene.tweens.add({
-                        targets: overlay, alpha: { from: 0.2, to: 0.45 },
+                        targets: waves, y: { from: 0, to: 3 }, yoyo: true,
+                        repeat: -1, duration: 1400, ease: 'Sine.easeInOut',
+                    });
+                    this.scene.tweens.add({
+                        targets: overlay, alpha: { from: 0.45, to: 0.65 },
                         yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut',
                     });
+                    // Store overlay for cleanup; tag waves onto it
+                    (overlay as any)._floodWaves = waves;
                     this.overlays.set(key, overlay);
                 }
             }
@@ -479,7 +499,11 @@ class FloodHazard implements WeatherHazard {
         if (this.riseTimer) this.riseTimer.destroy();
         for (const cloud of this.clouds) cloud.gfx.destroy();
         this.clouds = [];
-        for (const o of this.overlays.values()) o.destroy();
+        for (const o of this.overlays.values()) {
+            const waves = (o as any)._floodWaves as Phaser.GameObjects.Graphics | undefined;
+            if (waves) waves.destroy();
+            o.destroy();
+        }
         this.overlays.clear();
         for (const o of this.risenTiles) o.destroy();
         this.risenTiles = [];
