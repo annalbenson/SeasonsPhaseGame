@@ -13,13 +13,17 @@ Navigate to `http://localhost:5173`. Guide your character through a procedurally
 
 **Controls:**
 - **Arrow keys / WASD** — tap to step, hold to slide
-- **SPACE** — use seasonal skill (15s cooldown)
+- **SPACE** — use seasonal skill (15s cooldown; BURROW is a toggle — press again to emerge)
 - **R** — new maze (same month) · **M** — return to title · **E** — skip to end screen
 
 ## Game modes
 
-- **New Game** — standard fog decay (30s reveal, 15s fade)
-- **New Hard Game** — faster fog decay (10s reveal, 8s fade) for more time pressure
+- **Year One** — standard fog decay (30s reveal, 15s fade)
+- **Year One (Hard Mode)** — faster fog decay (10s reveal, 8s fade) for more time pressure
+- **Year One (Random Start)** — start at a random month instead of January
+- **Year Two** — an alternate year mode
+- **Map Toolkit** — build and test your own maps
+- **My Stats** — view your gameplay statistics (requires sign-in)
 
 ## Tutorial
 
@@ -30,10 +34,10 @@ A 9-step guided tutorial accessible from the title screen ("How to Play"). Each 
 3. Enemies & hiding — avoid the hazard using hiding spots
 4. Objectives — collect treasures with backtracking before the goal unlocks
 5. Fog of war — navigate with limited visibility
-6. Winter skill (HOP) — leap over obstacles
+6. Winter skill (BURROW) — dig in to hide, emerge when safe
 7. Spring skill (BUZZ) — stun nearby enemies
 8. Summer skill (GLOW) — reveal the area through fog
-9. Fall skill (DASH) — sprint 3 cells in one move
+9. Fall skill (DASH) — sprint 3 cells past enemies
 
 ## Seasons
 
@@ -41,7 +45,7 @@ The game cycles through all 12 months, each with a distinct season palette, weat
 
 | Season | Player | Hazard | Hiding spot | Objective | Skill |
 |--------|--------|--------|-------------|-----------|-------|
-| Winter (Jan–Feb, Dec) | Bunny | Owl | Snow pile | Collect 2 snowflakes | HOP — leap over an obstacle |
+| Winter (Jan–Feb, Dec) | Bunny | Owl | Snow pile | Collect 2 snowflakes | BURROW — toggle dig in/emerge |
 | Spring (Mar–May) | Bee | Frog | Tall grass | Pollinate 3 flowers | BUZZ — stun nearby enemies |
 | Summer (Jun–Aug) | Fairy | Snake | Bush | Water 2 plants | GLOW — reveal surrounding fog |
 | Fall (Sep–Nov) | Squirrel | Fox | Leaf pile | Plant 2 acorns | DASH — sprint 3 cells forward |
@@ -52,7 +56,7 @@ Skills recharge on a 15-second cooldown.
 
 A roaming predator patrols the maze. Getting within 5 cells triggers hunting mode (red aura). Getting caught costs a life — 3 per month. Lose all 3 and the season restarts from its first month.
 
-**Hiding:** step into a bush to become invisible. Bushes are guaranteed near the hazard spawn, along the solution path, and at the midpoint between you and the enemy.
+**Hiding:** step into a bush to become invisible. Bushes are guaranteed near the hazard spawn, along the solution path, and at the midpoint between you and the enemy. Hazards will walk over hidden players rather than blocking them, so you won't get stuck waiting.
 
 **Collision:** the game checks for player–enemy contact on both player moves and enemy moves, so fast clicking won't let you sneak past. The Fall DASH skill is the intended way to evade enemies.
 

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL, VERSION } from '../constants';
+import { DEPTH } from '../gameplay';
 
 // Runs in parallel on top of every other scene.
 // Owns the mute button so neither MenuScene nor GameScene has to.
@@ -16,7 +17,7 @@ export default class UIScene extends Phaser.Scene {
                 backgroundColor: '#00000055',
                 padding: { x: 7, y: 4 },
             })
-            .setDepth(100)
+            .setDepth(DEPTH.UI)
             .setOrigin(1, 0)
             .setInteractive({ useHandCursor: true });
 
@@ -31,7 +32,7 @@ export default class UIScene extends Phaser.Scene {
         this.add.text(MAX_COLS * TILE + PANEL - 8, MAX_ROWS * TILE + HEADER - 8, VERSION, {
             fontSize: '12px',
             color: '#555566',
-        }).setOrigin(1, 1).setDepth(100);
+        }).setOrigin(1, 1).setDepth(DEPTH.UI);
     }
 
     private label(): string {

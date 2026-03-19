@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { SeasonTheme } from './seasons';
+import { DEPTH } from './gameplay';
 
 // ── Player sprite factory ─────────────────────────────────────────────────────
 // Pure construction functions — no game state, just scene.add calls and tweens.
@@ -146,7 +147,635 @@ export function createFairy(scene: Phaser.Scene, x: number, y: number, glowColor
     return outer;
 }
 
-// ── Objective sprites ───────────────────────────────────────────────────────
+// ── Enemy sprite factory ────────────────────────────────────────────────────
+// Shared by Hazard class and TutorialScene.
+
+export function createEnemySprite(
+    scene: Phaser.Scene, x: number, y: number, seasonName: string,
+    depth = DEPTH.HAZARD,
+): Phaser.GameObjects.Container {
+    switch (seasonName) {
+        case 'Spring':   return createFrog(scene, x, y, depth);
+        case 'Fall':     return createFox(scene, x, y, depth);
+        case 'Winter':   return createOwl(scene, x, y, depth);
+        case 'WinterY2': return createWolf(scene, x, y, depth);
+        default:         return createSnake(scene, x, y, depth); // Summer
+    }
+}
+
+function createSnake(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const bodyCol  = 0xcc5500;
+    const headCol  = 0xdd6600;
+    const bellyCol = 0xffcc88;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+    const tail = scene.add.circle(-13, -10, 4, bodyCol);
+    const s4   = scene.add.circle(-18,  -3, 6, bodyCol);
+    const s3   = scene.add.circle(-17,   7, 7, bodyCol);
+    const s2   = scene.add.circle(-11,  13, 8, bodyCol);
+    const s1   = scene.add.circle( -4,   9, 9, bodyCol);
+
+    const head  = scene.add.ellipse(0, 0, 20, 14, headCol);
+    const belly = scene.add.ellipse(0, 1, 12,  7, bellyCol, 0.80);
+
+    const eyeL = scene.add.circle(-5, -4, 2.5, 0xffffff);
+    const pupL = scene.add.circle(-5, -4, 1.5, 0x111111);
+    const eyeR = scene.add.circle( 4, -4, 2.5, 0xffffff);
+    const pupR = scene.add.circle( 4, -4, 1.5, 0x111111);
+
+    const tongue = scene.add.graphics();
+    tongue.lineStyle(1.5, 0xee1111);
+    tongue.strokeLineShape(new Phaser.Geom.Line( 7,  0, 13,  0));
+    tongue.strokeLineShape(new Phaser.Geom.Line(13,  0, 17, -3));
+    tongue.strokeLineShape(new Phaser.Geom.Line(13,  0, 17,  3));
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, s4, s3, s2, s1, head, belly,
+        eyeL, pupL, eyeR, pupR, tongue,
+    ]);
+    const outer = scene.add.container(x, y, [visual]);
+    outer.setDepth(depth);
+
+    scene.tweens.add({ targets: tongue, alpha: { from: 1, to: 0 }, yoyo: true, repeat: -1, duration: 190 });
+    scene.tweens.add({ targets: visual, angle: { from: -7, to: 7 }, yoyo: true, repeat: -1, duration: 1300, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createFrog(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const green  = 0x44aa22;
+    const dark   = 0x2a7a10;
+    const belly  = 0x99cc44;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const legBL = scene.add.ellipse(-15, 14, 16, 8, dark, 0.85).setAngle(-35);
+    const legBR = scene.add.ellipse( 15, 14, 16, 8, dark, 0.85).setAngle( 35);
+    const legFL = scene.add.ellipse(-16, -5, 10, 6, dark, 0.8).setAngle(-20);
+    const legFR = scene.add.ellipse( 16, -5, 10, 6, dark, 0.8).setAngle( 20);
+
+    const body      = scene.add.circle(0, 4, 18, green);
+    const bellySpot = scene.add.ellipse(0, 6, 22, 14, belly, 0.45);
+    const head      = scene.add.circle(0, -10, 12, 0x55bb33);
+    const mouth     = scene.add.ellipse(0, -4, 20, 5, dark, 0.65);
+    const nosL      = scene.add.circle(-4, -12, 2, dark);
+    const nosR      = scene.add.circle( 4, -12, 2, dark);
+
+    const eyeL  = scene.add.circle(-14, -12, 8, 0xffffff);
+    const eyeR  = scene.add.circle( 14, -12, 8, 0xffffff);
+    const irisL = scene.add.circle(-14, -12, 5, 0xcc8800);
+    const irisR = scene.add.circle( 14, -12, 5, 0xcc8800);
+    const pupL  = scene.add.circle(-14, -12, 2.5, 0x111111);
+    const pupR  = scene.add.circle( 14, -12, 2.5, 0x111111);
+
+    const visual = scene.add.container(0, 0, [
+        danger, legBL, legBR, legFL, legFR,
+        body, bellySpot, head, mouth, nosL, nosR,
+        eyeL, eyeR, irisL, irisR, pupL, pupR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]);
+    outer.setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [eyeL, eyeR, irisL, irisR], scale: { from: 1, to: 1.12 }, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createFox(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const orange = 0xdd5500;
+    const light  = 0xee8833;
+    const cream  = 0xffd090;
+    const dark   = 0x221100;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(0, 17, 18, 14, light, 0.9);
+    const tailTip = scene.add.circle(0, 23, 6, cream, 0.9);
+    const body    = scene.add.ellipse(0, 3, 18, 22, orange);
+    const belly   = scene.add.ellipse(0, 4, 10, 15, cream, 0.5);
+    const pawBL   = scene.add.circle(-8, 13, 4, dark, 0.65);
+    const pawBR   = scene.add.circle( 8, 13, 4, dark, 0.65);
+
+    const head     = scene.add.ellipse(0, -8, 16, 14, orange);
+    const snout    = scene.add.ellipse(0, -17, 8, 10, light);
+    const nose     = scene.add.circle(0, -21, 3, dark);
+    const muzzleL  = scene.add.ellipse(-6, -16, 7, 6, cream, 0.6);
+    const muzzleR  = scene.add.ellipse( 6, -16, 7, 6, cream, 0.6);
+
+    const earL  = scene.add.ellipse(-10, -13, 8, 12, orange);
+    const earR  = scene.add.ellipse( 10, -13, 8, 12, orange);
+    const earLi = scene.add.ellipse(-10, -13, 4,  7, dark, 0.45);
+    const earRi = scene.add.ellipse( 10, -13, 4,  7, dark, 0.45);
+
+    const eyeL = scene.add.circle(-6, -10, 2.5, 0xdd9900);
+    const eyeR = scene.add.circle( 6, -10, 2.5, 0xdd9900);
+    const pupL = scene.add.circle(-6, -10, 1.5, dark);
+    const pupR = scene.add.circle( 6, -10, 1.5, dark);
+
+    const pawFL = scene.add.circle(-7, -1, 3.5, dark, 0.55);
+    const pawFR = scene.add.circle( 7, -1, 3.5, dark, 0.55);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tailTip,
+        body, belly, pawBL, pawBR,
+        head, muzzleL, muzzleR, snout, nose,
+        earL, earR, earLi, earRi,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]);
+    outer.setDepth(depth);
+
+    scene.tweens.add({ targets: [tail, tailTip], angle: { from: -13, to: 13 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createOwl(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const brown  = 0x6b4520;
+    const light  = 0x9a6840;
+    const cream  = 0xe8dcc8;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const body  = scene.add.circle(0, 5, 18, brown);
+    const wingL = scene.add.ellipse(-14, 6, 12, 22, light, 0.75);
+    const wingR = scene.add.ellipse( 14, 6, 12, 22, light, 0.75);
+    const tail  = scene.add.ellipse(0, 19, 18, 10, light, 0.9);
+    const face  = scene.add.circle(0, -4, 13, cream);
+
+    const tuftL = scene.add.ellipse(-8, -18, 7, 13, brown);
+    const tuftR = scene.add.ellipse( 8, -18, 7, 13, brown);
+
+    const eyeL   = scene.add.circle(-6, -6, 6, 0xffe060);
+    const eyeR   = scene.add.circle( 6, -6, 6, 0xffe060);
+    const pupL   = scene.add.circle(-6, -6, 3.5, 0x111111);
+    const pupR   = scene.add.circle( 6, -6, 3.5, 0x111111);
+    const glintL = scene.add.circle(-5, -7, 1.2, 0xffffff);
+    const glintR = scene.add.circle( 7, -7, 1.2, 0xffffff);
+    const beak   = scene.add.ellipse(0, -1, 9, 6, 0xcc8800);
+
+    const visual = scene.add.container(0, 0, [
+        danger, body, wingL, wingR, tail,
+        face, tuftL, tuftR,
+        eyeL, eyeR, pupL, pupR, glintL, glintR, beak,
+    ]);
+    const outer = scene.add.container(x, y, [visual]);
+    outer.setDepth(depth);
+
+    scene.tweens.add({ targets: visual, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 2600, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [eyeL, eyeR], alpha: { from: 0.75, to: 1.0 }, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createWolf(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const grey   = 0x808898;
+    const dark   = 0x404858;
+    const light  = 0xb0b8c8;
+    const white  = 0xd8dce8;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(0, 20, 12, 16, dark, 0.85);
+    const tailTip = scene.add.circle(0, 27, 5, light, 0.9);
+    const body    = scene.add.ellipse(0, 5, 22, 24, grey);
+    const belly   = scene.add.ellipse(0, 8, 14, 16, white, 0.4);
+    const pawBL   = scene.add.circle(-9, 16, 4, dark, 0.7);
+    const pawBR   = scene.add.circle( 9, 16, 4, dark, 0.7);
+
+    const head   = scene.add.ellipse(0, -10, 18, 16, grey);
+    const snout  = scene.add.ellipse(0, -20, 10, 12, light);
+    const nose   = scene.add.circle(0, -25, 3.5, 0x222222);
+
+    // Ears peek from sides of head (head 18x16 at Y=-10, top=-18, sides=±9)
+    // triangle(x,y, v1x,v1y, v2x,v2y, v3x,v3y) — origin at bbox center
+    // (0,-6),(-4,0),(4,0) → bbox center (0,-3) → tip renders at y + (-6-(-3)) = y-3
+    const earL  = scene.add.triangle(-10, -13, 0, -6, -4, 0, 4, 0, grey);
+    const earR  = scene.add.triangle( 10, -13, 0, -6, -4, 0, 4, 0, grey);
+    const earLi = scene.add.triangle(-10, -12, 0, -4, -2, 0, 2, 0, dark, 0.5);
+    const earRi = scene.add.triangle( 10, -12, 0, -4, -2, 0, 2, 0, dark, 0.5);
+
+    const eyeL = scene.add.circle(-6, -12, 3, 0xddaa00);
+    const eyeR = scene.add.circle( 6, -12, 3, 0xddaa00);
+    const pupL = scene.add.circle(-6, -12, 1.8, 0x111111);
+    const pupR = scene.add.circle( 6, -12, 1.8, 0x111111);
+
+    const pawFL = scene.add.circle(-8, 0, 4, dark, 0.6);
+    const pawFR = scene.add.circle( 8, 0, 4, dark, 0.6);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tailTip,
+        body, belly, pawBL, pawBR,
+        earL, earR, earLi, earRi,
+        head, snout, nose,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]);
+    outer.setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [tail, tailTip], angle: { from: -8, to: 8 }, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+// ── Y2 Predator sprite factory ─────────────────────────────────────────────
+
+export function createPredatorSprite(
+    scene: Phaser.Scene, x: number, y: number, seasonName: string,
+    depth = DEPTH.HAZARD,
+): Phaser.GameObjects.Container {
+    switch (seasonName) {
+        case 'SpringY2':  return createCougar(scene, x, y, depth);
+        case 'SummerY2':  return createTiger(scene, x, y, depth);
+        case 'FallY2':    return createCoyote(scene, x, y, depth);
+        default:          return createWolf(scene, x, y, depth); // WinterY2
+    }
+}
+
+function createCougar(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const tawny = 0xc8944a;
+    const dark  = 0xa06830;
+    const cream = 0xe8c888;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(14, 18, 8, 22, dark, 0.85);
+    const tailTip = scene.add.circle(16, 28, 4, 0x886030, 0.9);
+    const body    = scene.add.ellipse(0, 5, 20, 22, tawny);
+    const belly   = scene.add.ellipse(0, 8, 12, 14, cream, 0.4);
+    const pawBL   = scene.add.circle(-8, 16, 4, dark, 0.7);
+    const pawBR   = scene.add.circle( 8, 16, 4, dark, 0.7);
+
+    const head  = scene.add.ellipse(0, -10, 16, 14, tawny);
+    const snout = scene.add.ellipse(0, -18, 8, 8, cream);
+    const nose  = scene.add.circle(0, -21, 2.5, 0x443322);
+
+    // Ears peek from sides of head (head 16x14 at Y=-10, top=-17, sides=±8)
+    const earL = scene.add.triangle(-9, -12, 0, -6, -4, 0, 4, 0, tawny);
+    const earR = scene.add.triangle( 9, -12, 0, -6, -4, 0, 4, 0, tawny);
+    const earLi = scene.add.triangle(-9, -11, 0, -4, -2, 0, 2, 0, dark, 0.5);
+    const earRi = scene.add.triangle( 9, -11, 0, -4, -2, 0, 2, 0, dark, 0.5);
+
+    const eyeL = scene.add.circle(-5, -11, 2.5, 0xccaa44);
+    const eyeR = scene.add.circle( 5, -11, 2.5, 0xccaa44);
+    const pupL = scene.add.circle(-5, -11, 1.5, 0x111111);
+    const pupR = scene.add.circle( 5, -11, 1.5, 0x111111);
+
+    const pawFL = scene.add.circle(-7, 0, 3.5, dark, 0.6);
+    const pawFR = scene.add.circle( 7, 0, 3.5, dark, 0.6);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tailTip,
+        body, belly, pawBL, pawBR,
+        earL, earR, earLi, earRi,
+        head, snout, nose,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]).setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1000, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [tail, tailTip], angle: { from: -6, to: 6 }, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createTiger(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const orange = 0xdd6600;
+    const stripe = 0x111100;
+    const cream  = 0xffcc88;
+    const dark   = 0x884400;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(12, 20, 8, 20, orange, 0.85);
+    const tStripe = scene.add.rectangle(12, 18, 8, 3, stripe, 0.6);
+    const body    = scene.add.ellipse(0, 5, 24, 26, orange);
+    const belly   = scene.add.ellipse(0, 8, 15, 17, cream, 0.4);
+    // Body stripes
+    const s1 = scene.add.rectangle(-5, -2, 3, 10, stripe, 0.5).setAngle(15);
+    const s2 = scene.add.rectangle( 5, -2, 3, 10, stripe, 0.5).setAngle(-15);
+    const s3 = scene.add.rectangle(-3,  8, 3,  8, stripe, 0.4).setAngle(10);
+    const s4 = scene.add.rectangle( 3,  8, 3,  8, stripe, 0.4).setAngle(-10);
+    const pawBL = scene.add.circle(-10, 17, 5, dark, 0.7);
+    const pawBR = scene.add.circle( 10, 17, 5, dark, 0.7);
+
+    const head  = scene.add.ellipse(0, -10, 20, 18, orange);
+    const snout = scene.add.ellipse(0, -18, 10, 10, cream);
+    const nose  = scene.add.circle(0, -22, 3, 0x332211);
+    // Face stripes
+    const fs1 = scene.add.rectangle(-8, -8, 2, 7, stripe, 0.6).setAngle(10);
+    const fs2 = scene.add.rectangle( 8, -8, 2, 7, stripe, 0.6).setAngle(-10);
+
+    // Ears peek from sides of head (head 20x18 at Y=-10, top=-19, sides=±10)
+    const earL = scene.add.circle(-11, -14, 4, orange);
+    const earR = scene.add.circle( 11, -14, 4, orange);
+    const earLi = scene.add.circle(-11, -14, 2.5, dark, 0.5);
+    const earRi = scene.add.circle( 11, -14, 2.5, dark, 0.5);
+
+    const eyeL = scene.add.circle(-6, -12, 3, 0xddbb22);
+    const eyeR = scene.add.circle( 6, -12, 3, 0xddbb22);
+    const pupL = scene.add.circle(-6, -12, 1.8, 0x111111);
+    const pupR = scene.add.circle( 6, -12, 1.8, 0x111111);
+
+    const pawFL = scene.add.circle(-9, 0, 4.5, dark, 0.6);
+    const pawFR = scene.add.circle( 9, 0, 4.5, dark, 0.6);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tStripe,
+        body, belly, s1, s2, s3, s4, pawBL, pawBR,
+        earL, earR, earLi, earRi,
+        head, snout, nose, fs1, fs2,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]).setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [tail, tStripe], angle: { from: -10, to: 10 }, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createCoyote(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const fur   = 0x998866;
+    const dark  = 0x665544;
+    const cream = 0xccbb99;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(10, 20, 7, 18, fur, 0.85);
+    const tailTip = scene.add.circle(12, 28, 4, dark, 0.8);
+    const body    = scene.add.ellipse(0, 5, 18, 20, fur);
+    const belly   = scene.add.ellipse(0, 8, 11, 13, cream, 0.4);
+    const pawBL   = scene.add.circle(-7, 15, 3.5, dark, 0.7);
+    const pawBR   = scene.add.circle( 7, 15, 3.5, dark, 0.7);
+
+    const head  = scene.add.ellipse(0, -9, 15, 13, fur);
+    const snout = scene.add.ellipse(0, -18, 8, 10, cream);
+    const nose  = scene.add.circle(0, -22, 2.5, 0x222222);
+
+    // Ears peek from sides of head (head 15x13 at Y=-9, top=-15.5, sides=±7.5)
+    const earL = scene.add.triangle(-8, -11, 0, -6, -4, 0, 4, 0, fur);
+    const earR = scene.add.triangle( 8, -11, 0, -6, -4, 0, 4, 0, fur);
+    const earLi = scene.add.triangle(-8, -10, 0, -4, -2, 0, 2, 0, 0xbb9977, 0.5);
+    const earRi = scene.add.triangle( 8, -10, 0, -4, -2, 0, 2, 0, 0xbb9977, 0.5);
+
+    const eyeL = scene.add.circle(-5, -11, 2.5, 0xbb8822);
+    const eyeR = scene.add.circle( 5, -11, 2.5, 0xbb8822);
+    const pupL = scene.add.circle(-5, -11, 1.5, 0x111111);
+    const pupR = scene.add.circle( 5, -11, 1.5, 0x111111);
+
+    const pawFL = scene.add.circle(-6, 0, 3, dark, 0.6);
+    const pawFR = scene.add.circle( 6, 0, 3, dark, 0.6);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tailTip,
+        body, belly, pawBL, pawBR,
+        earL, earR, earLi, earRi,
+        head, snout, nose,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]).setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [tail, tailTip], angle: { from: -10, to: 10 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+// ── Year Two bear sprites ───────────────────────────────────────────────────
+
+export function createY2PlayerSprite(
+    scene: Phaser.Scene, x: number, y: number, seasonName: string,
+): Phaser.GameObjects.Container {
+    switch (seasonName) {
+        case 'SpringY2':  return createBrownBear(scene, x, y);
+        case 'SummerY2':  return createPanda(scene, x, y);
+        case 'FallY2':    return createBlackBear(scene, x, y);
+        default:          return createPolarBear(scene, x, y); // WinterY2
+    }
+}
+
+function createPolarBear(scene: Phaser.Scene, x: number, y: number): Phaser.GameObjects.Container {
+    const white = 0xf0f4f8, cream = 0xd8dce0;
+    const glow  = scene.add.circle(0, 0, 24, 0xaaccff, 0.15);
+    const earL  = scene.add.circle(-12, -18, 6, cream);
+    const earR  = scene.add.circle( 12, -18, 6, cream);
+    const earLi = scene.add.circle(-12, -18, 3, 0x888888, 0.5);
+    const earRi = scene.add.circle( 12, -18, 3, 0x888888, 0.5);
+    const body  = scene.add.ellipse(0, 5, 26, 22, white);
+    const head  = scene.add.circle(0, -8, 12, white);
+    const snout = scene.add.ellipse(0, -3, 10, 7, cream);
+    const nose  = scene.add.circle(0, -5, 3, 0x222222);
+    const eyeL  = scene.add.circle(-5, -11, 2.5, 0x222244);
+    const eyeR  = scene.add.circle( 5, -11, 2.5, 0x222244);
+    const pawL  = scene.add.circle(-10, 14, 5, cream);
+    const pawR  = scene.add.circle( 10, 14, 5, cream);
+    const visual = scene.add.container(0, 0, [glow, earL, earR, earLi, earRi, body, head, snout, nose, eyeL, eyeR, pawL, pawR]);
+    const outer  = scene.add.container(x, y, [visual]);
+    scene.tweens.add({ targets: visual, y: 3, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.25 }, yoyo: true, repeat: -1, duration: 1500 });
+    return outer;
+}
+
+function createBrownBear(scene: Phaser.Scene, x: number, y: number): Phaser.GameObjects.Container {
+    const brown = 0x8b5e3c, dark = 0x5a3a20, snoutCol = 0xc8a070;
+    const glow  = scene.add.circle(0, 0, 24, 0xcc8844, 0.15);
+    const earL  = scene.add.circle(-12, -18, 7, brown);
+    const earR  = scene.add.circle( 12, -18, 7, brown);
+    const earLi = scene.add.circle(-12, -18, 3.5, dark, 0.6);
+    const earRi = scene.add.circle( 12, -18, 3.5, dark, 0.6);
+    const body  = scene.add.ellipse(0, 5, 28, 24, brown);
+    const belly = scene.add.ellipse(0, 8, 16, 14, snoutCol, 0.35);
+    const head  = scene.add.circle(0, -8, 13, brown);
+    const snout = scene.add.ellipse(0, -2, 12, 8, snoutCol);
+    const nose  = scene.add.circle(0, -4, 3.5, 0x222222);
+    const eyeL  = scene.add.circle(-5, -11, 2.5, 0x332211);
+    const eyeR  = scene.add.circle( 5, -11, 2.5, 0x332211);
+    const pawL  = scene.add.circle(-11, 15, 6, dark);
+    const pawR  = scene.add.circle( 11, 15, 6, dark);
+    const visual = scene.add.container(0, 0, [glow, earL, earR, earLi, earRi, body, belly, head, snout, nose, eyeL, eyeR, pawL, pawR]);
+    const outer  = scene.add.container(x, y, [visual]);
+    scene.tweens.add({ targets: visual, y: 3, yoyo: true, repeat: -1, duration: 1000, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.22 }, yoyo: true, repeat: -1, duration: 1400 });
+    return outer;
+}
+
+function createPanda(scene: Phaser.Scene, x: number, y: number): Phaser.GameObjects.Container {
+    const white = 0xf0f0f0, black = 0x222222;
+    const glow  = scene.add.circle(0, 0, 24, 0x88cc44, 0.15);
+    const earL  = scene.add.circle(-13, -17, 7, black);
+    const earR  = scene.add.circle( 13, -17, 7, black);
+    const body  = scene.add.ellipse(0, 5, 26, 22, white);
+    // Black shoulders
+    const shoulderL = scene.add.ellipse(-10, 2, 14, 16, black, 0.85);
+    const shoulderR = scene.add.ellipse( 10, 2, 14, 16, black, 0.85);
+    const head  = scene.add.circle(0, -8, 13, white);
+    // Eye patches
+    const patchL = scene.add.ellipse(-6, -10, 8, 9, black);
+    const patchR = scene.add.ellipse( 6, -10, 8, 9, black);
+    const eyeL  = scene.add.circle(-6, -10, 2.5, 0xffffff);
+    const eyeR  = scene.add.circle( 6, -10, 2.5, 0xffffff);
+    const pupL  = scene.add.circle(-6, -10, 1.5, black);
+    const pupR  = scene.add.circle( 6, -10, 1.5, black);
+    const nose  = scene.add.circle(0, -4, 3, black);
+    const pawL  = scene.add.circle(-10, 14, 5, black);
+    const pawR  = scene.add.circle( 10, 14, 5, black);
+    const visual = scene.add.container(0, 0, [
+        glow, earL, earR, body, shoulderL, shoulderR,
+        head, patchL, patchR, eyeL, eyeR, pupL, pupR, nose, pawL, pawR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]);
+    scene.tweens.add({ targets: visual, y: 3, yoyo: true, repeat: -1, duration: 950, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.22 }, yoyo: true, repeat: -1, duration: 1300 });
+    return outer;
+}
+
+function createBlackBear(scene: Phaser.Scene, x: number, y: number): Phaser.GameObjects.Container {
+    const black = 0x2a2a30, dark = 0x1a1a20, snoutCol = 0x886644;
+    const glow  = scene.add.circle(0, 0, 24, 0xf09838, 0.15);
+    const earL  = scene.add.circle(-12, -18, 6, black);
+    const earR  = scene.add.circle( 12, -18, 6, black);
+    const earLi = scene.add.circle(-12, -18, 3, 0x443322, 0.5);
+    const earRi = scene.add.circle( 12, -18, 3, 0x443322, 0.5);
+    const body  = scene.add.ellipse(0, 5, 26, 22, black);
+    // Tan chest patch (V-shape signature)
+    const chest = scene.add.ellipse(0, 1, 10, 8, snoutCol, 0.5);
+    const head  = scene.add.circle(0, -8, 12, black);
+    const snout = scene.add.ellipse(0, -3, 10, 7, snoutCol);
+    const nose  = scene.add.circle(0, -5, 3, 0x111111);
+    const eyeL  = scene.add.circle(-5, -11, 2.5, 0xcc9944);
+    const eyeR  = scene.add.circle( 5, -11, 2.5, 0xcc9944);
+    const pawL  = scene.add.circle(-10, 14, 5, dark);
+    const pawR  = scene.add.circle( 10, 14, 5, dark);
+    const visual = scene.add.container(0, 0, [glow, earL, earR, earLi, earRi, body, chest, head, snout, nose, eyeL, eyeR, pawL, pawR]);
+    const outer  = scene.add.container(x, y, [visual]);
+    scene.tweens.add({ targets: visual, y: 3, yoyo: true, repeat: -1, duration: 950, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.22 }, yoyo: true, repeat: -1, duration: 1400 });
+    return outer;
+}
+
+// ── Year Two objective sprites ──────────────────────────────────────────────
+
+export function buildY2ObjectiveSprite(
+    scene: Phaser.Scene, cx: number, cy: number, seasonName: string,
+    bonus = false,
+): Phaser.GameObjects.Container {
+    switch (seasonName) {
+        case 'SpringY2':  return buildHoneycombSprite(scene, cx, cy, bonus);
+        case 'SummerY2':  return buildBambooSprite(scene, cx, cy, bonus);
+        case 'FallY2':    return buildBerryBushSprite(scene, cx, cy, bonus);
+        default:          return buildFishSprite(scene, cx, cy, bonus); // WinterY2
+    }
+}
+
+function buildFishSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: silvery-blue rare fish vs regular orange
+    const body  = bonus ? 0x66aadd : 0xff8844;
+    const tail  = bonus ? 0x4488bb : 0xee6622;
+    const belly = bonus ? 0x99ccee : 0xffcc88;
+    const glow  = bonus ? 0xaaddff : 0xffffff;
+    const parts: Phaser.GameObjects.GameObject[] = [
+        scene.add.circle(0, 0, 22, glow, 0.60),
+        // Body
+        scene.add.ellipse(0, 0, 24, 14, body),
+        // Tail fin
+        scene.add.triangle(14, 0, 0, -8, 0, 8, 10, 0, tail),
+        // Eye
+        scene.add.circle(-6, -2, 3, 0xffffff),
+        scene.add.circle(-6, -2, 1.5, 0x111111),
+        // Belly highlight
+        scene.add.ellipse(0, 3, 16, 5, belly, 0.6),
+    ];
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
+    scene.tweens.add({ targets: c, y: cy - 5, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: c, angle: { from: -8, to: 8 }, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
+    return c;
+}
+
+function buildHoneycombSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: rich amber/rose crystallized honey vs regular gold
+    const cell = bonus ? 0xe8885a : 0xffcc22;
+    const dark = bonus ? 0xaa5533 : 0xcc8800;
+    const drip = bonus ? 0xdd7744 : 0xffaa00;
+    const glow = bonus ? 0xffccaa : 0xffffff;
+    const parts: Phaser.GameObjects.GameObject[] = [
+        scene.add.circle(0, 0, 22, glow, 0.60),
+    ];
+    // 7 hexagonal cells arranged in a honeycomb
+    const offsets = [[0, 0], [-10, -6], [10, -6], [-10, 6], [10, 6], [0, -12], [0, 12]];
+    for (const [ox, oy] of offsets) {
+        parts.push(scene.add.circle(ox, oy, 6, cell, 0.9));
+        parts.push(scene.add.circle(ox, oy, 3.5, dark, 0.5));
+    }
+    // Drip
+    parts.push(scene.add.ellipse(4, 16, 4, 7, drip, 0.8));
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
+    scene.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
+    return c;
+}
+
+function buildBambooSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: golden bamboo vs regular green
+    const stalk = bonus ? 0xccaa44 : 0x66bb44;
+    const node  = bonus ? 0x998822 : 0x448822;
+    const leaf  = bonus ? 0xddcc55 : 0x88dd66;
+    const glow  = bonus ? 0xfff8cc : 0xffffff;
+    const parts: Phaser.GameObjects.GameObject[] = [
+        scene.add.circle(0, 0, 22, glow, 0.60),
+        // Two bamboo stalks
+        scene.add.rectangle(-5, 0, 6, 28, stalk),
+        scene.add.rectangle( 5, 0, 6, 28, stalk),
+        // Nodes
+        scene.add.rectangle(-5, -6, 8, 3, node, 0.7),
+        scene.add.rectangle(-5,  6, 8, 3, node, 0.7),
+        scene.add.rectangle( 5, -3, 8, 3, node, 0.7),
+        scene.add.rectangle( 5,  9, 8, 3, node, 0.7),
+        // Leaves
+        scene.add.ellipse(-14, -8, 12, 5, leaf, 0.8).setAngle(-30),
+        scene.add.ellipse( 14, -4, 12, 5, leaf, 0.8).setAngle(25),
+    ];
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
+    scene.tweens.add({ targets: c, angle: { from: -4, to: 4 }, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
+    return c;
+}
+
+function buildBerryBushSprite(scene: Phaser.Scene, cx: number, cy: number, bonus: boolean): Phaser.GameObjects.Container {
+    // Bonus: purple/blue wild berries vs regular red/crimson
+    const berries = bonus
+        ? [0x6644bb, 0x7755cc, 0x5533aa, 0x8866dd]
+        : [0xcc2244, 0xdd3355, 0xbb1133, 0xee4466];
+    const leafCol  = bonus ? 0x446633 : 0x558822;
+    const leafDark = bonus ? 0x334422 : 0x447718;
+    const shine    = bonus ? 0xbb99ee : 0xff8899;
+    const glow     = bonus ? 0xddccff : 0xffffff;
+    const parts: Phaser.GameObjects.GameObject[] = [
+        scene.add.circle(0, 0, 22, glow, 0.60),
+        // Leaves
+        scene.add.ellipse(-6, 4, 16, 10, leafCol, 0.8).setAngle(-15),
+        scene.add.ellipse( 6, 4, 16, 10, leafCol, 0.8).setAngle(15),
+        scene.add.ellipse( 0, -4, 14, 10, leafDark, 0.7),
+    ];
+    // Berries scattered on top
+    const berryPos = [[-5, -6], [5, -4], [-2, 2], [7, 1], [-8, -1], [2, -8]];
+    for (let i = 0; i < berryPos.length; i++) {
+        const [bx, by] = berryPos[i];
+        parts.push(scene.add.circle(bx, by, 4, berries[i % berries.length]));
+        parts.push(scene.add.circle(bx - 1, by - 1, 1.5, shine, 0.6));
+    }
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
+    scene.tweens.add({ targets: c, scaleX: 1.06, scaleY: 1.06, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
+    return c;
+}
+
+// ── Objective sprites (Year One) ────────────────────────────────────────────
 
 export function buildObjectiveSprite(scene: Phaser.Scene, cx: number, cy: number, seasonName: string): Phaser.GameObjects.Container {
     switch (seasonName) {
@@ -171,7 +800,7 @@ function buildFlowerSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.
         );
     }
     parts.push(scene.add.circle(0, 0, 5, 0xffe066));
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, scaleX: 1.1, scaleY: 1.1, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
     return c;
 }
@@ -192,7 +821,7 @@ function buildBerrySprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.G
         scene.add.ellipse(0, -14, 10, 5, 0x338822, 0.9),
         scene.add.ellipse(0, -12,  2, 6, 0x336622, 0.8),
     ];
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
     return c;
 }
@@ -207,7 +836,7 @@ function buildAcornSprite(scene: Phaser.Scene, cx: number, cy: number): Phaser.G
         scene.add.ellipse(  0,   2, 16, 20, 0xc8852a),
         scene.add.ellipse( -4,  -1,  5, 10, 0xdda050, 0.5),
     ];
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, angle: { from: -6, to: 6 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
     return c;
 }
@@ -223,7 +852,7 @@ function buildSnowflakeSprite(scene: Phaser.Scene, cx: number, cy: number): Phas
         parts.push(arm, tip);
     }
     parts.push(scene.add.circle(0, 0, 4, 0xffffff));
-    const c = scene.add.container(cx, cy, parts).setDepth(1.8);
+    const c = scene.add.container(cx, cy, parts).setDepth(DEPTH.SPRITE);
     scene.tweens.add({ targets: c, angle: 360, repeat: -1, duration: 8000, ease: 'Linear' });
     scene.tweens.add({ targets: c, y: cy - 6, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
     return c;

@@ -4,16 +4,21 @@ import { WALLS } from './maze';
 import { Hazard } from './hazard';
 import { FogOfWar } from './fog';
 import { statsEvents, STAT } from './statsEmitter';
+import { SeasonName } from './seasons';
+import {
+    SKILL_COOLDOWN, STUN_DURATION, GLOW_RADIUS,
+    DASH_DISTANCE, SWIM_DURATION, DEPTH,
+} from './gameplay';
 
 // ── Skill system ─────────────────────────────────────────────────────────────
 // Each season has a unique active ability with a shared cooldown timer.
 //
-//   Winter (HOP)   — directional: jump over one scenery obstacle
-//   Spring (STING) — immediate: stun an adjacent enemy for 5s
-//   Summer (GLOW)  — immediate: reveal a large fog area
-//   Fall   (DASH)  — directional: sprint 3 cells in one direction
+//   Winter (BURROW) — toggle: hide in place until SPACE again (like a bush)
+//   Spring (STING)  — immediate: stun an adjacent enemy for 5s
+//   Summer (GLOW)   — immediate: reveal a large fog area
+//   Fall   (DASH)   — directional: sprint 3 cells in one direction
 
-const DEFAULT_COOLDOWN = 15_000; // 15 seconds default
+const DEFAULT_COOLDOWN = SKILL_COOLDOWN;
 
 /** Shared state and scene references needed by all skills. */
 export interface SkillContext {
@@ -38,10 +43,13 @@ export interface SkillContext {
     checkHazardCollision(): void;
     setGrid(x: number, y: number): void;
     setMoving(m: boolean): void;
+    setBurrowed?(active: boolean): void;
+    emergeBurrow?(): void;
     setSwimming?(active: boolean): void;
 }
 
-export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial' | 'WinterY2';
+// Re-export so existing importers of SeasonName from skills.ts still work
+export type { SeasonName } from './seasons';
 
 export interface Skill {
     readonly name: string;
@@ -147,65 +155,56 @@ export class SkillManager {
 
 // ── Individual skill implementations ─────────────────────────────────────────
 
-const HOP: Skill = {
-    name: 'HOP',
-    label: 'hop — jump obstacle!',
-    isDirectional: true,
-    cooldown: 0,
+const BURROW: Skill = {
+    name: 'BURROW',
+    label: 'burrow — hide in place!',
+    isDirectional: false,
+    cooldown: DEFAULT_COOLDOWN,
 
-    activate: () => false, // directional — handled via tryDirectional
+    activate(ctx) {
+        if (!ctx.setBurrowed) return false;
 
-    tryDirectional(dx, dy, ctx) {
-        const adjX = ctx.gridX + dx, adjY = ctx.gridY + dy;
+        // If already burrowed, pressing SPACE again = emerge
+        if (ctx.emergeBurrow) {
+            ctx.emergeBurrow();
+            return false; // don't consume another cooldown
+        }
 
-        // Must have a wall-free passage to the adjacent cell
-        const walls = ctx.cells[ctx.gridY][ctx.gridX];
-        if (dx ===  1 && (walls & WALLS.RIGHT))  return false;
-        if (dx === -1 && (walls & WALLS.LEFT))   return false;
-        if (dy ===  1 && (walls & WALLS.BOTTOM)) return false;
-        if (dy === -1 && (walls & WALLS.TOP))    return false;
+        ctx.setBurrowed(true);
+        ctx.setMoving(true); // lock movement while burrowed
 
-        // Adjacent cell must be scenery-blocked (that's what we hop over)
-        if (!ctx.sceneryBlocked.has(`${adjX},${adjY}`)) return false;
-
-        // Landing cell must be in bounds
-        const landX = ctx.gridX + dx * 2, landY = ctx.gridY + dy * 2;
-        if (landX < 0 || landX >= ctx.cols || landY < 0 || landY >= ctx.rows) return false;
-
-        // Must have wall-free passage from adj to landing
-        const adjWalls = ctx.cells[adjY][adjX];
-        if (dx ===  1 && (adjWalls & WALLS.RIGHT))  return false;
-        if (dx === -1 && (adjWalls & WALLS.LEFT))   return false;
-        if (dy ===  1 && (adjWalls & WALLS.BOTTOM)) return false;
-        if (dy === -1 && (adjWalls & WALLS.TOP))    return false;
-
-        // Landing can't be scenery or a closed gate
-        if (ctx.sceneryBlocked.has(`${landX},${landY}`)) return false;
-        if (ctx.findGate(adjX, adjY, landX, landY)) return false;
-
-        // Execute the hop
-        ctx.setGrid(landX, landY);
-        ctx.setMoving(true);
-
+        // Shrink into ground effect
         ctx.scene.tweens.add({
-            targets: ctx.player,
-            x: ctx.worldX(landX),
-            y: ctx.worldY(landY),
-            duration: 300,
-            ease: 'Sine.easeInOut',
-            onComplete: () => {
-                ctx.setMoving(false);
-                ctx.fog.revealAround(landX, landY, ctx.scene.time.now);
-                ctx.collectKey();
-                ctx.checkObjective();
-                ctx.checkGoal();
-                ctx.checkHazardCollision();
-            },
+            targets: ctx.player, scaleX: 0.5, scaleY: 0.3, alpha: 0.35,
+            duration: 300, ease: 'Back.easeIn',
         });
-        // Bounce scale for hop feel
-        ctx.scene.tweens.add({ targets: ctx.player, scaleY: 1.3, yoyo: true, duration: 150 });
+
+        // Dirt mound visual
+        const mound = ctx.scene.add.ellipse(
+            ctx.player.x, ctx.player.y + 12, TILE * 0.6, TILE * 0.25,
+            0x8a7050, 0.6,
+        ).setDepth(DEPTH.TRAIL);
+
+        // Expose emerge so SPACE can end burrow
+        ctx.emergeBurrow = () => {
+            if (!ctx.setBurrowed) return;
+            ctx.setBurrowed(false);
+            ctx.setMoving(false);
+            ctx.emergeBurrow = undefined;
+            ctx.scene.tweens.add({
+                targets: ctx.player, scaleX: 1, scaleY: 1, alpha: 1,
+                duration: 300, ease: 'Back.easeOut',
+            });
+            ctx.scene.tweens.add({
+                targets: mound, alpha: 0, duration: 300,
+                onComplete: () => mound.destroy(),
+            });
+        };
+
         return true;
     },
+
+    tryDirectional: () => false,
 };
 
 const STING: Skill = {
@@ -223,7 +222,7 @@ const STING: Skill = {
             if (d < bestDist) { bestDist = d; nearest = h; }
         }
         if (!nearest || bestDist > 1) return false; // no adjacent enemy
-        nearest.stun(5000);
+        nearest.stun(STUN_DURATION);
         statsEvents.emit(STAT.MONSTER_STUNNED);
         ctx.scene.tweens.add({ targets: ctx.player, scaleX: 1.3, scaleY: 1.3, yoyo: true, duration: 200 });
         return true;
@@ -239,12 +238,12 @@ const GLOW: Skill = {
     cooldown: DEFAULT_COOLDOWN,
 
     activate(ctx) {
-        ctx.fog.revealArea(ctx.gridX, ctx.gridY, 4, ctx.scene.time.now);
+        ctx.fog.revealArea(ctx.gridX, ctx.gridY, GLOW_RADIUS, ctx.scene.time.now);
         // Bright flash effect
         const flash = ctx.scene.add.circle(
             ctx.player.x, ctx.player.y, TILE * 4,
             0xaaffaa, 0.4, // approximate — overridden per season below
-        ).setDepth(2.8);
+        ).setDepth(DEPTH.SKILL_FX);
         ctx.scene.tweens.add({ targets: flash, alpha: 0, scale: 1.5, duration: 600, onComplete: () => flash.destroy() });
         return true;
     },
@@ -276,7 +275,7 @@ const DASH: Skill = {
         // Collect up to 3 cells we can dash through
         const steps: { x: number; y: number }[] = [];
         let cx = ctx.gridX, cy = ctx.gridY;
-        for (let s = 0; s < 3; s++) {
+        for (let s = 0; s < DASH_DISTANCE; s++) {
             const w = ctx.cells[cy][cx];
             if (dx ===  1 && (w & WALLS.RIGHT))  break;
             if (dx === -1 && (w & WALLS.LEFT))   break;
@@ -342,14 +341,14 @@ const SWIM: Skill = {
         if (ctx.setSwimming) {
             ctx.setSwimming(true);
             // 10s swimming buff — visual feedback handled in GameScene
-            ctx.scene.time.delayedCall(10_000, () => {
+            ctx.scene.time.delayedCall(SWIM_DURATION, () => {
                 if (ctx.setSwimming) ctx.setSwimming(false);
             });
             // Ripple effect
             const ripple = ctx.scene.add.circle(
                 ctx.player.x, ctx.player.y, TILE * 2,
                 0x4090d0, 0.3,
-            ).setDepth(2.8);
+            ).setDepth(DEPTH.SKILL_FX);
             ctx.scene.tweens.add({ targets: ripple, alpha: 0, scale: 2, duration: 600, onComplete: () => ripple.destroy() });
             return true;
         }
@@ -360,7 +359,7 @@ const SWIM: Skill = {
 };
 
 const SKILLS: Record<SeasonName, Skill> = {
-    Winter:   HOP,
+    Winter:   BURROW,
     Spring:   STING,
     Summer:   GLOW,
     Fall:     DASH,

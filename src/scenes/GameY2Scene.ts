@@ -1,19 +1,35 @@
 import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
+import { DEPTH } from '../gameplay';
 import { MONTHS_Y2, SeasonTheme } from '../seasons';
-import { generateMountainMap, drawTerrain, Terrain, isWalkable, TerrainMap } from '../terrain';
-import { Hazard } from '../hazard';
-import { Fish } from '../fish';
+import { generateMountainMap, drawTerrain, Terrain, isWalkable, isCliff, bfsReachable, TerrainMap } from '../terrain';
 import { FogOfWar } from '../fog';
-import { SkillManager, SkillContext } from '../skills';
 import { statsEvents, STAT } from '../statsEmitter';
 import { addWeather } from '../weather';
 import { WALLS } from '../maze';
+import { createY2PlayerSprite, buildY2ObjectiveSprite, ensureSparkleTexture } from '../sprites';
+import { findObjectiveCandidates, pickObjectivePositions, pickBonusPositions } from '../objectivePlacement';
+import { log } from '../logger';
+import { WeatherHazard, createWeatherHazard, getIntensity } from '../weatherHazard';
+import { Predator, spawnPredators } from '../predator';
+import { DayNightCycle, TimeOfDay } from '../dayNight';
+import {
+    PREDATOR_CATCH_COOLDOWN, PREDATOR_ENERGY_MIN, PREDATOR_ENERGY_MAX,
+    PREDATOR_KNOCKBACK,
+} from '../gameplay';
 
 function spaced(t: string): string { return t.toUpperCase().split('').join(' '); }
 
 const CANVAS_W = MAX_COLS * TILE + PANEL;
 const CANVAS_H = MAX_ROWS * TILE + HEADER;
+
+/** Season-specific display info for Year Two. */
+const Y2_INFO: Record<string, { subtitle: string; bear: string; bearColor: number; objLabel: string; objColor: number }> = {
+    WinterY2: { subtitle: 'Arctic Winter',   bear: 'polar bear',  bearColor: 0xf0f4f8, objLabel: 'FISH',    objColor: 0xff8844 },
+    SpringY2: { subtitle: 'Mountain Spring',  bear: 'brown bear',  bearColor: 0x8b5e3c, objLabel: 'HONEY',   objColor: 0xffcc22 },
+    SummerY2: { subtitle: 'Bamboo Summer',    bear: 'panda',       bearColor: 0xf0f0f0, objLabel: 'BAMBOO',  objColor: 0x66bb44 },
+    FallY2:   { subtitle: 'Forest Autumn',    bear: 'black bear',  bearColor: 0x2a2a30, objLabel: 'BERRIES', objColor: 0xcc2244 },
+};
 
 export default class GameY2Scene extends Phaser.Scene {
     private monthIndex = 0;
@@ -30,40 +46,58 @@ export default class GameY2Scene extends Phaser.Scene {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
     private moving = false;
+    private slideDir: { dx: number; dy: number } | null = null;
 
     private terrain!: TerrainMap;
     private cells!: number[][];
 
-    private hazards: Hazard[] = [];
-    private fishes:  Fish[]   = [];
-    private isHiding = false;
-    private swimming = false;
+    private energy = 100;
+    private energyMax = 100;
+    private energyBar!: Phaser.GameObjects.Rectangle;
+    private energyBarBg!: Phaser.GameObjects.Rectangle;
+    private energyText!: Phaser.GameObjects.Text;
 
-    private lives = 3;
-    private livesText!: Phaser.GameObjects.Text;
-
-    private fishCollected = 0;
-    private fishTotal     = 0;
+    private objCollected = 0;
+    private objTotal     = 0;
     private objText: Phaser.GameObjects.Text | null = null;
     private objDone = false;
     private goalLock: Phaser.GameObjects.Arc | null = null;
+    private objSprites: Phaser.GameObjects.Container[] = [];
+    private objPositions: { col: number; row: number }[] = [];
+
+    // Bonus objectives (don't count toward goal unlock)
+    private bonusCollected = 0;
+    private bonusTotal     = 0;
+    private bonusSprites: Phaser.GameObjects.Container[] = [];
+    private bonusPositions: { col: number; row: number }[] = [];
+
+    // Exploration tracking (for star rating)
+    private visitedCells = new Set<string>();
+    private totalReachable = 0;
+
+    // Night Falls + Ridge lookout — managed by DayNightCycle
+    private dayNight!: DayNightCycle;
 
     private fog!: FogOfWar;
-    private skill!: SkillManager;
-    private skillKey!: Phaser.Input.Keyboard.Key;
 
     private startCol = 0;
     private startRow = 0;
     private goalCol  = 0;
     private goalRow  = 0;
 
-    private hidingSpots = new Set<string>();
     private sceneryBlocked = new Set<string>();
+    private weatherHazard: WeatherHazard | null = null;
+    private weatherText: Phaser.GameObjects.Text | null = null;
+    private predators: Predator[] = [];
+    private predatorCatchCooldown = false;
 
-    /** Horizontal offset to center map in canvas. */
-    private get offsetX() { return Math.floor((MAX_COLS * TILE - this.cols * TILE) / 2); }
+    // Snow caves (Winter) — ROCK tiles that give double rest recovery
+    private snowCaves = new Set<string>();
+
+    /** Horizontal offset — left-align the map so the camera can scroll. */
+    private get offsetX() { return 0; }
     /** World X for a column. */
-    private worldX(col: number) { return col * TILE + TILE / 2 + this.offsetX; }
+    private worldX(col: number) { return col * TILE + TILE / 2; }
     /** World Y for a row. No vertical centering — camera scrolls instead. */
     private worldY(row: number) { return row * TILE + TILE / 2 + HEADER; }
 
@@ -75,38 +109,46 @@ export default class GameY2Scene extends Phaser.Scene {
 
         const cfg  = MONTHS_Y2[this.monthIndex];
         this.cols  = cfg.cols;
-        this.skill = new SkillManager(cfg.season.name as 'WinterY2');
 
-        this.hazards       = [];
-        this.fishes        = [];
-        this.fishCollected = 0;
-        this.fishTotal     = 0;
-        this.objDone       = false;
-        this.goalLock      = null;
-        this.objText       = null;
-        this.lives         = 3;
-        this.isHiding      = false;
-        this.swimming      = false;
-        this.moving        = false;
-        this.hidingSpots   = new Set();
+        this.objCollected   = 0;
+        this.objTotal       = 0;
+        this.objDone        = false;
+        this.goalLock       = null;
+        this.objText        = null;
+        this.objSprites     = [];
+        this.objPositions   = [];
+        this.bonusCollected = 0;
+        this.bonusTotal     = 0;
+        this.bonusSprites   = [];
+        this.bonusPositions = [];
+        this.visitedCells   = new Set();
+        this.totalReachable = 0;
+        this.energy         = 100;
+        this.moving         = false;
+        this.slideDir       = null;
         this.sceneryBlocked = new Set();
+        this.snowCaves      = new Set();
+        this.predators      = [];
+        this.predatorCatchCooldown = false;
+        // dayNight is recreated in create()
     }
 
     create() {
         const cfg    = MONTHS_Y2[this.monthIndex];
         const season = cfg.season;
+        log.info('scene', `create GameY2Scene month=${cfg.month} (${cfg.name}) season=${season.name} cols=${this.cols}`);
 
         this.cameras.main.setBackgroundColor(season.bgColor);
 
         // ── Generate terrain ────────────────────────────────────────────────────
-        this.terrain   = generateMountainMap(this.cols, cfg.rows);
+        this.terrain   = generateMountainMap(this.cols, cfg.rows, season.name);
         this.totalRows = this.terrain.rows;
         this.startCol  = this.terrain.start.col;
         this.startRow  = this.terrain.start.row;
         this.goalCol   = this.terrain.goal.col;
         this.goalRow   = this.terrain.goal.row;
 
-        // Wall bitmask grid — outer walls only (for Hazard compatibility)
+        // Wall bitmask grid — outer walls only (boundary enforcement)
         this.cells = [];
         for (let r = 0; r < this.totalRows; r++) {
             this.cells[r] = [];
@@ -136,32 +178,42 @@ export default class GameY2Scene extends Phaser.Scene {
         this.goalLock = this.add.circle(
             this.worldX(this.goalCol), this.worldY(this.goalRow),
             TILE / 2 - 2, 0x000000, 0.45,
-        ).setDepth(1.6);
+        ).setDepth(DEPTH.GOAL_LOCK);
 
-        // Snow caves on land cells in forest zones
-        this.placeSnowCaves();
+        // Spawn objectives on land cells
+        this.spawnObjectives(season);
 
-        // Spawn fish in water zones
-        this.spawnFish();
-
-        // Weather
+        // Weather particles + hazard
         addWeather(this, season.name);
+        this.weatherHazard = createWeatherHazard(season.name, getIntensity(this.monthIndex));
+        this.weatherHazard?.spawn(this, this.terrain, this.mazeLayer);
+
+        // Fall: hidden berries under leaf piles count toward bonus total
+        const hiddenBerryCount = this.weatherHazard?.getHiddenBerryCount?.() ?? 0;
+        if (hiddenBerryCount > 0) {
+            this.bonusTotal += hiddenBerryCount;
+            this.updateObjText();
+        }
+
+        // Winter: snow caves — pick reachable ROCK tiles adjacent to OPEN
+        if (season.name === 'WinterY2') this.spawnSnowCaves();
+
+        // Roaming predators
+        this.predators = spawnPredators(
+            this, this.terrain, season.name, this.monthIndex, this.mazeLayer,
+            (pred) => {
+                if (pred.isAt(this.gridX, this.gridY)) this.onPredatorCatch(pred);
+            },
+        );
 
         // Sparkle texture
-        if (!this.textures.exists('sparkle')) {
-            const g = this.make.graphics({ add: false });
-            g.fillStyle(0xffffff, 1); g.fillCircle(4, 4, 4);
-            g.generateTexture('sparkle', 8, 8); g.destroy();
-        }
+        ensureSparkleTexture(this);
 
         // ── Player ──────────────────────────────────────────────────────────────
         this.gridX = this.startCol;
         this.gridY = this.startRow;
-        this.player = this.createPolarBear(this.worldX(this.startCol), this.worldY(this.startRow));
-        this.player.setDepth(2);
-
-        // Wolves — one per forest zone (except start/goal zones)
-        this.spawnWolves(season);
+        this.player = createY2PlayerSprite(this, this.worldX(this.startCol), this.worldY(this.startRow), season.name);
+        this.player.setDepth(DEPTH.PLAYER);
 
         // Trail
         this.emitter = this.add.particles(this.player.x, this.player.y, 'sparkle', {
@@ -170,24 +222,48 @@ export default class GameY2Scene extends Phaser.Scene {
             lifespan: 400, frequency: 65, quantity: 1,
             tint: [0xffffff, 0xddeeff, 0xaaccff],
             blendMode: Phaser.BlendModes.ADD,
-        }).setDepth(1.9);
+        }).setDepth(DEPTH.TRAIL);
 
-        // ── Camera scrolling ────────────────────────────────────────────────────
+        // ── Camera scrolling (both axes) ──────────────────────────────────────
+        const mapW  = this.cols * TILE;
+        const worldW = Math.max(CANVAS_W, mapW + PANEL);
         const worldH = this.totalRows * TILE + HEADER;
-        this.cameras.main.setBounds(0, 0, CANVAS_W, worldH);
-        this.cameras.main.startFollow(this.player, true, 0, 0.08);
-        this.cameras.main.setDeadzone(CANVAS_W, TILE * 4);
+        this.cameras.main.setBounds(0, 0, worldW, worldH);
+        this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
+        this.cameras.main.setDeadzone(TILE * 3, TILE * 4);
 
         // ── Fog of war ──────────────────────────────────────────────────────────
+        // Winter blizzard fog: visibility shrinks with intensity
+        const fogRadius = season.name === 'WinterY2'
+            ? 5 - getIntensity(this.monthIndex) // intensity 1→4, 2→3, 3→2
+            : 2;
         this.fog = new FogOfWar(
             this, this.cols, this.totalRows, true, season,
             (c) => this.worldX(c), (r) => this.worldY(r),
+            fogRadius,
         );
         this.fog.revealAround(this.startCol, this.startRow, this.time.now);
 
+        // ── Exploration tracking ──────────────────────────────────────────────────
+        this.totalReachable = this.countReachable();
+        this.visitedCells.add(`${this.startCol},${this.startRow}`);
+
+        // ── Night Falls — step threshold ──────────────────────────────────────────
+        const objCount = Math.min(2 + Math.floor(this.monthIndex / 3), 5);
+        const baseSteps = this.totalReachable * 0.6 + objCount * 8;
+        const intensityPenalty = getIntensity(this.monthIndex) * 8;
+        const nightThreshold = Math.round(baseSteps - intensityPenalty);
+
+        this.dayNight = new DayNightCycle(this, this.fog, this.terrain.zones, nightThreshold, fogRadius);
+
+        // Tint overlay — covers entire screen, fades in with day progression.
+        const tintOverlay = this.add.rectangle(
+            CANVAS_W / 2, CANVAS_H / 2, CANVAS_W * 2, CANVAS_H * 2, 0x000000, 1,
+        ).setDepth(DEPTH.FOG - 0.1).setScrollFactor(0).setAlpha(0);
+
         // ── UI (fixed on screen via scrollFactor 0) ─────────────────────────────
         this.buildHeader(season, cfg);
-        this.buildSidePanel(season);
+        this.buildSidePanel(season, tintOverlay);
 
         // ── Input ───────────────────────────────────────────────────────────────
         this.cursors = this.input.keyboard!.createCursorKeys();
@@ -207,11 +283,17 @@ export default class GameY2Scene extends Phaser.Scene {
             this.cameras.main.fadeOut(500, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this.fromScene));
         });
-        this.skillKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
         // Stats
         statsEvents.emit(STAT.MAZE_START, {
             month: cfg.month, gridSize: `${this.cols}x${this.totalRows}`, hard: true, custom: false,
+        });
+
+        // Clean up on shutdown (scene.start on same scene triggers this)
+        this.events.once('shutdown', () => {
+            this.destroyAll();
+            this.tweens.killAll();
+            this.time.removeAllEvents();
         });
 
         this.cameras.main.fadeIn(900, 0, 0, 0);
@@ -220,88 +302,570 @@ export default class GameY2Scene extends Phaser.Scene {
     // ── Update ─────────────────────────────────────────────────────────────────
     update() {
         if (this.moving) return;
-        const now = this.time.now;
+        this.fog.updateDecay(this.time.now);
+        this.weatherHazard?.update(this.time.now, this.gridX, this.gridY);
+        for (const p of this.predators) p.setTarget(this.gridX, this.gridY);
+        this.updateWeatherText();
 
-        for (const h of this.hazards) h.setTarget(this.gridX, this.gridY, this.isHiding);
-        for (const f of this.fishes)  f.setTarget(this.gridX, this.gridY);
-        this.fog.updateDecay(now);
-        this.skill.tick(now);
-
-        if (Phaser.Input.Keyboard.JustDown(this.skillKey)) {
-            this.skill.activate(this.buildSkillContext(), now);
+        // SPACE = voluntary rest (recover partial energy, costs a turn)
+        if (Phaser.Input.Keyboard.JustDown(this.cursors.space)) {
+            if (this.energy < this.energyMax) this.onVoluntaryRest();
+            return;
         }
 
         let dx = 0, dy = 0;
-        if (this.cursors.left.isDown  || this.wasd.left.isDown)  dx = -1;
-        if (this.cursors.right.isDown || this.wasd.right.isDown) dx =  1;
-        if (this.cursors.up.isDown    || this.wasd.up.isDown)    dy = -1;
-        if (this.cursors.down.isDown  || this.wasd.down.isDown)  dy =  1;
+        const K = Phaser.Input.Keyboard;
+        if      (K.JustDown(this.cursors.left)  || K.JustDown(this.wasd.left))  dx = -1;
+        else if (K.JustDown(this.cursors.right) || K.JustDown(this.wasd.right)) dx =  1;
+        else if (K.JustDown(this.cursors.up)    || K.JustDown(this.wasd.up))    dy = -1;
+        else if (K.JustDown(this.cursors.down)  || K.JustDown(this.wasd.down))  dy =  1;
         if (dx === 0 && dy === 0) return;
-        if (dx !== 0 && dy !== 0) dy = 0;
 
-        if ((this.skill as SkillManager & { armed: boolean }).armed) {
-            const ctx = this.buildSkillContext();
-            if (this.skill.tryDirectional(dx, dy, ctx, now)) return;
-            this.skill.cancelArm(now);
-        }
-
+        this.slideDir = { dx, dy };
         this.tryStep(dx, dy);
     }
 
     private tryStep(dx: number, dy: number) {
         const nx = this.gridX + dx, ny = this.gridY + dy;
-        if (nx < 0 || nx >= this.cols || ny < 0 || ny >= this.totalRows) return;
-        if (!isWalkable(this.terrain.grid, nx, ny, this.cols, this.totalRows, this.swimming)) return;
+        if (nx < 0 || nx >= this.cols || ny < 0 || ny >= this.totalRows) { this.slideDir = null; return; }
+
+        // Cliff fall — stepping onto cliff edge costs a life
+        if (isCliff(this.terrain.grid, nx, ny, this.cols, this.totalRows)) {
+            this.slideDir = null;
+            this.onCliffFall();
+            return;
+        }
+
+        // Allow walking on OPEN and WATER (swimming)
+        if (!isWalkable(this.terrain.grid, nx, ny, this.cols, this.totalRows, true)) { this.slideDir = null; return; }
+
+        // Spring flooding — blocked tile
+        if (this.weatherHazard?.isBlocked(nx, ny)) { this.slideDir = null; return; }
+
+        const onWater = this.terrain.grid[ny][nx] === Terrain.WATER;
+        const duration = onWater ? 320 : 180;
 
         this.gridX = nx;
         this.gridY = ny;
         this.moving = true;
+        this.visitedCells.add(`${nx},${ny}`);
 
         this.tweens.add({
             targets: this.player,
             x: this.worldX(nx), y: this.worldY(ny),
-            duration: 180, ease: 'Sine.easeOut',
+            duration, ease: 'Sine.easeOut',
             onComplete: () => {
-                this.moving = false;
                 this.emitter.setPosition(this.player.x, this.player.y);
                 this.fog.revealAround(this.gridX, this.gridY, this.time.now);
-                this.isHiding = this.hidingSpots.has(`${this.gridX},${this.gridY}`);
-                this.tryCollectFish();
+                this.dayNight.updateRidgeLookout(this.gridY, this.gridX, this.time.now);
+                this.dayNight.advance();
+                this.drainEnergy(onWater ? 2 : 1);
+
+                // Weather: extra move cost (snowdrifts, heat)
+                const extraCost = this.weatherHazard?.getMoveCost(nx, ny, this.terrain.grid) ?? 0;
+                if (extraCost > 0) this.drainEnergy(extraCost);
+
+                // Reveal leaf piles (Fall) — may hide berries
+                const hadLeaf = this.weatherHazard?.revealLeaf?.(nx, ny);
+                if (hadLeaf && this.weatherHazard?.hasHiddenBerry?.(nx, ny)) {
+                    this.collectHiddenBerry(nx, ny);
+                }
+
+                // If energy hit 0, forced rest is in progress — don't unlock movement
+                // but still check for objectives/goal at this tile
+                if (this.energy <= 0) {
+                    this.tryCollectObjective();
+                    return;
+                }
+
+                // Weather: wind push
+                const push = this.weatherHazard?.getWindPush(nx, ny);
+                if (push) {
+                    this.applyWindPush(push.dx, push.dy);
+                    return; // applyWindPush handles moving=false
+                }
+
+                this.moving = false;
+                if (this.checkPredatorCollision()) return;
+                this.tryCollectObjective();
                 this.checkGoal();
-                this.checkHazardCollision();
+                this.continueSlide();
             },
         });
     }
 
-    // ── Fish ───────────────────────────────────────────────────────────────────
-    private spawnFish() {
-        this.fishTotal = this.terrain.fishSpawns.length;
-        for (const sp of this.terrain.fishSpawns) {
-            this.fishes.push(new Fish(
-                this, this.terrain.grid,
-                this.cols, this.totalRows,
-                sp.col, sp.row,
-                this.offsetX, 0,
-            ));
+    /** Keep sliding if the arrow key is still held (hold-to-move). */
+    private continueSlide() {
+        if (!this.slideDir) return;
+        const { dx, dy } = this.slideDir;
+        const stillHeld =
+            (dx === -1 && (this.cursors.left.isDown  || this.wasd.left.isDown))  ||
+            (dx ===  1 && (this.cursors.right.isDown || this.wasd.right.isDown)) ||
+            (dy === -1 && (this.cursors.up.isDown    || this.wasd.up.isDown))    ||
+            (dy ===  1 && (this.cursors.down.isDown  || this.wasd.down.isDown));
+        if (!stillHeld) { this.slideDir = null; return; }
+        this.tryStep(dx, dy);
+    }
+
+    // ── Cliff fall ──────────────────────────────────────────────────────────────
+    private onCliffFall() {
+        statsEvents.emit(STAT.CAUGHT);
+        this.moving = true;
+
+        // Find the narrows zone the player is in/near and reset to its entry row
+        const zone = this.terrain.zones.find(z =>
+            z.type === 'narrows' &&
+            this.gridY >= z.startRow && this.gridY < z.startRow + z.height);
+        const resetRow = zone ? zone.startRow + zone.height - 1 : this.startRow;
+
+        // Find an OPEN cell in the reset row (scan from center outward)
+        let resetCol = Math.floor(this.cols / 2);
+        const grid = this.terrain.grid;
+        if (grid[resetRow][resetCol] !== Terrain.OPEN) {
+            for (let d = 1; d < this.cols; d++) {
+                if (resetCol - d >= 0 && grid[resetRow][resetCol - d] === Terrain.OPEN) {
+                    resetCol = resetCol - d; break;
+                }
+                if (resetCol + d < this.cols && grid[resetRow][resetCol + d] === Terrain.OPEN) {
+                    resetCol = resetCol + d; break;
+                }
+            }
         }
+
+        this.gridX = resetCol;
+        this.gridY = resetRow;
+        this.player.setPosition(this.worldX(resetCol), this.worldY(resetRow));
+        this.emitter.setPosition(this.player.x, this.player.y);
+        this.dayNight.updateRidgeLookout(resetRow, resetCol, this.time.now);
+        this.fog.revealAround(resetCol, resetRow, this.time.now);
+
+        // Drain energy after repositioning — may trigger forced rest
+        this.drainEnergy(35);
+        if (this.energy > 0) this.moving = false;
+    }
+
+    // ── Energy system ─────────────────────────────────────────────────────────
+    private drainEnergy(amount: number) {
+        const drain = this.dayNight.getPhase() === TimeOfDay.NIGHT ? amount * 2 : amount;
+        this.energy = Math.max(0, this.energy - drain);
+        this.updateEnergyBar();
+        if (this.energy <= 0) {
+            // If exhausted while swimming, wash ashore first
+            if (this.terrain.grid[this.gridY]?.[this.gridX] === Terrain.WATER) {
+                this.washAshore();
+            }
+            this.onRest();
+        }
+    }
+
+    /** Move the bear to the nearest OPEN cell (shore) when exhausted in water. */
+    private washAshore() {
+        const grid = this.terrain.grid;
+        // BFS from current position to find nearest OPEN cell
+        const visited = new Set<string>();
+        const queue: { col: number; row: number }[] = [{ col: this.gridX, row: this.gridY }];
+        visited.add(`${this.gridX},${this.gridY}`);
+
+        while (queue.length > 0) {
+            const { col, row } = queue.shift()!;
+            if (grid[row]?.[col] === Terrain.OPEN) {
+                this.gridX = col;
+                this.gridY = row;
+                this.player.setPosition(this.worldX(col), this.worldY(row));
+                this.emitter.setPosition(this.player.x, this.player.y);
+                this.fog.revealAround(col, row, this.time.now);
+                log.info('scene', `bear washed ashore at ${col},${row}`);
+                return;
+            }
+            for (const [dc, dr] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+                const nc = col + dc, nr = row + dr;
+                if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.totalRows) continue;
+                const key = `${nc},${nr}`;
+                if (visited.has(key)) continue;
+                const t = grid[nr][nc];
+                if (t === Terrain.WATER || t === Terrain.OPEN) {
+                    visited.add(key);
+                    queue.push({ col: nc, row: nr });
+                }
+            }
+        }
+    }
+
+    // ── Snow caves (Winter) ──────────────────────────────────────────────────────
+    private spawnSnowCaves() {
+        const grid = this.terrain.grid;
+        const candidates: { col: number; row: number }[] = [];
+        for (let r = 0; r < this.totalRows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+                if (grid[r][c] !== Terrain.ROCK) continue;
+                // Must be adjacent to at least one OPEN tile
+                const adjOpen = [[0,-1],[0,1],[-1,0],[1,0]].some(([dc, dr]) => {
+                    const nc = c + dc, nr = r + dr;
+                    return nr >= 0 && nr < this.totalRows && nc >= 0 && nc < this.cols
+                        && grid[nr][nc] === Terrain.OPEN;
+                });
+                if (adjOpen) candidates.push({ col: c, row: r });
+            }
+        }
+        const count = Math.min(2 + Math.floor(this.monthIndex / 4), 4, candidates.length);
+        const shuffled = candidates.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < count; i++) {
+            const { col, row } = shuffled[i];
+            this.snowCaves.add(`${col},${row}`);
+            // Draw cave entrance overlay
+            const cx = col * TILE + TILE / 2;
+            const cy = row * TILE + TILE / 2;
+            const g = this.add.graphics();
+            // Dark cave mouth
+            g.fillStyle(0x0a0808, 0.85);
+            g.fillEllipse(cx, cy + TILE * 0.15, TILE * 0.55, TILE * 0.45);
+            // Snow cap above
+            g.fillStyle(0xe8eef4, 0.8);
+            g.fillEllipse(cx, cy - TILE * 0.15, TILE * 0.6, TILE * 0.2);
+            g.setDepth(DEPTH.SCENERY);
+            this.mazeLayer.add(g);
+        }
+        log.info('scene', `snow caves: ${count}`);
+    }
+
+    /** True if player is adjacent to a snow cave tile. */
+    private isOnSnowCave(): boolean {
+        for (const [dc, dr] of [[0,-1],[0,1],[-1,0],[1,0],[0,0]]) {
+            if (this.snowCaves.has(`${this.gridX + dc},${this.gridY + dr}`)) return true;
+        }
+        return false;
+    }
+
+    // ── Hidden berry (Fall leaf piles) ────────────────────────────────────────
+    private collectHiddenBerry(col: number, row: number) {
+        this.bonusCollected++;
+        this.updateObjText();
+        // Brief berry sprite at the reveal position
+        const bx = col * TILE + TILE / 2;
+        const by = row * TILE + TILE / 2;
+        const berry = this.add.circle(bx, by, 8, 0xcc2244, 0.9).setDepth(DEPTH.SPRITE);
+        this.mazeLayer.add(berry);
+        this.tweens.add({
+            targets: berry, scaleX: 1.8, scaleY: 1.8, alpha: 0,
+            duration: 500, ease: 'Power2',
+            onComplete: () => berry.destroy(),
+        });
+        this.tweens.add({ targets: this.player, scaleY: 1.15, yoyo: true, duration: 120 });
+    }
+
+    /** Close the bear's eyes (replace eye circles with thin closed-eye lines). */
+    private closeEyes(): Phaser.GameObjects.Graphics | null {
+        const visual = this.player.list[0] as Phaser.GameObjects.Container;
+        if (!visual) return null;
+        // Find the two eye circles by scanning for small circles near y=-10/-11
+        const eyes: Phaser.GameObjects.Arc[] = [];
+        for (const child of visual.list) {
+            if (child instanceof Phaser.GameObjects.Arc &&
+                child.y <= -9 && child.y >= -12 &&
+                child.radius <= 3 && child.radius >= 1) {
+                eyes.push(child);
+            }
+        }
+        if (eyes.length < 2) return null;
+        // Hide open eyes
+        for (const eye of eyes) eye.setVisible(false);
+        // Draw closed eyes (small curved lines)
+        const g = this.add.graphics();
+        for (const eye of eyes) {
+            g.lineStyle(2, 0x222222, 0.9);
+            g.beginPath();
+            g.arc(eye.x, eye.y, 3, 0, Math.PI, false);
+            g.strokePath();
+        }
+        visual.add(g);
+        return g;
+    }
+
+    /** Reopen the bear's eyes (restore eye circles, remove closed-eye graphics). */
+    private openEyes(closedGfx: Phaser.GameObjects.Graphics | null) {
+        const visual = this.player.list[0] as Phaser.GameObjects.Container;
+        if (!visual) return;
+        for (const child of visual.list) {
+            if (child instanceof Phaser.GameObjects.Arc &&
+                child.y <= -9 && child.y >= -12 &&
+                child.radius <= 3 && child.radius >= 1) {
+                child.setVisible(true);
+            }
+        }
+        if (closedGfx) {
+            closedGfx.destroy();
+        }
+    }
+
+    /** Voluntary rest (SPACE) — quick nap, recovers 30 energy (60 near snow cave). */
+    private onVoluntaryRest() {
+        const shelter = this.isOnSnowCave();
+        const recovery = shelter ? 60 : 30;
+        log.info('scene', `voluntary rest${shelter ? ' (snow cave)' : ''}`);
+        this.moving = true;
+
+        const closedEyes = this.closeEyes();
+
+        const zx = this.player.x + 20;
+        const zy = this.player.y - 30;
+        const zzzText = shelter ? 'zz ❄' : 'zz';
+        const zzzColor = shelter ? '#aaeeff' : '#aaccff';
+        const zzz = this.add.text(zx, zy, zzzText, {
+            fontSize: '16px', fontStyle: 'italic', color: zzzColor,
+        }).setOrigin(0.5).setDepth(DEPTH.PLAYER + 1);
+        this.tweens.add({ targets: zzz, y: zy - 20, alpha: { from: 1, to: 0.3 },
+            duration: 1600, ease: 'Sine.easeOut' });
+
+        this.tweens.add({ targets: this.player, scaleY: 0.9, yoyo: true,
+            duration: 1000, ease: 'Sine.easeInOut' });
+
+        this.time.delayedCall(2000, () => {
+            zzz.destroy();
+            this.openEyes(closedEyes);
+            this.energy = Math.min(this.energyMax, this.energy + recovery);
+            this.updateEnergyBar();
+            this.moving = false;
+        });
+    }
+
+    /** Forced rest (energy = 0) — longer nap, full recovery (faster near snow cave). */
+    private onRest() {
+        const shelter = this.isOnSnowCave();
+        const duration = shelter ? 3000 : 5000;
+        log.info('scene', `bear exhausted — forced rest${shelter ? ' (snow cave)' : ''}`);
+        this.moving = true;
+
+        const closedEyes = this.closeEyes();
+
+        const zx = this.player.x + 20;
+        const zy = this.player.y - 30;
+        const zzzText = shelter ? 'zzz ❄' : 'zzz';
+        const zzzColor = shelter ? '#aaeeff' : '#aaccff';
+        const zzz = this.add.text(zx, zy, zzzText, {
+            fontSize: '20px', fontStyle: 'italic', color: zzzColor,
+        }).setOrigin(0.5).setDepth(DEPTH.PLAYER + 1);
+        this.tweens.add({ targets: zzz, y: zy - 30, alpha: { from: 1, to: 0.3 },
+            duration: duration * 0.8, ease: 'Sine.easeOut' });
+
+        this.tweens.add({ targets: this.player, scaleY: 0.85, yoyo: true,
+            duration: shelter ? 1500 : 2000, ease: 'Sine.easeInOut', repeat: 1 });
+
+        this.time.delayedCall(duration, () => {
+            zzz.destroy();
+            this.openEyes(closedEyes);
+            this.energy = this.energyMax;
+            this.updateEnergyBar();
+            this.moving = false;
+        });
+    }
+
+    // ── Wind push ────────────────────────────────────────────────────────────
+    private applyWindPush(dx: number, dy: number) {
+        const nx = this.gridX + dx, ny = this.gridY + dy;
+        // Only push if destination is safe
+        if (nx < 0 || nx >= this.cols || ny < 0 || ny >= this.totalRows) {
+            this.moving = false; this.tryCollectObjective(); this.checkGoal(); return;
+        }
+        if (!isWalkable(this.terrain.grid, nx, ny, this.cols, this.totalRows, true) ||
+            isCliff(this.terrain.grid, nx, ny, this.cols, this.totalRows) ||
+            (this.weatherHazard?.isBlocked(nx, ny))) {
+            this.moving = false; this.tryCollectObjective(); this.checkGoal(); return;
+        }
+
+        this.gridX = nx;
+        this.gridY = ny;
+        this.tweens.add({
+            targets: this.player,
+            x: this.worldX(nx), y: this.worldY(ny),
+            duration: 150, ease: 'Back.easeOut',
+            onComplete: () => {
+                this.moving = false;
+                this.emitter.setPosition(this.player.x, this.player.y);
+                this.fog.revealAround(this.gridX, this.gridY, this.time.now);
+                this.tryCollectObjective();
+                this.checkGoal();
+            },
+        });
+    }
+
+    // ── Predator collision ────────────────────────────────────────────────────
+
+    /** Returns true if a predator catch was triggered (interrupts normal flow). */
+    private checkPredatorCollision(): boolean {
+        if (this.predatorCatchCooldown) return false;
+        for (const p of this.predators) {
+            if (p.isAt(this.gridX, this.gridY)) {
+                this.onPredatorCatch(p);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Called when a predator occupies the same tile as the player.
+     * Drains energy and knocks the bear back 1-2 tiles away from the predator.
+     */
+    private onPredatorCatch(pred: Predator) {
+        if (this.predatorCatchCooldown || pred.catchCooldown) return;
+
+        // Scene-wide cooldown prevents chain catches
+        this.predatorCatchCooldown = true;
+        this.time.delayedCall(PREDATOR_CATCH_COOLDOWN, () => {
+            this.predatorCatchCooldown = false;
+        });
+        pred.startCatchCooldown(PREDATOR_CATCH_COOLDOWN);
+
+        // Energy drain
+        const drain = PREDATOR_ENERGY_MIN
+            + Math.floor(Math.random() * (PREDATOR_ENERGY_MAX - PREDATOR_ENERGY_MIN + 1));
+
+        // Knockback direction — away from predator
+        const ddx = this.gridX - pred.gridX;
+        const ddy = this.gridY - pred.gridY;
+        // Normalise to cardinal direction; prefer horizontal if diagonal
+        let kx = ddx === 0 ? 0 : (ddx > 0 ? 1 : -1);
+        let ky = ddy === 0 ? 0 : (ddy > 0 ? 1 : -1);
+        if (kx !== 0 && ky !== 0) ky = 0; // pick one axis
+        if (kx === 0 && ky === 0) kx = 1; // fallback if standing on each other
+
+        // Find furthest walkable tile in knockback direction (up to PREDATOR_KNOCKBACK)
+        let destCol = this.gridX, destRow = this.gridY;
+        for (let i = 1; i <= PREDATOR_KNOCKBACK; i++) {
+            const nc = this.gridX + kx * i, nr = this.gridY + ky * i;
+            if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.totalRows) break;
+            if (!isWalkable(this.terrain.grid, nc, nr, this.cols, this.totalRows, true)) break;
+            if (isCliff(this.terrain.grid, nc, nr, this.cols, this.totalRows)) break;
+            if (this.weatherHazard?.isBlocked(nc, nr)) break;
+            destCol = nc;
+            destRow = nr;
+        }
+
+        this.gridX = destCol;
+        this.gridY = destRow;
+        this.slideDir = null;
+        this.moving = true;
+
+        // Red flash on player
+        this.tweens.add({
+            targets: this.player,
+            alpha: 0.3, yoyo: true, duration: 120, repeat: 2,
+            onComplete: () => this.player.setAlpha(1),
+        });
+
+        this.tweens.add({
+            targets: this.player,
+            x: this.worldX(destCol), y: this.worldY(destRow),
+            duration: 200, ease: 'Back.easeOut',
+            onComplete: () => {
+                this.moving = false;
+                this.emitter.setPosition(this.player.x, this.player.y);
+                this.fog.revealAround(this.gridX, this.gridY, this.time.now);
+                this.drainEnergy(drain);
+                this.tryCollectObjective();
+                this.checkGoal();
+            },
+        });
+
+        statsEvents.emit(STAT.CAUGHT);
+    }
+
+    private predatorName(seasonName: string): string {
+        switch (seasonName) {
+            case 'WinterY2': return 'wolf';
+            case 'SpringY2': return 'cougar';
+            case 'SummerY2': return 'tiger';
+            case 'FallY2':   return 'coyote';
+            default:         return 'predator';
+        }
+    }
+
+    private predatorLegendColor(seasonName: string): number {
+        switch (seasonName) {
+            case 'WinterY2': return 0x808898;
+            case 'SpringY2': return 0xc8944a;
+            case 'SummerY2': return 0xdd6600;
+            case 'FallY2':   return 0x998866;
+            default:         return 0x888888;
+        }
+    }
+
+    private updateWeatherText() {
+        if (this.weatherText && this.weatherHazard) {
+            this.weatherText.setText(this.weatherHazard.getLabel());
+        }
+    }
+
+    // ── Objectives ─────────────────────────────────────────────────────────────
+    private spawnObjectives(season: SeasonTheme) {
+        const candidates = findObjectiveCandidates(
+            this.terrain, season.name,
+            this.startCol, this.startRow, this.goalCol, this.goalRow,
+        );
+
+        // Pick required objectives spread across zones
+        const count = Math.min(2 + Math.floor(this.monthIndex / 3), 5);
+        const picked = pickObjectivePositions(candidates, this.terrain.zones, count);
+
+        this.objTotal = picked.length;
+        for (const pos of picked) {
+            const cx = pos.col * TILE + TILE / 2;
+            const cy = pos.row * TILE + TILE / 2;
+            const sprite = buildY2ObjectiveSprite(this, cx, cy, season.name);
+            this.mazeLayer.add(sprite);
+            this.objSprites.push(sprite);
+            this.objPositions.push(pos);
+        }
+
+        // Bonus objectives — off-trail areas
+        const bonusCount = Math.min(1 + Math.floor(this.monthIndex / 4), 3);
+        const bonusPicked = pickBonusPositions(
+            candidates, picked,
+            this.startCol, this.startRow, this.goalCol, this.goalRow,
+            bonusCount,
+        );
+        for (const pos of bonusPicked) {
+            const cx = pos.col * TILE + TILE / 2;
+            const cy = pos.row * TILE + TILE / 2;
+            const sprite = buildY2ObjectiveSprite(this, cx, cy, season.name, true);
+            sprite.setScale(0.75);
+            this.mazeLayer.add(sprite);
+            this.bonusSprites.push(sprite);
+            this.bonusPositions.push(pos);
+        }
+        this.bonusTotal = bonusPicked.length;
         this.updateObjText();
     }
 
-    private tryCollectFish() {
-        for (let i = this.fishes.length - 1; i >= 0; i--) {
-            const f = this.fishes[i];
-            if (f.dead) continue;
-            if (f.gridX === this.gridX && f.gridY === this.gridY) {
-                f.destroy();
-                this.fishes.splice(i, 1);
-                this.fishCollected++;
+    private tryCollectObjective() {
+        // Check required objectives
+        for (let i = this.objSprites.length - 1; i >= 0; i--) {
+            const pos = this.objPositions[i];
+            if (pos.col === this.gridX && pos.row === this.gridY) {
+                this.objSprites[i].destroy();
+                this.objSprites.splice(i, 1);
+                this.objPositions.splice(i, 1);
+                this.objCollected++;
                 statsEvents.emit(STAT.OBJ_COMPLETED);
                 this.updateObjText();
-                if (this.fishCollected >= this.fishTotal) {
+                if (this.objCollected >= this.objTotal) {
                     this.objDone = true;
                     if (this.goalLock) { this.goalLock.destroy(); this.goalLock = null; }
                 }
                 this.tweens.add({ targets: this.player, scaleY: 1.2, yoyo: true, duration: 150 });
+                return;
+            }
+        }
+        // Check bonus objectives
+        for (let i = this.bonusSprites.length - 1; i >= 0; i--) {
+            const pos = this.bonusPositions[i];
+            if (pos.col === this.gridX && pos.row === this.gridY) {
+                this.bonusSprites[i].destroy();
+                this.bonusSprites.splice(i, 1);
+                this.bonusPositions.splice(i, 1);
+                this.bonusCollected++;
+                this.updateObjText();
+                this.tweens.add({ targets: this.player, scaleY: 1.15, yoyo: true, duration: 120 });
                 return;
             }
         }
@@ -312,194 +876,182 @@ export default class GameY2Scene extends Phaser.Scene {
         if (this.gridX !== this.goalCol || this.gridY !== this.goalRow) return;
         if (!this.objDone) return;
         statsEvents.emit(STAT.MAZE_COMPLETE);
+        this.moving = true;
+
+        const stars = this.getStars();
+        const explorePct = this.totalReachable > 0
+            ? Math.round(this.visitedCells.size / this.totalReachable * 100) : 0;
+        const cfg = MONTHS_Y2[this.monthIndex];
+        log.info('scene', `goal reached: stars=${stars}, explore=${explorePct}%, bonus=${this.bonusCollected}/${this.bonusTotal}`);
+
+        // Show star result briefly
+        const starStr = '★'.repeat(stars) + '☆'.repeat(3 - stars);
+        const resultText = this.add.text(
+            (CANVAS_W - PANEL) / 2, HEADER + 60,
+            `${starStr}\n${this.objCollected}/${this.objTotal} food  +${this.bonusCollected} bonus  ${explorePct}% explored`,
+            { fontSize: '20px', color: '#ffe066', align: 'center', lineSpacing: 8 },
+        ).setOrigin(0.5).setDepth(DEPTH.PANEL + 10).setScrollFactor(0).setAlpha(0);
+        this.tweens.add({ targets: resultText, alpha: 1, duration: 400 });
 
         const last = this.monthIndex >= MONTHS_Y2.length - 1;
-        this.time.delayedCall(500, () => {
+        const nextMonth = this.monthIndex + 1;
+
+        // Season intro tutorials trigger before the first month of each new season
+        const SEASON_INTRO_MONTHS: Record<number, string> = {
+            2: 'SpringY2', 5: 'SummerY2', 8: 'FallY2',
+        };
+        const seasonIntro = SEASON_INTRO_MONTHS[nextMonth];
+
+        let nextScene: string;
+        let nextData: Record<string, unknown>;
+        if (last) {
+            nextScene = 'EndScene';
+            nextData = { stars, explorePct, bonusCollected: this.bonusCollected, bonusTotal: this.bonusTotal };
+        } else if (seasonIntro) {
+            nextScene = 'TutorialY2Scene';
+            nextData = { seasonIntro, targetMonthIndex: nextMonth, from: this.fromScene };
+        } else {
+            nextScene = 'GameY2Scene';
+            nextData = { monthIndex: nextMonth, from: this.fromScene };
+        }
+
+        this.time.delayedCall(1800, () => {
             this.destroyAll();
             this.cameras.main.fadeOut(800, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
-                if (last) {
-                    this.scene.start('EndScene');
-                } else {
-                    this.scene.start('GameY2Scene', { monthIndex: this.monthIndex + 1, from: this.fromScene });
-                }
+                this.cameras.main.resetFX();
+                this.scene.start(nextScene, nextData);
             });
         });
     }
 
-    // ── Hazard collision ───────────────────────────────────────────────────────
-    private checkHazardCollision() {
-        if (this.isHiding) return;
-        for (const h of this.hazards) {
-            if (h.dead) continue;
-            if (h.gridX === this.gridX && h.gridY === this.gridY) {
-                this.onCaught(); return;
+    private destroyAll() {
+        for (const s of this.objSprites) s.destroy();
+        for (const s of this.bonusSprites) s.destroy();
+        this.weatherHazard?.destroy();
+        for (const p of this.predators) p.destroy();
+        this.predators = [];
+    }
+
+    /** Count all OPEN + WATER cells reachable from start via BFS. */
+    private countReachable(): number {
+        const grid = this.terrain.grid;
+        const visited = new Set<number>();
+        const key = (c: number, r: number) => r * this.cols + c;
+        const queue: [number, number][] = [[this.startCol, this.startRow]];
+        visited.add(key(this.startCol, this.startRow));
+        while (queue.length > 0) {
+            const [c, r] = queue.shift()!;
+            for (const [dc, dr] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+                const nc = c + dc, nr = r + dr;
+                if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.totalRows) continue;
+                const k = key(nc, nr);
+                if (visited.has(k)) continue;
+                const t = grid[nr][nc];
+                if (t === Terrain.OPEN || t === Terrain.WATER) {
+                    visited.add(k);
+                    queue.push([nc, nr]);
+                }
             }
         }
+        return visited.size;
     }
 
-    private onCaught() {
-        this.lives--;
-        statsEvents.emit(STAT.CAUGHT);
-        this.updateLives();
-
-        if (this.lives <= 0) {
-            statsEvents.emit(STAT.DEATH);
-            this.destroyAll();
-            this.cameras.main.fadeOut(600, 0, 0, 0);
-            this.cameras.main.once('camerafadeoutcomplete', () => this.scene.restart());
-            return;
+    /** Calculate star rating: 1=complete, 2=all bonus, 3=all bonus + 80% explored. */
+    private getStars(): number {
+        if (this.bonusTotal > 0 && this.bonusCollected >= this.bonusTotal) {
+            const exploreFrac = this.totalReachable > 0
+                ? this.visitedCells.size / this.totalReachable : 0;
+            if (exploreFrac >= 0.8) return 3;
+            return 2;
         }
-
-        this.gridX = this.startCol;
-        this.gridY = this.startRow;
-        this.player.setPosition(this.worldX(this.startCol), this.worldY(this.startRow));
-        this.emitter.setPosition(this.player.x, this.player.y);
-        this.fog.revealAround(this.startCol, this.startRow, this.time.now);
-        for (const h of this.hazards) h.scatter();
-        this.cameras.main.flash(400, 200, 50, 50);
-    }
-
-    private destroyAll() {
-        for (const h of this.hazards) h.destroy();
-        for (const f of this.fishes)  f.destroy();
-    }
-
-    // ── Snow caves ─────────────────────────────────────────────────────────────
-    private placeSnowCaves() {
-        const forestLand = this.terrain.landCells.filter(c => {
-            const zone = this.terrain.zones.find(z =>
-                z.type === 'forest' && c.row >= z.startRow && c.row < z.startRow + z.height);
-            return zone &&
-                !(c.col === this.startCol && c.row === this.startRow) &&
-                !(c.col === this.goalCol  && c.row === this.goalRow);
-        });
-        const numCaves = Math.min(3 + Math.floor(Math.random() * 2), forestLand.length);
-        const step = Math.max(1, Math.floor(forestLand.length / (numCaves + 1)));
-
-        for (let i = 0; i < numCaves; i++) {
-            const c = forestLand[Math.min((i + 1) * step, forestLand.length - 1)];
-            this.hidingSpots.add(`${c.col},${c.row}`);
-
-            const cx = c.col * TILE + TILE / 2;
-            const cy = c.row * TILE + TILE / 2;
-            const cave = this.add.graphics();
-            cave.fillStyle(0x556688, 0.7);
-            cave.fillRoundedRect(cx - 18, cy - 14, 36, 28, 10);
-            cave.fillStyle(0x223344, 0.9);
-            cave.fillEllipse(cx, cy + 2, 22, 16);
-            cave.setDepth(1.2);
-            this.mazeLayer.add(cave);
-        }
-    }
-
-    // ── Wolves — one per interior forest zone ──────────────────────────────────
-    private spawnWolves(season: SeasonTheme) {
-        const forestZones = this.terrain.zones.filter(z => z.type === 'forest');
-        // Skip first (goal area) and last (start area)
-        const interior = forestZones.slice(1, -1);
-
-        for (const zone of interior) {
-            const candidates = this.terrain.landCells.filter(c =>
-                c.row >= zone.startRow + 1 && c.row < zone.startRow + zone.height - 1 &&
-                this.terrain.grid[c.row][c.col] === Terrain.OPEN
-            );
-            if (candidates.length === 0) continue;
-
-            const wc = candidates[Math.floor(candidates.length / 2)];
-            const h = new Hazard(
-                this, this.cells,
-                wc.col, wc.row,
-                'WinterY2',
-                () => this.onCaught(),
-                this.sceneryBlocked,
-                this.offsetX, 0,
-            );
-            this.hazards.push(h);
-        }
-        for (const h of this.hazards) h.setSiblings(this.hazards);
-    }
-
-    // ── Polar bear ─────────────────────────────────────────────────────────────
-    private createPolarBear(x: number, y: number): Phaser.GameObjects.Container {
-        const white = 0xf0f4f8, cream = 0xd8dce0;
-        const glow  = this.add.circle(0, 0, 24, 0xaaccff, 0.15);
-        const earL  = this.add.circle(-12, -18, 6, cream);
-        const earR  = this.add.circle( 12, -18, 6, cream);
-        const earLi = this.add.circle(-12, -18, 3, 0x888888, 0.5);
-        const earRi = this.add.circle( 12, -18, 3, 0x888888, 0.5);
-        const body  = this.add.ellipse(0, 5, 26, 22, white);
-        const head  = this.add.circle(0, -8, 12, white);
-        const snout = this.add.ellipse(0, -3, 10, 7, cream);
-        const nose  = this.add.circle(0, -5, 3, 0x222222);
-        const eyeL  = this.add.circle(-5, -11, 2.5, 0x222244);
-        const eyeR  = this.add.circle( 5, -11, 2.5, 0x222244);
-        const pawL  = this.add.circle(-10, 14, 5, cream);
-        const pawR  = this.add.circle( 10, 14, 5, cream);
-        const visual = this.add.container(0, 0, [glow, earL, earR, earLi, earRi, body, head, snout, nose, eyeL, eyeR, pawL, pawR]);
-        const outer  = this.add.container(x, y, [visual]);
-        this.tweens.add({ targets: visual, y: 3, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: glow, alpha: { from: 0.08, to: 0.25 }, yoyo: true, repeat: -1, duration: 1500 });
-        return outer;
+        return 1;
     }
 
     // ── Header (fixed on screen) ───────────────────────────────────────────────
     private buildHeader(season: SeasonTheme, cfg: typeof MONTHS_Y2[0]) {
-        const hx = this.offsetX + this.cols * TILE / 2;
-        const W  = this.cols * TILE;
+        const mapScreenW = CANVAS_W - PANEL;
+        const hx = mapScreenW / 2;
 
-        const bar = this.add.rectangle(hx, HEADER - 1, W, 1, season.uiAccent, 0.25).setDepth(3);
-        const bg  = this.add.rectangle(hx, HEADER / 2, CANVAS_W, HEADER, season.bgColor).setDepth(2.9);
+        const bar = this.add.rectangle(hx, HEADER - 1, mapScreenW, 1, season.uiAccent, 0.25).setDepth(DEPTH.PANEL);
+        const bg  = this.add.rectangle(CANVAS_W / 2, HEADER / 2, CANVAS_W, HEADER, season.bgColor).setDepth(DEPTH.PANEL_BG);
 
         const a = season.accentHex;
-        const t1 = this.add.text(hx, 20, 'Y E A R   T W O', { fontSize: '12px', color: `${a}77` }).setOrigin(0.5).setDepth(3);
-        const t2 = this.add.text(hx, 42, spaced(cfg.name), { fontSize: '26px', fontStyle: 'bold', color: a }).setOrigin(0.5).setDepth(3);
-        const t3 = this.add.text(hx, 72, 'Arctic Winter', { fontSize: '15px', color: `${a}99` }).setOrigin(0.5).setDepth(3);
-        const t4 = this.add.text(hx, 98, `"${cfg.quote}" — ${cfg.author}`, { fontSize: '14px', fontStyle: 'italic', color: `${a}66` }).setOrigin(0.5).setDepth(3);
+        const t1 = this.add.text(hx, 20, 'Y E A R   T W O', { fontSize: '12px', color: `${a}77` }).setOrigin(0.5).setDepth(DEPTH.PANEL);
+        const t2 = this.add.text(hx, 42, spaced(cfg.name), { fontSize: '26px', fontStyle: 'bold', color: a }).setOrigin(0.5).setDepth(DEPTH.PANEL);
+        const info = Y2_INFO[season.name] ?? Y2_INFO.WinterY2;
+        const t3 = this.add.text(hx, 72, info.subtitle, { fontSize: '15px', color: `${a}99` }).setOrigin(0.5).setDepth(DEPTH.PANEL);
+        const t4 = this.add.text(hx, 98, `"${cfg.quote}" — ${cfg.author}`, { fontSize: '14px', fontStyle: 'italic', color: `${a}66` }).setOrigin(0.5).setDepth(DEPTH.PANEL);
 
         for (const o of [bar, bg, t1, t2, t3, t4]) o.setScrollFactor(0);
     }
 
     // ── Side panel (fixed on screen) ───────────────────────────────────────────
-    private buildSidePanel(season: SeasonTheme) {
-        const px    = this.offsetX + this.cols * TILE;
+    private buildSidePanel(season: SeasonTheme, tintOverlay?: Phaser.GameObjects.Rectangle) {
+        const px    = CANVAS_W - PANEL;
         const pw    = PANEL;
         const cx    = px + pw / 2;
-        const depth = 3;
+        const depth = DEPTH.PANEL;
         const a     = season.accentHex;
         const dim   = season.panelDimHex;
+        const info  = Y2_INFO[season.name] ?? Y2_INFO.WinterY2;
 
         const sf0 = (obj: Phaser.GameObjects.GameObject) =>
             (obj as Phaser.GameObjects.Components.ScrollFactor & typeof obj).setScrollFactor(0);
 
         const panelBg = (season.bgColor & 0xfefefe) + 0x0a0a0a;
-        sf0(this.add.rectangle(px + pw / 2, CANVAS_H / 2, pw, CANVAS_H, panelBg).setDepth(depth - 1));
+        sf0(this.add.rectangle(px + pw / 2, CANVAS_H / 2, pw, CANVAS_H, panelBg).setDepth(DEPTH.PANEL_BG));
         sf0(this.add.rectangle(px + 1, CANVAS_H / 2, 1, CANVAS_H, season.uiAccent, 0.2).setDepth(depth));
 
         let y = HEADER + 22;
 
-        sf0(this.add.text(cx, y, 'FISH', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
+        sf0(this.add.text(cx, y, info.objLabel, { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
         y += 26;
         this.objText = this.add.text(cx, y, '', { fontSize: '18px', color: a, align: 'center' }).setOrigin(0.5, 0).setDepth(depth);
         this.objText.setScrollFactor(0);
         this.updateObjText();
 
         y += 44;
-        sf0(this.add.text(cx, y, 'LIVES', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
-        y += 24;
-        this.livesText = this.add.text(cx, y, '', { fontSize: '20px', color: '#ff5577' }).setOrigin(0.5, 0).setDepth(depth);
-        this.livesText.setScrollFactor(0);
-        this.updateLives();
+        sf0(this.add.text(cx, y, 'ENERGY', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
+        y += 20;
+        const barW = pw - 48;
+        this.energyBarBg = this.add.rectangle(cx, y, barW, 12, 0x222222, 0.6).setDepth(depth);
+        this.energyBarBg.setScrollFactor(0);
+        this.energyBar = this.add.rectangle(cx, y, barW, 12, 0x44cc66).setDepth(depth);
+        this.energyBar.setScrollFactor(0);
+        this.updateEnergyBar();
 
-        y += 40;
-        sf0(this.add.text(cx, y, 'SKILL', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
-        y += 24;
-        this.skill.text = this.add.text(cx, y, '', { fontSize: '16px', color: a, align: 'center' }).setOrigin(0.5, 0).setDepth(depth);
-        this.skill.text.setScrollFactor(0);
-        this.skill.updateText(this.time.now);
+        // Heat bar (summer only)
+        if (this.weatherHazard && season.name === 'SummerY2') {
+            y += 22;
+            sf0(this.add.text(cx, y, 'HEAT', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
+            y += 18;
+            (this.weatherHazard as any).buildHeatBar?.(this, cx, y, barW, depth);
+        }
+
+        // Weather status
+        if (this.weatherHazard) {
+            y += 22;
+            this.weatherText = this.add.text(cx, y, this.weatherHazard.getLabel(), {
+                fontSize: '13px', fontStyle: 'italic', color: dim,
+            }).setOrigin(0.5).setDepth(depth);
+            this.weatherText.setScrollFactor(0);
+        }
+
+        // Daylight indicator (Night Falls)
+        y += 22;
+        sf0(this.add.text(cx, y, 'DAYLIGHT', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
+        y += 20;
+        const dayBarBg = this.add.rectangle(cx, y, barW, 12, 0x222222, 0.6).setDepth(depth);
+        dayBarBg.setScrollFactor(0);
+        const dayBar = this.add.rectangle(cx, y, barW, 12, 0xffdd44).setDepth(depth);
+        dayBar.setScrollFactor(0);
+        const dayIcon = this.add.text(px + 18, y - 1, '☀', { fontSize: '14px', color: '#ffdd44' }).setOrigin(0.5).setDepth(depth);
+        dayIcon.setScrollFactor(0);
+        if (tintOverlay) this.dayNight.setUI(tintOverlay, dayBar, dayBarBg, dayIcon);
 
         // Legend
-        y += 44;
+        y += 40;
         sf0(this.add.rectangle(cx, y, pw - 32, 1, season.uiAccent, 0.2).setDepth(depth));
         y += 20;
         sf0(this.add.text(cx, y, 'LEGEND', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
@@ -507,15 +1059,68 @@ export default class GameY2Scene extends Phaser.Scene {
 
         const lx = px + 20;
         const tx = px + 40;
-        const items = [
-            { label: 'polar bear (you)', draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0xf0f4f8, 0.9); g.fillCircle(lx + 7, ly, 6); } },
-            { label: 'wolf — avoid!',    draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x808898, 0.9); g.fillCircle(lx + 7, ly, 6); } },
-            { label: 'snow cave — hide', draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x556688, 0.7); g.fillRoundedRect(lx, ly - 5, 14, 10, 3); } },
-            { label: 'fish — catch!',    draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0xff8844, 0.9); g.fillEllipse(lx + 7, ly, 12, 8); } },
-            { label: 'water — swim!',    draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x1858a0, 0.9); g.fillRect(lx, ly - 5, 14, 10); } },
-            { label: 'tree — blocked',   draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x6b3a1f, 1); g.fillRect(lx + 5, ly, 4, 8); g.fillStyle(0x228b34, 1); g.fillCircle(lx + 7, ly - 3, 7); } },
-            { label: 'swim — enter water!', draw: (g: Phaser.GameObjects.Graphics, ly: number) => { g.fillStyle(0x4090d0, 0.7); g.fillCircle(lx + 7, ly, 6); } },
+
+        // Common legend items
+        const items: { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }[] = [
+            { label: `${info.bear} (you)`,        draw: (g, ly) => { g.fillStyle(info.bearColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
+            { label: `${info.objLabel.toLowerCase()} — collect`, draw: (g, ly) => { g.fillStyle(info.objColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
+            { label: `${this.predatorName(season.name)} — avoid!`, draw: (g, ly) => {
+                const c = this.predatorLegendColor(season.name);
+                g.fillStyle(c, 0.9); g.fillCircle(lx + 7, ly, 6);
+                g.fillStyle(0xff2200, 0.5); g.fillCircle(lx + 7, ly, 3);
+            }},
         ];
+
+        // Season-specific tree/bamboo
+        if (season.name === 'SummerY2') {
+            items.push({ label: 'bamboo — blocked', draw: (g, ly) => { g.fillStyle(0x44882a, 1); g.fillRect(lx + 4, ly - 5, 3, 12); g.fillRect(lx + 9, ly - 4, 3, 11); } });
+        } else {
+            items.push({ label: 'tree — blocked', draw: (g, ly) => { g.fillStyle(0x6b3a1f, 1); g.fillRect(lx + 5, ly, 4, 8); g.fillStyle(0x228b34, 1); g.fillCircle(lx + 7, ly - 3, 7); } });
+        }
+
+        // Common terrain
+        items.push(
+            { label: 'mountain — go around',   draw: (g, ly) => { g.fillStyle(0x384048, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x282e34, 0.85); g.fillTriangle(lx + 1, ly + 5, lx + 7, ly - 5, lx + 13, ly + 5); } },
+            { label: 'boulder — go around',    draw: (g, ly) => { g.fillStyle(0x8a9080, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x606860, 0.9); g.fillEllipse(lx + 7, ly, 10, 7); } },
+            { label: 'ridge — lookout view',   draw: (g, ly) => { g.fillStyle(0x8a9080, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xffdd44, 0.6); g.fillCircle(lx + 7, ly, 3); } },
+            { label: 'cliff — be careful',     draw: (g, ly) => { g.fillStyle(0x1a1018, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xff2200, 0.4); g.fillRect(lx + 2, ly - 3, 10, 6); } },
+        );
+
+        // Season-specific water description
+        if (season.name === 'SummerY2') {
+            items.push({ label: 'water — cools heat', draw: (g, ly) => { g.fillStyle(0x186848, 1); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x30a070, 0.6); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly, lx + 12, ly)); } });
+        } else {
+            items.push({ label: 'water — slow swim', draw: (g, ly) => { g.fillStyle(0x1858a0, 1); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x4090d0, 0.6); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly, lx + 12, ly)); } });
+        }
+
+        items.push(
+            { label: 'goal — reach it!', draw: (g, ly) => { g.fillStyle(season.goalColor, 0.7); g.fillRect(lx, ly - 5, 14, 10); } },
+            { label: 'daylight — reach goal before dark', draw: (g, ly) => { g.fillStyle(0xffdd44, 0.8); g.fillCircle(lx + 7, ly, 5); g.fillStyle(0x333366, 0.6); g.fillCircle(lx + 7, ly, 2.5); } },
+        );
+
+        // Season-specific weather legend entries
+        switch (season.name) {
+            case 'WinterY2':
+                items.push({ label: 'blizzard cloud — drifts', draw: (g, ly) => { g.fillStyle(0xc8d8e8, 0.6); g.fillEllipse(lx + 7, ly - 1, 14, 8); g.fillStyle(0xd8e4f0, 0.45); g.fillEllipse(lx + 4, ly - 3, 8, 6); g.fillStyle(0xffffff, 0.4); g.fillCircle(lx + 4, ly + 4, 1.5); g.fillCircle(lx + 9, ly + 5, 1); } });
+                items.push({ label: 'snowdrift — extra energy', draw: (g, ly) => { g.fillStyle(0xe8eef4, 0.5); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xc8dce8, 0.4); g.fillCircle(lx + 4, ly, 3); g.fillCircle(lx + 10, ly - 1, 2); } });
+                items.push({ label: 'snow cave — shelter + rest', draw: (g, ly) => { g.fillStyle(0x0a0808, 0.85); g.fillEllipse(lx + 7, ly + 1, 12, 8); g.fillStyle(0xe8eef4, 0.8); g.fillEllipse(lx + 7, ly - 3, 12, 4); } });
+                items.push({ label: 'blizzard — low visibility', draw: (g, ly) => { g.fillStyle(0xc0d0e0, 0.4); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0xe0e8f0, 0.3); g.fillCircle(lx + 3, ly - 2, 2); g.fillCircle(lx + 8, ly + 1, 1.5); g.fillCircle(lx + 11, ly - 1, 1); } });
+                break;
+            case 'SpringY2':
+                items.push({ label: 'rain cloud — floods area', draw: (g, ly) => { g.fillStyle(0x405878, 0.6); g.fillEllipse(lx + 7, ly - 2, 14, 8); g.fillStyle(0x4a6080, 0.45); g.fillEllipse(lx + 4, ly - 4, 8, 6); g.lineStyle(1, 0x6090c0, 0.4); g.strokeLineShape(new Phaser.Geom.Line(lx + 4, ly + 3, lx + 4, ly + 6)); g.strokeLineShape(new Phaser.Geom.Line(lx + 7, ly + 2, lx + 7, ly + 6)); g.strokeLineShape(new Phaser.Geom.Line(lx + 10, ly + 3, lx + 10, ly + 6)); } });
+                items.push({ label: 'flood — wait or reroute', draw: (g, ly) => { g.fillStyle(0x2060c0, 0.6); g.fillRect(lx, ly - 5, 14, 10); g.lineStyle(1, 0x60a0e0, 0.5); g.strokeLineShape(new Phaser.Geom.Line(lx + 2, ly - 1, lx + 12, ly - 1)); g.strokeLineShape(new Phaser.Geom.Line(lx + 1, ly + 2, lx + 11, ly + 2)); } });
+                items.push({ label: 'rising water — hurry!', draw: (g, ly) => { g.fillStyle(0x1868a8, 0.7); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x48a0d8, 0.4); g.fillTriangle(lx + 2, ly + 3, lx + 7, ly - 3, lx + 12, ly + 3); } });
+                break;
+            case 'SummerY2':
+                items.push({ label: 'heat cloud — more heat', draw: (g, ly) => { g.fillStyle(0xdd8833, 0.35); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0xffaa44, 0.25); g.fillEllipse(lx + 4, ly - 2, 8, 5); } });
+                items.push({ label: 'shade — less heat', draw: (g, ly) => { g.fillStyle(0x489028, 1); g.fillRect(lx, ly - 5, 14, 10); g.fillStyle(0x000000, 0.15); g.fillEllipse(lx + 4, ly - 1, 8, 5); g.fillEllipse(lx + 10, ly + 2, 6, 4); } });
+                items.push({ label: 'heat — watch the meter', draw: (g, ly) => { g.fillStyle(0x222222, 0.6); g.fillRect(lx, ly - 3, 14, 6); g.fillStyle(0xff8833, 1); g.fillRect(lx + 1, ly - 2, 9, 4); } });
+                break;
+            case 'FallY2':
+                items.push({ label: 'wind cloud — pushes you', draw: (g, ly) => { g.fillStyle(0x8899aa, 0.6); g.fillEllipse(lx + 7, ly, 14, 8); g.fillStyle(0x8899aa, 0.4); g.fillEllipse(lx + 4, ly - 2, 8, 6); } });
+                items.push({ label: 'leaf pile — may hide berries!', draw: (g, ly) => { g.fillStyle(0x8b5e3c, 0.8); g.fillEllipse(lx + 7, ly, 12, 6); g.fillStyle(0xcc6622, 0.6); g.fillEllipse(lx + 4, ly - 1, 7, 4); g.fillEllipse(lx + 10, ly + 1, 6, 4); } });
+                break;
+        }
 
         const gfx = this.add.graphics().setDepth(depth);
         gfx.setScrollFactor(0);
@@ -528,7 +1133,7 @@ export default class GameY2Scene extends Phaser.Scene {
         y += 6;
         sf0(this.add.rectangle(cx, y, pw - 32, 1, season.uiAccent, 0.2).setDepth(depth));
         y += 18;
-        for (const line of ['SPACE  swim', 'R  new map', 'M  menu', '↑↓←→  move']) {
+        for (const line of ['↑↓←→  move', 'SPACE  rest', 'R  new map', 'M  menu']) {
             sf0(this.add.text(cx, y, line, { fontSize: '14px', color: '#ffffff55' }).setOrigin(0.5, 0).setDepth(depth));
             y += 17;
         }
@@ -536,29 +1141,21 @@ export default class GameY2Scene extends Phaser.Scene {
 
     // ── UI helpers ─────────────────────────────────────────────────────────────
     private updateObjText() {
-        if (this.objText) this.objText.setText(`${this.fishCollected} / ${this.fishTotal}`);
+        if (!this.objText) return;
+        let txt = `${this.objCollected} / ${this.objTotal}`;
+        if (this.bonusTotal > 0) {
+            txt += `  +${this.bonusCollected} bonus`;
+        }
+        this.objText.setText(txt);
     }
-    private updateLives() {
-        if (this.livesText) this.livesText.setText('♥'.repeat(this.lives));
+    private updateEnergyBar() {
+        if (!this.energyBar) return;
+        const frac = this.energy / this.energyMax;
+        const fullW = this.energyBarBg.width;
+        this.energyBar.width = fullW * frac;
+        // Shift color from green → yellow → red
+        const color = frac > 0.5 ? 0x44cc66 : frac > 0.25 ? 0xccaa22 : 0xcc4444;
+        this.energyBar.setFillStyle(color);
     }
 
-    // ── Skill context ──────────────────────────────────────────────────────────
-    private buildSkillContext(): SkillContext {
-        return {
-            scene: this, gridX: this.gridX, gridY: this.gridY,
-            cols: this.cols, rows: this.totalRows,
-            cells: this.cells, sceneryBlocked: this.sceneryBlocked,
-            hazards: this.hazards, fog: this.fog,
-            player: this.player,
-            worldX: (c) => this.worldX(c), worldY: (r) => this.worldY(r),
-            findGate: () => null, keyCount: 0,
-            updateInventory: () => {}, collectKey: () => {},
-            checkObjective: () => this.tryCollectFish(),
-            checkGoal: () => this.checkGoal(),
-            checkHazardCollision: () => this.checkHazardCollision(),
-            setGrid: (x, y) => { this.gridX = x; this.gridY = y; },
-            setMoving: (m) => { this.moving = m; },
-            setSwimming: (active) => { this.swimming = active; },
-        };
-    }
 }

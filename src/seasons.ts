@@ -19,8 +19,11 @@ function panelDim(c: number, factor: number, min: number): string {
     return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
+export type SeasonName = 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial'
+    | 'WinterY2' | 'SpringY2' | 'SummerY2' | 'FallY2';
+
 export interface SeasonTheme {
-    name: 'Winter' | 'Spring' | 'Summer' | 'Fall' | 'Tutorial' | 'WinterY2';
+    name: SeasonName;
     floorLight: number;   // light checkerboard tile
     floorDark:  number;   // dark checkerboard tile
     wallColor:  number;   // maze wall lines
@@ -153,10 +156,62 @@ const WINTER_Y2: SeasonTheme = {
     textHex:     hex(0x1a2838),
 };
 
+const SPRING_Y2: SeasonTheme = {
+    name:       'SpringY2',
+    floorLight: 0x88c060,   // fresh meadow green
+    floorDark:  0x609838,   // deeper forest green
+    wallColor:  0x1a3010,   // dark pine
+    goalColor:  0xffcc44,   // warm honey gold
+    bgColor:    0x081808,
+    uiAccent:   0xb8e888,
+    textColor:  0x1a3010,
+    keyColor:   0xffee44,
+    gateColor:  0x884422,
+    accentHex:   hex(0xb8e888),
+    dimHex:      dimHex(0xb8e888, 0.65),
+    panelDimHex: panelDim(0xb8e888, 0.55, 0x88),
+    textHex:     hex(0x1a3010),
+};
+
+const SUMMER_Y2: SeasonTheme = {
+    name:       'SummerY2',
+    floorLight: 0x68b848,   // bamboo green
+    floorDark:  0x489028,   // deep bamboo
+    wallColor:  0x182808,   // dark jungle
+    goalColor:  0xccff66,   // bright lime
+    bgColor:    0x081408,
+    uiAccent:   0xa8e070,
+    textColor:  0x182808,
+    keyColor:   0xffffff,
+    gateColor:  0xcc4400,
+    accentHex:   hex(0xa8e070),
+    dimHex:      dimHex(0xa8e070, 0.65),
+    panelDimHex: panelDim(0xa8e070, 0.55, 0x88),
+    textHex:     hex(0x182808),
+};
+
+const FALL_Y2: SeasonTheme = {
+    name:       'FallY2',
+    floorLight: 0xc87830,   // warm amber
+    floorDark:  0x985818,   // deep russet
+    wallColor:  0x281008,   // dark bark
+    goalColor:  0xff6644,   // bright berry red
+    bgColor:    0x100804,
+    uiAccent:   0xf0a860,
+    textColor:  0x281008,
+    keyColor:   0x66ccff,
+    gateColor:  0x3344aa,
+    accentHex:   hex(0xf0a860),
+    dimHex:      dimHex(0xf0a860, 0.65),
+    panelDimHex: panelDim(0xf0a860, 0.55, 0x88),
+    textHex:     hex(0x281008),
+};
+
 // ── Season lookup by name ────────────────────────────────────────────────────
 export const SEASONS: Record<string, SeasonTheme> = {
     Winter: WINTER, Spring: SPRING, Summer: SUMMER, Fall: FALL,
-    Tutorial: TUTORIAL, WinterY2: WINTER_Y2,
+    Tutorial: TUTORIAL,
+    WinterY2: WINTER_Y2, SpringY2: SPRING_Y2, SummerY2: SUMMER_Y2, FallY2: FALL_Y2,
 };
 
 // ── 12 months ────────────────────────────────────────────────────────────────
@@ -178,10 +233,19 @@ export const MONTHS: MonthConfig[] = [
     { month: 12, name: 'December',  shortName: 'Dec', season: WINTER, cols: 12, rows: 12, quote: 'In the bleak midwinter, frosty wind made moan.',     author: 'Christina Rossetti'      },
 ];
 
-// ── Year 2: Winter months ────────────────────────────────────────────────────
-// Open terrain maps — winding mountain path, no internal walls.
+// ── Year 2: 12 months — four bears heading home ─────────────────────────────
+// Open terrain maps — winding paths, no internal maze walls. Weather is the hazard.
 export const MONTHS_Y2: MonthConfig[] = [
-    { month: 1, name: 'January',  shortName: 'Jan', season: WINTER_Y2, cols: 10, rows: 10, year: 2, quote: 'The polar bear crosses in quiet cold.',       author: 'Jack London'         },
-    { month: 2, name: 'February', shortName: 'Feb', season: WINTER_Y2, cols: 12, rows: 12, year: 2, quote: 'The land lay white beneath the starlight.',   author: 'Robert Service'      },
-    { month: 3, name: 'December', shortName: 'Dec', season: WINTER_Y2, cols: 12, rows: 12, year: 2, quote: 'Deep in the winter, an invincible summer.',   author: 'Albert Camus'        },
+    { month:  1, name: 'January',   shortName: 'Jan', season: WINTER_Y2, cols: 14, rows: 6, year: 2, quote: 'The polar bear crosses in quiet cold.',           author: 'Jack London'           },
+    { month:  2, name: 'February',  shortName: 'Feb', season: WINTER_Y2, cols: 14, rows: 6, year: 2, quote: 'The land lay white beneath the starlight.',       author: 'Robert Service'        },
+    { month:  3, name: 'March',     shortName: 'Mar', season: SPRING_Y2, cols: 14, rows: 6, year: 2, quote: 'In every walk with nature one receives.',         author: 'John Muir'             },
+    { month:  4, name: 'April',     shortName: 'Apr', season: SPRING_Y2, cols: 14, rows: 6, year: 2, quote: 'The bear came over the mountain.',                author: 'Traditional'           },
+    { month:  5, name: 'May',       shortName: 'May', season: SPRING_Y2, cols: 15, rows: 7, year: 2, quote: 'The world is mud-luscious and puddle-wonderful.',  author: 'e.e. cummings'         },
+    { month:  6, name: 'June',      shortName: 'Jun', season: SUMMER_Y2, cols: 14, rows: 6, year: 2, quote: 'The bamboo that bends is stronger than the oak.', author: 'Japanese proverb'      },
+    { month:  7, name: 'July',      shortName: 'Jul', season: SUMMER_Y2, cols: 14, rows: 6, year: 2, quote: 'Rest is not idleness on a summer day.',           author: 'John Lubbock'          },
+    { month:  8, name: 'August',    shortName: 'Aug', season: SUMMER_Y2, cols: 15, rows: 7, year: 2, quote: 'One must still have chaos in oneself.',           author: 'Friedrich Nietzsche'   },
+    { month:  9, name: 'September', shortName: 'Sep', season: FALL_Y2,   cols: 14, rows: 6, year: 2, quote: 'The trees are about to show us how lovely it is.',author: 'Dodinsky'              },
+    { month: 10, name: 'October',   shortName: 'Oct', season: FALL_Y2,   cols: 14, rows: 6, year: 2, quote: 'Every leaf speaks bliss to me.',                  author: 'Emily Bronte'          },
+    { month: 11, name: 'November',  shortName: 'Nov', season: FALL_Y2,   cols: 15, rows: 7, year: 2, quote: 'The last of autumn and the first of winter.',     author: 'Emily Dickinson'       },
+    { month: 12, name: 'December',  shortName: 'Dec', season: WINTER_Y2, cols: 15, rows: 7, year: 2, quote: 'Deep in the winter, an invincible summer.',       author: 'Albert Camus'          },
 ];

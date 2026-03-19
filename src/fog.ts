@@ -1,6 +1,10 @@
 import Phaser from 'phaser';
 import { TILE } from './constants';
 import { SeasonTheme } from './seasons';
+import {
+    FOG_DECAY_START, FOG_DECAY_DURATION,
+    FOG_DECAY_START_HARD, FOG_DECAY_DURATION_HARD, DEPTH,
+} from './gameplay';
 
 // ── Fog-of-war system ────────────────────────────────────────────────────────
 // Manages per-cell fog tiles, visibility, and decay.
@@ -9,11 +13,6 @@ import { SeasonTheme } from './seasons';
 //   - Cells at distance 2 are "dimmed" (alpha 0.52) on first reveal.
 //   - After leaving the lit radius, cells slowly fade back to fully hidden.
 //   - Hard mode accelerates the decay timing.
-
-const DECAY_START          = 30_000;  // ms before fog starts returning (normal)
-const DECAY_DURATION       = 15_000;  // ms to fade from dim to fully hidden
-const DECAY_START_HARD     = 10_000;
-const DECAY_DURATION_HARD  =  8_000;
 
 export class FogOfWar {
     private tiles: Phaser.GameObjects.Image[][] = [];
@@ -25,6 +24,7 @@ export class FogOfWar {
     private readonly rows: number;
     private readonly hardMode: boolean;
     private readonly scene: Phaser.Scene;
+    private revealRadius: number;
 
     constructor(
         scene: Phaser.Scene,
@@ -34,11 +34,13 @@ export class FogOfWar {
         season: SeasonTheme,
         worldX: (col: number) => number,
         worldY: (row: number) => number,
+        revealRadius = 2,
     ) {
         this.scene    = scene;
         this.cols     = cols;
         this.rows     = rows;
         this.hardMode = hardMode;
+        this.revealRadius = revealRadius;
 
         // Generate fog texture if it doesn't exist yet
         const fogKey = `fog_${season.name}`;
@@ -79,26 +81,35 @@ export class FogOfWar {
                     worldX(col),
                     worldY(row),
                     fogKey,
-                ).setDepth(2.5).setDisplaySize(TILE + 2, TILE + 2);
+                ).setDepth(DEPTH.FOG).setDisplaySize(TILE + 2, TILE + 2);
             }
         }
     }
 
-    /** Reveal cells around a position (Chebyshev radius 2, fully lit at radius 1). */
+    /** Dynamically adjust the reveal radius (e.g. for night falls). */
+    setRevealRadius(r: number) {
+        this.revealRadius = Math.max(1, r);
+    }
+
+    /** Reveal cells around a position. Fully lit within litRadius, dimmed up to revealRadius. */
     revealAround(col: number, row: number, now: number) {
         const prevLit = new Set(this.lit);
         this.lit.clear();
 
-        for (let dr = -2; dr <= 2; dr++) {
-            for (let dc = -2; dc <= 2; dc++) {
+        const r = this.revealRadius;
+        const litR = Math.max(1, r - 1);
+
+        for (let dr = -r; dr <= r; dr++) {
+            for (let dc = -r; dc <= r; dc++) {
                 const nc = col + dc, nr = row + dr;
                 if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.rows) continue;
 
                 const dist = Math.max(Math.abs(dc), Math.abs(dr));
+                if (dist > r) continue;
                 const key  = `${nc},${nr}`;
                 const tile = this.tiles[nr][nc];
 
-                if (dist <= 1) {
+                if (dist <= litR) {
                     this.lit.add(key);
                     this.revealed.add(key);
                     this.lastLitTime.set(key, now);
@@ -138,8 +149,8 @@ export class FogOfWar {
 
     /** Call every frame — gradually fade revealed-but-not-lit cells back to hidden. */
     updateDecay(now: number) {
-        const start = this.hardMode ? DECAY_START_HARD : DECAY_START;
-        const dur   = this.hardMode ? DECAY_DURATION_HARD : DECAY_DURATION;
+        const start = this.hardMode ? FOG_DECAY_START_HARD : FOG_DECAY_START;
+        const dur   = this.hardMode ? FOG_DECAY_DURATION_HARD : FOG_DECAY_DURATION;
 
         for (const key of this.revealed) {
             if (this.lit.has(key)) continue;

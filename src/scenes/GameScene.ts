@@ -11,7 +11,9 @@ import { MOVE_DIRS, Cell, solvePath, floodFill, bfsDistanceMap } from '../mazeUt
 import { statsEvents, STAT } from '../statsEmitter';
 import { createPlayerSprite, ensureSparkleTexture } from '../sprites';
 import { buildHeader, buildSidePanel } from '../sidePanel';
-import { PlacementCtx, placeScenery, placeBushes, placeBlockingRocks, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
+import { PlacementCtx, placeScenery, placeBushes, placeObjectives, placeCustomEntities, guaranteeBushNear } from '../entityPlacement';
+import { PLAYER_MOVE_DURATION, DEPTH } from '../gameplay';
+import { log } from '../logger';
 
 
 // Returns the first month of the season that contains `month`
@@ -66,6 +68,7 @@ export default class GameScene extends Phaser.Scene {
     private sceneryBlocked = new Set<string>();
     private hazards: Hazard[] = [];
     private isHiding = false;
+    private burrowed = false;
     private gate1Cell: { col: number; row: number } | null = null;
 
     private lives = 3;
@@ -146,6 +149,8 @@ export default class GameScene extends Phaser.Scene {
         this.sceneryBlocked = new Set();
         this.hazards        = [];
         this.isHiding    = false;
+        this.burrowed    = false;
+        this._skillCtx   = undefined!;
         this.gate1Cell   = null;
         this.lives       = 3;
         this.objectives  = new Map();
@@ -161,21 +166,17 @@ export default class GameScene extends Phaser.Scene {
             this.goalCol  = this.customMap.goal.col;
             this.goalRow  = this.customMap.goal.row;
         } else {
-            // Pick two distinct random corners for start and goal
-            const corners = [
-                { col: 0,            row: 0            },
-                { col: this.cols - 1, row: 0            },
-                { col: 0,            row: this.rows - 1 },
-                { col: this.cols - 1, row: this.rows - 1 },
+            // Pick opposite corners for start and goal (diagonal pairs only)
+            const pairs: [{ col: number; row: number }, { col: number; row: number }][] = [
+                [{ col: 0, row: 0 }, { col: this.cols - 1, row: this.rows - 1 }],
+                [{ col: this.cols - 1, row: 0 }, { col: 0, row: this.rows - 1 }],
             ];
-            for (let i = corners.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [corners[i], corners[j]] = [corners[j], corners[i]];
-            }
-            this.startCol = corners[0].col;
-            this.startRow = corners[0].row;
-            this.goalCol  = corners[1].col;
-            this.goalRow  = corners[1].row;
+            const pair = pairs[Math.random() < 0.5 ? 0 : 1];
+            if (Math.random() < 0.5) pair.reverse();
+            this.startCol = pair[0].col;
+            this.startRow = pair[0].row;
+            this.goalCol  = pair[1].col;
+            this.goalRow  = pair[1].row;
         }
     }
 
@@ -276,7 +277,7 @@ export default class GameScene extends Phaser.Scene {
             this.worldX(this.goalCol),
             this.worldY(this.goalRow),
             TILE / 2 - 2, 0x000000, 0.45,
-        ).setDepth(1.6);
+        ).setDepth(DEPTH.GOAL_LOCK);
 
         // Walls
         const g = this.add.graphics();
@@ -309,12 +310,7 @@ export default class GameScene extends Phaser.Scene {
             // 1. Scenery (blocking obstacles) — on widened cells + dead ends
             placeScenery(pCtx, widenedCells, season.name);
 
-            // 2. Winter blocking rocks — on corridors that require HOP to pass
-            if (season.name === 'Winter') {
-                placeBlockingRocks(pCtx, season.name);
-            }
-
-            // 3. Keys + gates
+            // 2. Keys + gates
             this.placePuzzleItems(season);
 
             // 4. Verify all keys are reachable from start
@@ -339,7 +335,7 @@ export default class GameScene extends Phaser.Scene {
         const startX = this.worldX(this.startCol);
         const startY = this.worldY(this.startRow);
         this.player = createPlayerSprite(this, startX, startY, season);
-        this.player.setDepth(2);
+        this.player.setDepth(DEPTH.PLAYER);
 
         if (this.customMap) {
             this.spawnCustomHazards(season);
@@ -363,7 +359,7 @@ export default class GameScene extends Phaser.Scene {
             quantity:  1,
             tint:      trailTints[season.name] ?? [fairyGlow, 0xffffff],
             blendMode: Phaser.BlendModes.ADD,
-        }).setDepth(1.9);
+        }).setDepth(DEPTH.TRAIL);
 
         // ── Header strip ──────────────────────────────────────────────────────
         buildHeader(this, this.monthConfig, this.offsetX, this.offsetY, this.W);
@@ -465,7 +461,7 @@ export default class GameScene extends Phaser.Scene {
             );
             if (offPath.length > 0) {
                 offPath.sort((a, b) => (distFromPath.get(b) ?? 0) - (distFromPath.get(a) ?? 0));
-                const topN = Math.max(1, Math.floor(offPath.length * 0.10));
+                const topN = Math.max(1, Math.floor(offPath.length * 0.05));
                 const key = offPath[Math.floor(Math.random() * topN)];
                 const [c, r] = key.split(',').map(Number);
                 return { col: c, row: r };
@@ -485,7 +481,7 @@ export default class GameScene extends Phaser.Scene {
         for (let i = 0; i < zones.length - 1; i++) {
             const pos = pickOffPath(zones[i]);
             if (!pos) {
-                console.warn('[PhaseGame] Could not place key in zone', i, '— skipping gates.');
+                log.warn('maze', `could not place key in zone ${i} — skipping gates`);
                 this.gateEdges = [];
                 return;
             }
@@ -564,7 +560,7 @@ export default class GameScene extends Phaser.Scene {
         // Initially: at least one key must be reachable with all gates closed
         const reachable0 = bfs(this.startCol, this.startRow, openedGates);
         if (!allKeys.some(k => reachable0.has(k))) {
-            console.warn('[PhaseGame] No key reachable from start! Removing gates.');
+            log.warn('maze', 'no key reachable from start — removing gates');
             ok = false;
         }
 
@@ -577,7 +573,7 @@ export default class GameScene extends Phaser.Scene {
                 const reachable = bfs(this.startCol, this.startRow, openedGates);
                 const keysFound = allKeys.filter(k => reachable.has(k)).length;
                 if (keysFound < i + 1) {
-                    console.warn(`[PhaseGame] Key ${i + 1} unreachable after gate ${i}! Removing gates.`);
+                    log.warn('maze', `key ${i + 1} unreachable after gate ${i} — removing gates`);
                     ok = false;
                 }
             }
@@ -601,29 +597,38 @@ export default class GameScene extends Phaser.Scene {
         this.inventoryText.setText(`${filled}${empty}  KEY`);
     }
 
-    // ── Skill context ───────────────────────────────────────────────────────
+    // ── Skill context (persistent object — BURROW stores emergeBurrow on it) ──
+    private _skillCtx!: SkillContext;
     private get skillCtx(): SkillContext {
-        return {
-            scene: this,
-            gridX: this.gridX, gridY: this.gridY,
-            cols: this.cols, rows: this.rows,
-            cells: this.cells,
-            sceneryBlocked: this.sceneryBlocked,
-            hazards: this.hazards,
-            fog: this.fog,
-            player: this.player,
-            worldX: (c) => this.worldX(c),
-            worldY: (r) => this.worldY(r),
-            findGate: (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr),
-            keyCount: this.keyCount,
-            updateInventory: () => this.updateInventory(),
-            collectKey: () => this.collectKey(),
-            checkObjective: () => this.checkObjective(),
-            checkGoal: () => this.checkGoal(),
-            checkHazardCollision: () => this.checkHazardCollision(),
-            setGrid: (x, y) => { this.gridX = x; this.gridY = y; },
-            setMoving: (m) => { this.moving = m; this.slideDir = null; },
-        };
+        if (!this._skillCtx) {
+            const self = this;
+            this._skillCtx = {
+                scene: this,
+                get gridX() { return self.gridX; },
+                get gridY() { return self.gridY; },
+                get cols() { return self.cols; },
+                get rows() { return self.rows; },
+                get cells() { return self.cells; },
+                get sceneryBlocked() { return self.sceneryBlocked; },
+                get hazards() { return self.hazards; },
+                get fog() { return self.fog; },
+                get player() { return self.player; },
+                worldX: (c) => this.worldX(c),
+                worldY: (r) => this.worldY(r),
+                findGate: (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr),
+                get keyCount() { return self.keyCount; },
+                set keyCount(v) { self.keyCount = v; },
+                updateInventory: () => this.updateInventory(),
+                collectKey: () => this.collectKey(),
+                checkObjective: () => this.checkObjective(),
+                checkGoal: () => this.checkGoal(),
+                checkHazardCollision: () => this.checkHazardCollision(),
+                setGrid: (x, y) => { this.gridX = x; this.gridY = y; },
+                setMoving: (m) => { this.moving = m; this.slideDir = null; },
+                setBurrowed: (active) => { this.burrowed = active; },
+            };
+        }
+        return this._skillCtx;
     }
 
     // ── Gate lookup ───────────────────────────────────────────────────────────
@@ -644,13 +649,22 @@ export default class GameScene extends Phaser.Scene {
         // Skill cooldown tick
         this.skill.tick(this.time.now);
 
-        // Hiding state — fade fairy when inside a bush cell
-        const nowHiding = this.bushCells.has(`${this.gridX},${this.gridY}`);
+        // Hiding state — fade fairy when inside a bush cell or burrowed
+        const nowHiding = this.burrowed || this.bushCells.has(`${this.gridX},${this.gridY}`);
         if (nowHiding !== this.isHiding) {
             this.isHiding = nowHiding;
-            this.tweens.add({ targets: this.player, alpha: nowHiding ? 0.35 : 1.0, duration: 300 });
+            // Don't override alpha while burrowed (skill manages its own visual)
+            if (!this.burrowed) {
+                this.tweens.add({ targets: this.player, alpha: nowHiding ? 0.35 : 1.0, duration: 300 });
+            }
         }
         for (const h of this.hazards) h.setTarget(this.gridX, this.gridY, this.isHiding);
+
+        // Allow SPACE to cancel burrow even while movement-locked
+        if (this.burrowed && Phaser.Input.Keyboard.JustDown(this.skillKey)) {
+            if (this.skillCtx.emergeBurrow) this.skillCtx.emergeBurrow();
+            return;
+        }
 
         if (this.moving) return;
 
@@ -714,7 +728,7 @@ export default class GameScene extends Phaser.Scene {
             targets:  this.player,
             x:        this.worldX(this.gridX),
             y:        this.worldY(this.gridY),
-            duration: 120,
+            duration: PLAYER_MOVE_DURATION,
             ease:     'Power2',
             onComplete: () => {
                 this.moving = false;
@@ -816,7 +830,7 @@ export default class GameScene extends Phaser.Scene {
                 break;
         }
 
-        const flower = this.add.container(cx, cy, parts).setDepth(1.5);
+        const flower = this.add.container(cx, cy, parts).setDepth(DEPTH.BUSH);
 
         // All flowers breathe gently
         this.tweens.add({
@@ -841,50 +855,64 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
-    // ── Hazard spawn ──────────────────────────────────────────────────────────
-    private spawnHazard(season: SeasonTheme) {
-        const onCaught = () => {
-            this.lives--;
-            this.updateLives();
-            statsEvents.emit(STAT.CAUGHT);
+    // ── Caught / death ─────────────────────────────────────────────────────────
+    private onCaught() {
+        this.lives--;
+        this.updateLives();
+        statsEvents.emit(STAT.CAUGHT);
 
-            if (this.lives <= 0) {
-                statsEvents.emit(STAT.DEATH);
-                this.time.delayedCall(700, () => {
-                    for (const h of this.hazards) h.destroy();
-                    this.cameras.main.fadeOut(600, 0, 0, 0);
-                    this.cameras.main.once('camerafadeoutcomplete', () => {
-                        this.scene.start('GameScene', {
+        if (this.lives <= 0) {
+            statsEvents.emit(STAT.DEATH);
+            this.time.delayedCall(700, () => {
+                for (const h of this.hazards) h.destroy();
+                this.cameras.main.fadeOut(600, 0, 0, 0);
+                this.cameras.main.once('camerafadeoutcomplete', () => {
+                    const restart: Record<string, unknown> = this.customMap
+                        ? { customMap: this.customMap, from: 'ToolkitScene' }
+                        : {
                             month:     seasonStart(this.monthConfig.month),
                             algorithm: this.algorithm,
                             from:      this.fromScene,
                             hard:      this.hardMode,
-                            customMap: this.customMap ?? undefined,
-                        });
-                    });
+                        };
+                    this.scene.start('GameScene', restart);
                 });
-            } else {
-                this.tweens.killTweensOf(this.player);
-                this.gridX    = this.startCol;
-                this.gridY    = this.startRow;
-                this.moving   = false;
-                this.isHiding = false;
-                this.tweens.add({
-                    targets:  this.player,
-                    x:        this.worldX(this.startCol),
-                    y:        this.worldY(this.startRow),
-                    alpha:    1.0,
-                    duration: 500,
-                    ease:     'Power2',
-                });
-                this.fog.revealAround(this.startCol, this.startRow, this.time.now);
-                for (const h of this.hazards) h.scatter();
+            });
+        } else {
+            this.tweens.killTweensOf(this.player);
+            this.gridX    = this.startCol;
+            this.gridY    = this.startRow;
+            this.moving   = false;
+            this.isHiding = false;
+            // Clear burrow state so player can move again
+            if (this.burrowed) {
+                this.burrowed = false;
+                if (this.skillCtx.emergeBurrow) {
+                    this.skillCtx.emergeBurrow = undefined;
+                }
             }
-        };
+            this.tweens.add({
+                targets:  this.player,
+                x:        this.worldX(this.startCol),
+                y:        this.worldY(this.startRow),
+                alpha:    1.0,
+                scaleX:   1,
+                scaleY:   1,
+                duration: 500,
+                ease:     'Power2',
+            });
+            this.fog.revealAround(this.startCol, this.startRow, this.time.now);
+            for (const h of this.hazards) h.scatter();
+        }
+    }
 
+    // ── Hazard spawn ──────────────────────────────────────────────────────────
+    private spawnHazard(season: SeasonTheme) {
         // Place enemies at ~33% and ~66% along the solution path
         const solPath = solvePath(this.cells, this.cols, this.rows,
             this.startCol, this.startRow, this.goalCol, this.goalRow, this.sceneryBlocked);
+
+        if (solPath.length === 0) return; // no path — skip enemy placement
 
         const pCtx = this.buildPlacementCtx();
         const enemyCount = 2;
@@ -915,7 +943,8 @@ export default class GameScene extends Phaser.Scene {
             if (best) {
                 placed.push(best);
                 guaranteeBushNear(pCtx, best.col, best.row, season.name);
-                this.hazards.push(new Hazard(this, this.cells, best.col, best.row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
+                this.hazards.push(new Hazard(this, this.cells, best.col, best.row, season.name, () => this.onCaught(), this.sceneryBlocked, this.offsetX, this.offsetY,
+                    (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr) !== null));
             }
         }
 
@@ -979,43 +1008,9 @@ export default class GameScene extends Phaser.Scene {
         const cm = this.customMap!;
         if (cm.enemies.length === 0) return;
 
-        const onCaught = () => {
-            this.lives--;
-            this.updateLives();
-            statsEvents.emit(STAT.CAUGHT);
-            if (this.lives <= 0) {
-                statsEvents.emit(STAT.DEATH);
-                this.time.delayedCall(700, () => {
-                    for (const h of this.hazards) h.destroy();
-                    this.cameras.main.fadeOut(600, 0, 0, 0);
-                    this.cameras.main.once('camerafadeoutcomplete', () => {
-                        this.scene.start('GameScene', {
-                            customMap: this.customMap ?? undefined,
-                            from: 'ToolkitScene',
-                        });
-                    });
-                });
-            } else {
-                this.tweens.killTweensOf(this.player);
-                this.gridX    = this.startCol;
-                this.gridY    = this.startRow;
-                this.moving   = false;
-                this.isHiding = false;
-                this.tweens.add({
-                    targets:  this.player,
-                    x:        this.worldX(this.startCol),
-                    y:        this.worldY(this.startRow),
-                    alpha:    1.0,
-                    duration: 500,
-                    ease:     'Power2',
-                });
-                this.fog.revealAround(this.startCol, this.startRow, this.time.now);
-                for (const h of this.hazards) h.scatter();
-            }
-        };
-
         for (const { col, row } of cm.enemies) {
-            this.hazards.push(new Hazard(this, this.cells, col, row, season.name, onCaught, this.sceneryBlocked, this.offsetX, this.offsetY));
+            this.hazards.push(new Hazard(this, this.cells, col, row, season.name, () => this.onCaught(), this.sceneryBlocked, this.offsetX, this.offsetY,
+                (fc, fr, tc, tr) => this.findGate(fc, fr, tc, tr) !== null));
         }
         for (const h of this.hazards) h.setSiblings(this.hazards);
     }
@@ -1066,6 +1061,14 @@ export default class GameScene extends Phaser.Scene {
                 });
             });
         });
+    }
+
+    // ── Lifecycle cleanup ────────────────────────────────────────────────────
+    shutdown() {
+        for (const h of this.hazards) h.destroy();
+        this.hazards = [];
+        this.tweens.killAll();
+        this.time.removeAllEvents();
     }
 
 }

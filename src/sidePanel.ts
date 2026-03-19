@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { TILE, HEADER, PANEL } from './constants';
 import { SeasonTheme, MonthConfig } from './seasons';
 import { SkillManager } from './skills';
+import { DEPTH } from './gameplay';
 
 // ── Side panel and header — pure UI construction ─────────────────────────────
 
@@ -26,24 +27,24 @@ export function buildHeader(
     const season = month.season;
     const accentHex = season.accentHex;
 
-    scene.add.rectangle(hx, HEADER + offsetY - 1, mazeW, 1, season.uiAccent, 0.25).setDepth(3);
+    scene.add.rectangle(hx, HEADER + offsetY - 1, mazeW, 1, season.uiAccent, 0.25).setDepth(DEPTH.PANEL);
 
     scene.add.text(hx, offsetY + 32, spaced(month.name), {
         fontSize:  '26px',
         fontStyle: 'bold',
         color:     accentHex,
-    }).setOrigin(0.5).setDepth(3);
+    }).setOrigin(0.5).setDepth(DEPTH.PANEL);
 
     scene.add.text(hx, offsetY + 66, season.name, {
         fontSize: '15px',
         color:    `${accentHex}99`,
-    }).setOrigin(0.5).setDepth(3);
+    }).setOrigin(0.5).setDepth(DEPTH.PANEL);
 
     scene.add.text(hx, offsetY + 94, `"${month.quote}" — ${month.author}`, {
         fontSize:  '14px',
         fontStyle: 'italic',
         color:     `${accentHex}66`,
-    }).setOrigin(0.5).setDepth(3);
+    }).setOrigin(0.5).setDepth(DEPTH.PANEL);
 }
 
 export function buildSidePanel(
@@ -60,7 +61,7 @@ export function buildSidePanel(
     const ph    = rows * TILE + HEADER;
     const py    = offsetY;
     const cx    = px + pw / 2;
-    const depth = 3;
+    const depth = DEPTH.PANEL;
 
     const accent  = season.uiAccent;
     const accentH = season.accentHex;
@@ -221,8 +222,8 @@ export function buildSidePanel(
 
     const skillMap: Record<string, { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }> = {
         Winter: {
-            label: 'hop — jump obstacle!',
-            draw: (g, ly) => { g.fillStyle(0xc8e4f4, 0.9); g.fillTriangle(lx + 2, ly + 5, lx + 7, ly - 6, lx + 12, ly + 5); },
+            label: 'burrow — hide in place!',
+            draw: (g, ly) => { g.fillStyle(0x8a7050, 0.9); g.fillEllipse(lx + 7, ly + 2, 14, 8); g.fillStyle(0xc8e4f4, 0.7); g.fillCircle(lx + 7, ly - 2, 4); },
         },
         Spring: {
             label: 'sting — stun enemy!',

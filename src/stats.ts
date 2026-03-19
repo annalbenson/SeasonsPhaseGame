@@ -3,6 +3,7 @@
 import { doc, setDoc, getDoc, increment, Timestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import { getUserId, getDisplayName } from './auth';
+import { log } from './logger';
 import { statsEvents, STAT } from './statsEmitter';
 import { type UserStats, emptyStats } from './statsModel';
 
@@ -34,7 +35,7 @@ export function initStats() {
             objectivesCompleted: 0,
             monstersStunned:     0,
             timesCaught:         0,
-            skillUses:           { HOP: 0, STING: 0, GLOW: 0, DASH: 0 },
+            skillUses:           { BURROW: 0, STING: 0, GLOW: 0, DASH: 0 },
         };
     });
 
@@ -74,7 +75,7 @@ async function flushComplete() {
             totalObjectivesCompleted: increment(session.objectivesCompleted),
             totalMonstersStunned:     increment(session.monstersStunned),
             totalCaught:              increment(session.timesCaught),
-            'skillUses.HOP':          increment(session.skillUses['HOP'] ?? 0),
+            'skillUses.BURROW':       increment(session.skillUses['BURROW'] ?? 0),
             'skillUses.STING':        increment(session.skillUses['STING'] ?? 0),
             'skillUses.GLOW':         increment(session.skillUses['GLOW'] ?? 0),
             'skillUses.DASH':         increment(session.skillUses['DASH'] ?? 0),
@@ -95,7 +96,7 @@ async function flushComplete() {
             await setDoc(ref, { [`monthly.${yearMonth}.bestTimeMs`]: elapsed }, { merge: true });
         }
     } catch (e) {
-        console.warn('[Stats] flush failed:', e);
+        log.warn('stats', 'flush failed', e);
     }
 
     session = null;
@@ -116,13 +117,13 @@ async function flushDeath() {
             totalKeysCollected:       increment(session.keysCollected),
             totalGatesOpened:         increment(session.gatesOpened),
             totalObjectivesCompleted: increment(session.objectivesCompleted),
-            'skillUses.HOP':          increment(session.skillUses['HOP'] ?? 0),
+            'skillUses.BURROW':       increment(session.skillUses['BURROW'] ?? 0),
             'skillUses.STING':        increment(session.skillUses['STING'] ?? 0),
             'skillUses.GLOW':         increment(session.skillUses['GLOW'] ?? 0),
             'skillUses.DASH':         increment(session.skillUses['DASH'] ?? 0),
         }, { merge: true });
     } catch (e) {
-        console.warn('[Stats] death flush failed:', e);
+        log.warn('stats', 'death flush failed', e);
     }
 
     session = null;
@@ -149,16 +150,16 @@ export async function getStats(): Promise<UserStats> {
             totalObjectivesCompleted: d.totalObjectivesCompleted ?? 0,
             totalMonstersStunned:     d.totalMonstersStunned ?? 0,
             skillUses: {
-                HOP:   d.skillUses?.HOP   ?? 0,
-                STING: d.skillUses?.STING ?? 0,
-                GLOW:  d.skillUses?.GLOW  ?? 0,
-                DASH:  d.skillUses?.DASH  ?? 0,
+                BURROW: d.skillUses?.BURROW ?? 0,
+                STING:  d.skillUses?.STING  ?? 0,
+                GLOW:   d.skillUses?.GLOW   ?? 0,
+                DASH:   d.skillUses?.DASH   ?? 0,
             },
             timeByGrid: d.timeByGrid ?? {},
             monthly:    d.monthly    ?? {},
         };
     } catch (e) {
-        console.warn('[Stats] read failed:', e);
+        log.warn('stats', 'read failed', e);
         return emptyStats();
     }
 }

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { ALGORITHMS, WALLS } from '../maze';
 import { MOVE_DIRS } from '../mazeUtils';
+import { createEnemySprite } from '../sprites';
 
 const W = MAX_COLS * TILE + PANEL;
 const H = MAX_ROWS * TILE + HEADER;
@@ -34,7 +35,10 @@ interface Gate {
 }
 
 // ── Season color themes for skill tutorials ─────────────────────────────────
-interface SeasonThemeT {
+// Intentionally separate from SeasonTheme in seasons.ts — tutorial themes
+// include extra fields (bush/player/enemy/scenery colors, skillName) that
+// the main SeasonTheme doesn't carry.
+interface TutorialTheme {
     floorLight: number; floorDark: number; wallColor: number;
     goalColor: number; bgColor: number; accent: number; accentHex: string;
     dimHex: string; textColor: string; bushColor: number; bushLight: number;
@@ -43,13 +47,13 @@ interface SeasonThemeT {
     skillName: string;
 }
 
-const SEASON_THEMES: Record<string, SeasonThemeT> = {
+const SEASON_THEMES: Record<string, TutorialTheme> = {
     Winter: {
         floorLight: 0xb0ccdf, floorDark: 0x7a9db8, wallColor: 0x0e1c28,
         goalColor: 0x7ec8e8, bgColor: 0x080e18, accent: 0xc8e4f4, accentHex: '#c8e4f4',
         dimHex: '#7a9db8', textColor: '#b0ccdf', bushColor: 0xccddee, bushLight: 0xeef4ff,
         playerColor: 0xffffff, playerGlow: 0xc8e4f4, enemyColor: 0x6b4520,
-        sceneryColor: 0x556666, sceneryLight: 0x6a7a7a, skillName: 'HOP',
+        sceneryColor: 0x556666, sceneryLight: 0x6a7a7a, skillName: 'BURROW',
     },
     Spring: {
         floorLight: 0xf5b8cc, floorDark: 0xe088a8, wallColor: 0x5a1828,
@@ -79,6 +83,7 @@ interface StepConfig {
     cols: number; rows: number; hint: string;
     season?: string;  // if set, uses season theme + teaches that skill
     hardcoded?: number[][];  // optional pre-built maze (wall bitmasks)
+    goal?: { col: number; row: number };  // override default bottom-right goal
 }
 
 const ALL_WALLS = 1 | 2 | 4 | 8; // TOP|RIGHT|BOTTOM|LEFT — cell with all walls = isolated
@@ -140,19 +145,18 @@ const MAZE_STEP3 = carveMaze(4, 3, [
 ]);
 
 /*
- * Step 4 (5×3): Objectives — one branch up, one branch down, goal at end.
- *         [obj1]
- *           ↑
- *   [S]→[.]→[.]→[.]→[G]
- *                ↓
- *              [obj2]
+ * Step 4 (6×3): Objectives — branches off a straight corridor, goal at end.
+ *            [obj1]
+ *              ↑
+ *   [S]→[.]→[.]→[.]→[.]→[G]    (goal on main path)
+ *                    ↓
+ *                  [obj2]
  */
-const MAZE_STEP4 = carveMaze(5, 3, [
-    [0,0, 0,1],                                         // start down to corridor
-    [0,1, 1,1], [1,1, 2,1], [2,1, 3,1], [3,1, 4,1],  // main corridor (row 1)
-    [4,1, 4,2],                                         // down to goal
-    [2,1, 2,0],                                         // branch up to obj1
-    [3,1, 3,2],                                         // branch down to obj2
+const MAZE_STEP4 = carveMaze(6, 3, [
+    [0,0, 0,1],                                                    // start down to corridor
+    [0,1, 1,1], [1,1, 2,1], [2,1, 3,1], [3,1, 4,1], [4,1, 5,1], // main corridor (row 1)
+    [2,1, 2,0],                                                    // branch up to obj1
+    [3,1, 3,2],                                                    // branch down to obj2
 ]);
 
 /*
@@ -165,18 +169,16 @@ const MAZE_STEP5 = carveMaze(3, 3, [
 ]);
 
 /*
- * Step 6 (4×3, Winter): HOP — corridor bends, rock blocks the way.
- *   [S]→[.]
- *         ↓
- *       [rock]   ← must hop over
- *         ↓
- *       [.]→[G]
+ * Step 6 (4×2, Winter): BURROW — enemy patrols, no bush to hide in.
+ *   [S]→[.]→[enemy]→[G]
+ *    ↓              ↑
+ *   [.]  →  [.]  → [.]
+ *   Player must burrow to hide when enemy approaches.
  */
-const MAZE_WINTER = carveMaze(4, 3, [
-    [0,0, 1,0],              // right
-    [1,0, 1,1],              // down into rock at (1,1)
-    [1,1, 1,2],              // down past rock
-    [1,2, 2,2], [2,2, 3,2],  // right to goal
+const MAZE_WINTER = carveMaze(4, 2, [
+    [0,0, 1,0], [1,0, 2,0], [2,0, 3,0],  // top corridor
+    [0,0, 0,1], [0,1, 1,1], [1,1, 2,1], [2,1, 3,1],  // bottom corridor
+    [3,1, 3,0],  // connect back up to goal
 ]);
 
 /*
@@ -218,12 +220,12 @@ const STEPS: StepConfig[] = [
     { cols: 3, rows: 2, hint: 'Use arrow keys or WASD to move.\nReach the yellow flower!', hardcoded: MAZE_STEP1 },
     { cols: 4, rows: 2, hint: 'Collect the key to open the gate.', hardcoded: MAZE_STEP2 },
     { cols: 4, rows: 3, hint: 'Hide in bushes when the creature is near!\nReach the flower to continue.', hardcoded: MAZE_STEP3 },
-    { cols: 5, rows: 3, hint: 'Collect all treasures before\nthe exit unlocks.', hardcoded: MAZE_STEP4 },
+    { cols: 6, rows: 3, hint: 'Collect all treasures before\nthe exit unlocks.', hardcoded: MAZE_STEP4, goal: { col: 5, row: 1 } },
     { cols: 3, rows: 3, hint: 'Fog hides the maze! Explore to reveal tiles.\nFog returns over time — move quickly!', hardcoded: MAZE_STEP5 },
-    { cols: 4, rows: 3, hint: 'Bunny can HOP over obstacles!\nPress SPACE then an arrow key.', season: 'Winter', hardcoded: MAZE_WINTER },
+    { cols: 4, rows: 2, hint: 'Bunny can BURROW to hide!\nSPACE to dig in, SPACE to emerge.', season: 'Winter', hardcoded: MAZE_WINTER },
     { cols: 3, rows: 2, hint: 'Bee can STING the nearest enemy!\nPress SPACE to stun it.', season: 'Spring', hardcoded: MAZE_SPRING },
     { cols: 3, rows: 2, hint: 'Fairy can GLOW to reveal the map!\nPress SPACE to light up the fog.', season: 'Summer', hardcoded: MAZE_SUMMER },
-    { cols: 4, rows: 2, hint: 'Squirrel can DASH 3 cells!\nPress SPACE then an arrow key.', season: 'Fall', hardcoded: MAZE_FALL },
+    { cols: 4, rows: 2, hint: 'Squirrel can DASH past enemies!\nPress SPACE then an arrow key.', season: 'Fall', hardcoded: MAZE_FALL },
 ];
 
 export default class TutorialScene extends Phaser.Scene {
@@ -276,6 +278,7 @@ export default class TutorialScene extends Phaser.Scene {
     // Skill tutorial state
     private skillUsed = false;
     private skillArmed = false;
+    private burrowEmerge: (() => void) | null = null;
     private sceneryBlocked = new Set<string>();
     private spaceKey!: Phaser.Input.Keyboard.Key;
     private skillHintText: Phaser.GameObjects.Text | null = null;
@@ -337,7 +340,7 @@ export default class TutorialScene extends Phaser.Scene {
     }
 
     /** Active theme — switches to season theme for skill tutorial steps. */
-    private activeTheme(): SeasonThemeT | null {
+    private activeTheme(): TutorialTheme | null {
         const cfg = STEPS[this.step];
         return cfg?.season ? SEASON_THEMES[cfg.season] : null;
     }
@@ -375,8 +378,8 @@ export default class TutorialScene extends Phaser.Scene {
         // Player starts top-left, goal bottom-right
         this.gridX = 0;
         this.gridY = 0;
-        this.goalCol = cfg.cols - 1;
-        this.goalRow = cfg.rows - 1;
+        this.goalCol = cfg.goal?.col ?? cfg.cols - 1;
+        this.goalRow = cfg.goal?.row ?? cfg.rows - 1;
         this.goalLocked = false;
 
         this.drawMaze();
@@ -860,18 +863,10 @@ export default class TutorialScene extends Phaser.Scene {
         }
     }
 
-    // ── Season-specific enemy sprites (mirrors Hazard class) ──────────────────
+    // ── Enemy sprites — delegates to shared factories in sprites.ts ──────────
     private buildTutEnemy(x: number, y: number, season?: string): Phaser.GameObjects.Container {
-        switch (season) {
-            case 'Spring': return this.buildTutFrog(x, y);
-            case 'Fall':   return this.buildTutFox(x, y);
-            case 'Winter': return this.buildTutOwl(x, y);
-            case 'Summer': return this.buildTutSnake(x, y);
-            default:       return this.buildTutGenericEnemy(x, y);
-        }
-    }
-
-    private buildTutGenericEnemy(x: number, y: number): Phaser.GameObjects.Container {
+        if (season) return createEnemySprite(this, x, y, season, 4);
+        // Generic purple enemy for early tutorial steps (no season context)
         const danger = this.add.circle(0, 0, 18, T.enemyColor, 0.15);
         const ebody = this.add.circle(0, 0, 10, T.enemyColor, 0.9);
         const eye1 = this.add.circle(-4, -3, 2.5, 0xffffff, 0.9);
@@ -879,95 +874,6 @@ export default class TutorialScene extends Phaser.Scene {
         const c = this.add.container(x, y, [danger, ebody, eye1, eye2]).setDepth(4);
         this.tweens.add({ targets: danger, alpha: { from: 0.1, to: 0.3 }, yoyo: true, repeat: -1, duration: 800, ease: 'Sine.easeInOut' });
         return c;
-    }
-
-    private buildTutFrog(x: number, y: number): Phaser.GameObjects.Container {
-        const green = 0x44aa22, dark = 0x2a7a10, belly = 0x99cc44;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const legBL = this.add.ellipse(-15, 14, 16, 8, dark, 0.85).setAngle(-35);
-        const legBR = this.add.ellipse(15, 14, 16, 8, dark, 0.85).setAngle(35);
-        const legFL = this.add.ellipse(-16, -5, 10, 6, dark, 0.8).setAngle(-20);
-        const legFR = this.add.ellipse(16, -5, 10, 6, dark, 0.8).setAngle(20);
-        const body = this.add.circle(0, 4, 18, green);
-        const bellySpot = this.add.ellipse(0, 6, 22, 14, belly, 0.45);
-        const head = this.add.circle(0, -10, 12, 0x55bb33);
-        const mouth = this.add.ellipse(0, -4, 20, 5, dark, 0.65);
-        const eyeL = this.add.circle(-14, -12, 8, 0xffffff);
-        const eyeR = this.add.circle(14, -12, 8, 0xffffff);
-        const irisL = this.add.circle(-14, -12, 5, 0xcc8800);
-        const irisR = this.add.circle(14, -12, 5, 0xcc8800);
-        const pupL = this.add.circle(-14, -12, 2.5, 0x111111);
-        const pupR = this.add.circle(14, -12, 2.5, 0x111111);
-        const visual = this.add.container(0, 0, [danger, legBL, legBR, legFL, legFR, body, bellySpot, head, mouth, eyeL, eyeR, irisL, irisR, pupL, pupR]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
-        return outer;
-    }
-
-    private buildTutSnake(x: number, y: number): Phaser.GameObjects.Container {
-        const bodyCol = 0xcc5500, headCol = 0xdd6600, bellyCol = 0xffcc88;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const tail = this.add.circle(-13, -10, 4, bodyCol);
-        const s4 = this.add.circle(-18, -3, 6, bodyCol);
-        const s3 = this.add.circle(-17, 7, 7, bodyCol);
-        const s2 = this.add.circle(-11, 13, 8, bodyCol);
-        const s1 = this.add.circle(-4, 9, 9, bodyCol);
-        const head = this.add.ellipse(0, 0, 20, 14, headCol);
-        const belly = this.add.ellipse(0, 1, 12, 7, bellyCol, 0.80);
-        const eyeL = this.add.circle(-5, -4, 2.5, 0xffffff);
-        const pupL = this.add.circle(-5, -4, 1.5, 0x111111);
-        const eyeR = this.add.circle(4, -4, 2.5, 0xffffff);
-        const pupR = this.add.circle(4, -4, 1.5, 0x111111);
-        const visual = this.add.container(0, 0, [danger, tail, s4, s3, s2, s1, head, belly, eyeL, pupL, eyeR, pupR]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: visual, angle: { from: -7, to: 7 }, yoyo: true, repeat: -1, duration: 1300, ease: 'Sine.easeInOut' });
-        return outer;
-    }
-
-    private buildTutFox(x: number, y: number): Phaser.GameObjects.Container {
-        const orange = 0xdd5500, light = 0xee8833, cream = 0xffd090, dark = 0x221100;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const tail = this.add.ellipse(0, 17, 18, 14, light, 0.9);
-        const tailTip = this.add.circle(0, 23, 6, cream, 0.9);
-        const body = this.add.ellipse(0, 3, 18, 22, orange);
-        const belly = this.add.ellipse(0, 4, 10, 15, cream, 0.5);
-        const head = this.add.ellipse(0, -8, 16, 14, orange);
-        const snout = this.add.ellipse(0, -17, 8, 10, light);
-        const nose = this.add.circle(0, -21, 3, dark);
-        const earL = this.add.ellipse(-10, -13, 8, 12, orange);
-        const earR = this.add.ellipse(10, -13, 8, 12, orange);
-        const earLi = this.add.ellipse(-10, -13, 4, 7, dark, 0.45);
-        const earRi = this.add.ellipse(10, -13, 4, 7, dark, 0.45);
-        const eyeL = this.add.circle(-6, -10, 2.5, 0xdd9900);
-        const eyeR = this.add.circle(6, -10, 2.5, 0xdd9900);
-        const pupL = this.add.circle(-6, -10, 1.5, dark);
-        const pupR = this.add.circle(6, -10, 1.5, dark);
-        const visual = this.add.container(0, 0, [danger, tail, tailTip, body, belly, head, snout, nose, earL, earR, earLi, earRi, eyeL, eyeR, pupL, pupR]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: [tail, tailTip], angle: { from: -13, to: 13 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
-        this.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
-        return outer;
-    }
-
-    private buildTutOwl(x: number, y: number): Phaser.GameObjects.Container {
-        const brown = 0x6b4520, light = 0x9a6840, cream = 0xe8dcc8;
-        const danger = this.add.circle(0, 0, 24, 0xcc2200, 0);
-        const body = this.add.circle(0, 5, 18, brown);
-        const wingL = this.add.ellipse(-14, 6, 12, 22, light, 0.75);
-        const wingR = this.add.ellipse(14, 6, 12, 22, light, 0.75);
-        const tail = this.add.ellipse(0, 19, 18, 10, light, 0.9);
-        const face = this.add.circle(0, -4, 13, cream);
-        const tuftL = this.add.ellipse(-8, -18, 7, 13, brown);
-        const tuftR = this.add.ellipse(8, -18, 7, 13, brown);
-        const eyeL = this.add.circle(-6, -6, 6, 0xffe060);
-        const eyeR = this.add.circle(6, -6, 6, 0xffe060);
-        const pupL = this.add.circle(-6, -6, 3.5, 0x111111);
-        const pupR = this.add.circle(6, -6, 3.5, 0x111111);
-        const beak = this.add.ellipse(0, -1, 9, 6, 0xcc8800);
-        const visual = this.add.container(0, 0, [danger, body, wingL, wingR, tail, face, tuftL, tuftR, eyeL, eyeR, pupL, pupR, beak]);
-        const outer = this.add.container(x, y, [visual]).setDepth(4);
-        this.tweens.add({ targets: visual, angle: { from: -12, to: 12 }, yoyo: true, repeat: -1, duration: 2600, ease: 'Sine.easeInOut' });
-        return outer;
     }
 
     // ── Scenery obstacle drawing ─────────────────────────────────────────────
@@ -1009,12 +915,18 @@ export default class TutorialScene extends Phaser.Scene {
         }
     }
 
-    // ── Step 6: Winter — Bunny HOP ─────────────────────────────────────────
+    // ── Step 6: Winter — Bunny BURROW ──────────────────────────────────────
     private buildWinterSkill() {
-        // Hardcoded rock at (1,1) — blocks the vertical corridor.
-        // Player approaches from (1,0) and hops south over the rock to (1,2).
-        this.drawSceneryBlock(1, 1);
-        this.showSkillHint('Press SPACE to use HOP');
+        // Enemy patrols the top corridor — player must burrow to hide.
+        this.enemyCol = 2;
+        this.enemyRow = 0;
+        const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
+        const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
+        this.enemySprite = this.buildTutEnemy(ex, ey, 'Winter');
+        this.stepGroup.add(this.enemySprite);
+        this.scheduleEnemyMove();
+
+        this.showSkillHint('Press SPACE to use BURROW');
     }
 
     // ── Step 7: Spring — Bee STING ─────────────────────────────────────────
@@ -1088,7 +1000,15 @@ export default class TutorialScene extends Phaser.Scene {
 
     // ── Step 9: Fall — Squirrel DASH ───────────────────────────────────────
     private buildFallSkill() {
-        // Straight corridor — DASH lets squirrel sprint 3 cells at once
+        // Enemy blocks the corridor — player must dash past it
+        this.enemyCol = 2;
+        this.enemyRow = 0;
+        const ex = this.offsetX + this.enemyCol * TILE + TILE / 2;
+        const ey = this.offsetY + this.enemyRow * TILE + TILE / 2;
+        this.enemySprite = this.buildTutEnemy(ex, ey, 'Fall');
+        this.stepGroup.add(this.enemySprite);
+        this.scheduleEnemyMove();
+
         this.showSkillHint('Press SPACE to use DASH');
     }
 
@@ -1137,6 +1057,12 @@ export default class TutorialScene extends Phaser.Scene {
             }
         }
 
+        // Allow SPACE to cancel burrow even while movement-locked
+        if (this.burrowEmerge && Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+            this.burrowEmerge();
+            return;
+        }
+
         if (this.moving) return;
 
         const K = Phaser.Input.Keyboard;
@@ -1157,7 +1083,6 @@ export default class TutorialScene extends Phaser.Scene {
 
         // Handle armed directional skills
         if (this.skillArmed && cfg?.season) {
-            if (cfg.season === 'Winter' && this.tryTutorialHop(dx, dy)) return;
             if (cfg.season === 'Fall'   && this.tryTutorialDash(dx, dy)) return;
             // If couldn't fire, disarm and do normal move
             this.skillArmed = false;
@@ -1282,56 +1207,44 @@ export default class TutorialScene extends Phaser.Scene {
             ).setDepth(9);
             this.tweens.add({ targets: flash, alpha: 0, scale: 1.5, duration: 600, onComplete: () => flash.destroy() });
             this.updateSkillHint();
+        } else if (cfg.season === 'Winter') {
+            // Burrow: hide in place, press SPACE again to emerge early
+            this.skillUsed = true;
+            this.isHiding = true;
+            this.moving = true; // lock movement
+
+            // Shrink into ground
+            this.tweens.add({
+                targets: this.player, scaleX: 0.5, scaleY: 0.3, alpha: 0.35,
+                duration: 300, ease: 'Back.easeIn',
+            });
+
+            // Dirt mound visual
+            const mound = this.add.ellipse(
+                this.player.x, this.player.y + 12, TILE * 0.6, TILE * 0.25,
+                0x8a7050, 0.6,
+            ).setDepth(1.9);
+            this.stepGroup.add(mound);
+
+            this.burrowEmerge = () => {
+                this.isHiding = false;
+                this.moving = false;
+                this.burrowEmerge = null;
+                this.tweens.add({
+                    targets: this.player, scaleX: 1, scaleY: 1, alpha: 1,
+                    duration: 300, ease: 'Back.easeOut',
+                });
+                this.tweens.add({
+                    targets: mound, alpha: 0, duration: 300,
+                    onComplete: () => mound.destroy(),
+                });
+            };
+            this.updateSkillHint();
         } else {
-            // Winter (Hop) and Fall (Dash) — arm directional mode
+            // Fall (Dash) — arm directional mode
             this.skillArmed = true;
             this.updateSkillHint();
         }
-    }
-
-    private tryTutorialHop(dx: number, dy: number): boolean {
-        const adjX = this.gridX + dx, adjY = this.gridY + dy;
-        const walls = this.cells[this.gridY][this.gridX];
-        if (dx ===  1 && (walls & WALLS.RIGHT))  return false;
-        if (dx === -1 && (walls & WALLS.LEFT))   return false;
-        if (dy ===  1 && (walls & WALLS.BOTTOM)) return false;
-        if (dy === -1 && (walls & WALLS.TOP))    return false;
-        if (!this.sceneryBlocked.has(`${adjX},${adjY}`)) return false;
-
-        const landX = this.gridX + dx * 2, landY = this.gridY + dy * 2;
-        if (landX < 0 || landX >= this.tutCols || landY < 0 || landY >= this.tutRows) return false;
-        const adjWalls = this.cells[adjY][adjX];
-        if (dx ===  1 && (adjWalls & WALLS.RIGHT))  return false;
-        if (dx === -1 && (adjWalls & WALLS.LEFT))   return false;
-        if (dy ===  1 && (adjWalls & WALLS.BOTTOM)) return false;
-        if (dy === -1 && (adjWalls & WALLS.TOP))    return false;
-        if (this.sceneryBlocked.has(`${landX},${landY}`)) return false;
-
-        this.skillUsed = true;
-        this.skillArmed = false;
-        this.gridX = landX;
-        this.gridY = landY;
-        this.moving = true;
-        this.slideDir = null;
-
-        this.tweens.add({
-            targets: this.player,
-            x: this.offsetX + landX * TILE + TILE / 2,
-            y: this.offsetY + landY * TILE + TILE / 2,
-            duration: 300,
-            ease: 'Sine.easeInOut',
-            onComplete: () => {
-                this.moving = false;
-                if (this.fogEnabled) this.revealTutorialFog(this.gridX, this.gridY);
-                this.collectKey();
-                this.checkObjective();
-                this.checkGoal();
-                this.checkEnemyCollision();
-            },
-        });
-        this.tweens.add({ targets: this.player, scaleY: 1.3, yoyo: true, duration: 150 });
-        this.updateSkillHint();
-        return true;
     }
 
     private tryTutorialDash(dx: number, dy: number): boolean {

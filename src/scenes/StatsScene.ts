@@ -72,7 +72,7 @@ export default class StatsScene extends Phaser.Scene {
         this.add.text(col1, y, 'SKILLS', headerStyle);
         y += 30;
         this.statRow(col1, y, 'Monsters stunned', `${s.totalMonstersStunned}`, labelStyle, valueStyle); y += 24;
-        this.statRow(col1, y, 'Hops (Winter)', `${s.skillUses.HOP}`, labelStyle, valueStyle); y += 24;
+        this.statRow(col1, y, 'Burrows (Winter)', `${s.skillUses.BURROW}`, labelStyle, valueStyle); y += 24;
         this.statRow(col1, y, 'Stings (Spring)', `${s.skillUses.STING}`, labelStyle, valueStyle); y += 24;
         this.statRow(col1, y, 'Glows (Summer)', `${s.skillUses.GLOW}`, labelStyle, valueStyle); y += 24;
         this.statRow(col1, y, 'Dashes (Fall)', `${s.skillUses.DASH}`, labelStyle, valueStyle); y += 24;
