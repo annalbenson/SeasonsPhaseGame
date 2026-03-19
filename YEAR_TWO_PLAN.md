@@ -239,9 +239,42 @@ New "ridge" zone type added to the zone layout, replacing one forest zone mid-ma
 - ~~Legend entries for boulder and ridge lookout~~
 - ~~BFS reachability validated (boulders never block start→goal path)~~
 
-## Phase 11: Polish
+## Phase 11: Roaming Predators — DONE
 
-- Weather particle effects (rain, snow, heat shimmer, wind leaves)
+Season-specific predators that patrol the terrain and hunt the player when close.
+
+### Predators
+| Season | Predator | Colors |
+|--------|----------|--------|
+| Winter | Grey Wolf | Slate grey, yellow eyes |
+| Spring | Cougar | Tawny/sandy browns |
+| Summer | Tiger | Orange with black stripes |
+| Fall | Coyote | Grey-brown fur |
+
+### Mechanics
+- ~~Terrain-based movement (OPEN tiles only) — no maze walls~~
+- ~~Two states: patrolling (random walk, ~3.5s) and hunting (greedy toward player, ~1.8s, within 5 tiles)~~
+- ~~On catch: 20-30 energy drain + knockback 1-2 tiles away from predator~~
+- ~~Scene-wide 3s catch cooldown prevents chain catches~~
+- ~~Red flash on player when caught~~
+- ~~Count scales with intensity: 1 predator (months 1-2), 2 predators (month 3)~~
+- ~~Spawn on forest/ridge OPEN cells, ≥10 rows from player start~~
+- ~~Siblings maintain Manhattan distance ≥3~~
+- ~~Visible through fog (DEPTH.HAZARD = 3.0 > DEPTH.FOG = 2.5)~~
+- ~~Legend entry with season-specific predator name~~
+
+### Hold-to-move
+- ~~Arrow key hold-down auto-repeats movement (slideDir + continueSlide pattern from Y1)~~
+- ~~Slide stops on blocked tile, cliff, or movement interruption~~
+
+### Future: Roar to scatter
+- SPACE could roar to scare predators within 3 tiles (cooldown-based) — parked for now
+
+## Phase 12: Polish
+
+- ~~Weather particle effects (rain, snow, heat shimmer, wind leaves)~~
+- ~~Weather particles scroll-fixed (setScrollFactor 0) for Y2 camera~~
+- ~~Distinct bonus food color palettes per season~~
 - Winter fog tightening animation (smooth radius change)
 - Night transition animations (smooth tint shift)
 - Sound cues for weather events and nightfall (optional)

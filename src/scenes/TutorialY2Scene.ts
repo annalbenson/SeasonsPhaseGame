@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
-import { DEPTH } from '../gameplay';
+import { DEPTH, PREDATOR_ENERGY_MIN, PREDATOR_ENERGY_MAX } from '../gameplay';
 import { Terrain, isWalkable, isCliff } from '../terrain';
+import { createPredatorSprite } from '../sprites';
 import { FogOfWar } from '../fog';
 import { SEASONS } from '../seasons';
 import { log } from '../logger';
@@ -48,6 +49,8 @@ interface TutLevel {
     windClouds?: { col: number; row: number; dir: number }[];
     /** Leaf pile positions. */
     leafPiles?: { col: number; row: number }[];
+    /** Tutorial predator positions with patrol direction (0=up,1=right,2=down,3=left). */
+    predators?: { col: number; row: number; dir: number }[];
 }
 
 function makeGrid(rows: string[]): Terrain[][] {
@@ -123,6 +126,29 @@ const LEVELS: TutLevel[] = [
         start: { col: 3, row: 5 },
         goal:  { col: 3, row: 0 },
         objectives: [{ col: 1, row: 1 }, { col: 5, row: 2 }],
+    },
+    {
+        title: 'Avoiding Predators',
+        prompt: 'Predators roam the trail. They drain energy\non contact and knock you back.\nRoute around them to reach the goal!',
+        cols: 7,
+        teachEnergy: true,
+        grid: makeGrid([
+            '###.###',
+            '#.....#',
+            '#.#.#.#',
+            '#.....#',
+            '#.#.#.#',
+            '#.....#',
+            '#.#.#.#',
+            '#.....#',
+            '###.###',
+        ]),
+        start: { col: 3, row: 8 },
+        goal:  { col: 3, row: 0 },
+        predators: [
+            { col: 1, row: 3, dir: 1 },
+            { col: 5, row: 5, dir: 3 },
+        ],
     },
 ];
 
@@ -338,6 +364,8 @@ export default class TutorialY2Scene extends Phaser.Scene {
     private windCloudData: { col: number; row: number; dir: number; gfx: Phaser.GameObjects.Container }[] = [];
     private windCooldown = 0;
     private fog: FogOfWar | null = null;
+    private tutPredators: { col: number; row: number; dir: number; gfx: Phaser.GameObjects.Container; moving: boolean }[] = [];
+    private predCatchCooldown = false;
 
     constructor() { super('TutorialY2Scene'); }
 
@@ -568,6 +596,8 @@ export default class TutorialY2Scene extends Phaser.Scene {
             if (this.floodTimer) this.floodTimer.destroy();
             for (const pile of this.leafPileGfx.values()) pile.destroy();
             for (const wc of this.windCloudData) wc.gfx.destroy();
+            for (const p of this.tutPredators) p.gfx.destroy();
+            this.tutPredators = [];
             this.tweens.killAll();
             this.time.removeAllEvents();
         });
@@ -671,6 +701,7 @@ export default class TutorialY2Scene extends Phaser.Scene {
                 }
 
                 this.moving = false;
+                this.checkTutPredatorCollision();
                 this.tryCollect();
                 this.checkGoal();
             },
@@ -965,6 +996,27 @@ export default class TutorialY2Scene extends Phaser.Scene {
             }
         }
 
+        // Tutorial predators — simple patrol back and forth
+        if (level.predators) {
+            this.tutPredators = [];
+            const dirs = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
+            for (const pd of level.predators) {
+                const cx = pd.col * TILE + TILE / 2;
+                const cy = pd.row * TILE + TILE / 2;
+                const sprite = createPredatorSprite(this, cx, cy, 'WinterY2', DEPTH.HAZARD);
+                this.mazeLayer.add(sprite);
+                const pred = { col: pd.col, row: pd.row, dir: pd.dir, gfx: sprite, moving: false };
+                this.tutPredators.push(pred);
+
+                // Simple patrol timer — move in direction, reverse on blocked
+                this.time.addEvent({
+                    delay: 2000 + Math.random() * 500,
+                    callback: () => this.moveTutPredator(pred, dirs),
+                    loop: true,
+                });
+            }
+        }
+
         // Shade overlay (tiles adjacent to bamboo)
         if (level.teachShade) {
             for (let r = 0; r < this.rows; r++) {
@@ -994,5 +1046,77 @@ export default class TutorialY2Scene extends Phaser.Scene {
             if (this.snowCaveSet.has(`${this.gridX + dc},${this.gridY + dr}`)) return true;
         }
         return false;
+    }
+
+    // ── Tutorial predator helpers ────────────────────────────────────────────
+
+    private moveTutPredator(
+        pred: { col: number; row: number; dir: number; gfx: Phaser.GameObjects.Container; moving: boolean },
+        dirs: { dx: number; dy: number }[],
+    ) {
+        if (pred.moving) return;
+        const d = dirs[pred.dir];
+        const nx = pred.col + d.dx, ny = pred.row + d.dy;
+
+        // Reverse direction if blocked
+        if (nx < 0 || nx >= this.cols || ny < 0 || ny >= this.rows
+            || this.grid[ny][nx] !== Terrain.OPEN) {
+            pred.dir = (pred.dir + 2) % 4; // reverse
+            return;
+        }
+
+        pred.col = nx;
+        pred.row = ny;
+        pred.moving = true;
+
+        const mapW = this.cols * TILE;
+        const offsetX = Math.floor((W - PANEL - mapW) / 2);
+
+        this.tweens.add({
+            targets: pred.gfx,
+            x: offsetX + nx * TILE + TILE / 2,
+            y: HEADER + ny * TILE + TILE / 2,
+            duration: 1000, ease: 'Sine.easeInOut',
+            onComplete: () => {
+                pred.moving = false;
+                // Check if predator landed on player
+                if (pred.col === this.gridX && pred.row === this.gridY) {
+                    this.onTutPredatorCatch();
+                }
+            },
+        });
+    }
+
+    private checkTutPredatorCollision(): boolean {
+        if (this.predCatchCooldown) return false;
+        for (const p of this.tutPredators) {
+            if (p.col === this.gridX && p.row === this.gridY) {
+                this.onTutPredatorCatch();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private onTutPredatorCatch() {
+        if (this.predCatchCooldown) return;
+        this.predCatchCooldown = true;
+        this.time.delayedCall(2500, () => { this.predCatchCooldown = false; });
+
+        const drain = PREDATOR_ENERGY_MIN
+            + Math.floor(Math.random() * (PREDATOR_ENERGY_MAX - PREDATOR_ENERGY_MIN + 1));
+
+        // Red flash
+        this.tweens.add({
+            targets: this.player, alpha: 0.3, yoyo: true, duration: 120, repeat: 2,
+            onComplete: () => this.player.setAlpha(1),
+        });
+
+        this.drainEnergy(drain);
+
+        // Update prompt to reinforce the lesson
+        if (this.promptText) {
+            this.promptText.setText('Ouch! The predator drained your energy.\nTry to route around them.');
+        }
     }
 }

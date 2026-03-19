@@ -350,10 +350,13 @@ function createWolf(scene: Phaser.Scene, x: number, y: number, depth: number): P
     const snout  = scene.add.ellipse(0, -20, 10, 12, light);
     const nose   = scene.add.circle(0, -25, 3.5, 0x222222);
 
-    const earL  = scene.add.triangle(-10, -22, 0, -10, -6, 0, 6, 0, grey);
-    const earR  = scene.add.triangle( 10, -22, 0, -10, -6, 0, 6, 0, grey);
-    const earLi = scene.add.triangle(-10, -21, 0, -7, -4, 0, 4, 0, dark, 0.5);
-    const earRi = scene.add.triangle( 10, -21, 0, -7, -4, 0, 4, 0, dark, 0.5);
+    // Ears peek from sides of head (head 18x16 at Y=-10, top=-18, sides=±9)
+    // triangle(x,y, v1x,v1y, v2x,v2y, v3x,v3y) — origin at bbox center
+    // (0,-6),(-4,0),(4,0) → bbox center (0,-3) → tip renders at y + (-6-(-3)) = y-3
+    const earL  = scene.add.triangle(-10, -13, 0, -6, -4, 0, 4, 0, grey);
+    const earR  = scene.add.triangle( 10, -13, 0, -6, -4, 0, 4, 0, grey);
+    const earLi = scene.add.triangle(-10, -12, 0, -4, -2, 0, 2, 0, dark, 0.5);
+    const earRi = scene.add.triangle( 10, -12, 0, -4, -2, 0, 2, 0, dark, 0.5);
 
     const eyeL = scene.add.circle(-6, -12, 3, 0xddaa00);
     const eyeR = scene.add.circle( 6, -12, 3, 0xddaa00);
@@ -366,8 +369,8 @@ function createWolf(scene: Phaser.Scene, x: number, y: number, depth: number): P
     const visual = scene.add.container(0, 0, [
         danger, tail, tailTip,
         body, belly, pawBL, pawBR,
-        head, snout, nose,
         earL, earR, earLi, earRi,
+        head, snout, nose,
         eyeL, eyeR, pupL, pupR,
         pawFL, pawFR,
     ]);
@@ -376,6 +379,173 @@ function createWolf(scene: Phaser.Scene, x: number, y: number, depth: number): P
 
     scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 1200, ease: 'Sine.easeInOut' });
     scene.tweens.add({ targets: [tail, tailTip], angle: { from: -8, to: 8 }, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+// ── Y2 Predator sprite factory ─────────────────────────────────────────────
+
+export function createPredatorSprite(
+    scene: Phaser.Scene, x: number, y: number, seasonName: string,
+    depth = DEPTH.HAZARD,
+): Phaser.GameObjects.Container {
+    switch (seasonName) {
+        case 'SpringY2':  return createCougar(scene, x, y, depth);
+        case 'SummerY2':  return createTiger(scene, x, y, depth);
+        case 'FallY2':    return createCoyote(scene, x, y, depth);
+        default:          return createWolf(scene, x, y, depth); // WinterY2
+    }
+}
+
+function createCougar(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const tawny = 0xc8944a;
+    const dark  = 0xa06830;
+    const cream = 0xe8c888;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(14, 18, 8, 22, dark, 0.85);
+    const tailTip = scene.add.circle(16, 28, 4, 0x886030, 0.9);
+    const body    = scene.add.ellipse(0, 5, 20, 22, tawny);
+    const belly   = scene.add.ellipse(0, 8, 12, 14, cream, 0.4);
+    const pawBL   = scene.add.circle(-8, 16, 4, dark, 0.7);
+    const pawBR   = scene.add.circle( 8, 16, 4, dark, 0.7);
+
+    const head  = scene.add.ellipse(0, -10, 16, 14, tawny);
+    const snout = scene.add.ellipse(0, -18, 8, 8, cream);
+    const nose  = scene.add.circle(0, -21, 2.5, 0x443322);
+
+    // Ears peek from sides of head (head 16x14 at Y=-10, top=-17, sides=±8)
+    const earL = scene.add.triangle(-9, -12, 0, -6, -4, 0, 4, 0, tawny);
+    const earR = scene.add.triangle( 9, -12, 0, -6, -4, 0, 4, 0, tawny);
+    const earLi = scene.add.triangle(-9, -11, 0, -4, -2, 0, 2, 0, dark, 0.5);
+    const earRi = scene.add.triangle( 9, -11, 0, -4, -2, 0, 2, 0, dark, 0.5);
+
+    const eyeL = scene.add.circle(-5, -11, 2.5, 0xccaa44);
+    const eyeR = scene.add.circle( 5, -11, 2.5, 0xccaa44);
+    const pupL = scene.add.circle(-5, -11, 1.5, 0x111111);
+    const pupR = scene.add.circle( 5, -11, 1.5, 0x111111);
+
+    const pawFL = scene.add.circle(-7, 0, 3.5, dark, 0.6);
+    const pawFR = scene.add.circle( 7, 0, 3.5, dark, 0.6);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tailTip,
+        body, belly, pawBL, pawBR,
+        earL, earR, earLi, earRi,
+        head, snout, nose,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]).setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1000, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [tail, tailTip], angle: { from: -6, to: 6 }, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createTiger(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const orange = 0xdd6600;
+    const stripe = 0x111100;
+    const cream  = 0xffcc88;
+    const dark   = 0x884400;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(12, 20, 8, 20, orange, 0.85);
+    const tStripe = scene.add.rectangle(12, 18, 8, 3, stripe, 0.6);
+    const body    = scene.add.ellipse(0, 5, 24, 26, orange);
+    const belly   = scene.add.ellipse(0, 8, 15, 17, cream, 0.4);
+    // Body stripes
+    const s1 = scene.add.rectangle(-5, -2, 3, 10, stripe, 0.5).setAngle(15);
+    const s2 = scene.add.rectangle( 5, -2, 3, 10, stripe, 0.5).setAngle(-15);
+    const s3 = scene.add.rectangle(-3,  8, 3,  8, stripe, 0.4).setAngle(10);
+    const s4 = scene.add.rectangle( 3,  8, 3,  8, stripe, 0.4).setAngle(-10);
+    const pawBL = scene.add.circle(-10, 17, 5, dark, 0.7);
+    const pawBR = scene.add.circle( 10, 17, 5, dark, 0.7);
+
+    const head  = scene.add.ellipse(0, -10, 20, 18, orange);
+    const snout = scene.add.ellipse(0, -18, 10, 10, cream);
+    const nose  = scene.add.circle(0, -22, 3, 0x332211);
+    // Face stripes
+    const fs1 = scene.add.rectangle(-8, -8, 2, 7, stripe, 0.6).setAngle(10);
+    const fs2 = scene.add.rectangle( 8, -8, 2, 7, stripe, 0.6).setAngle(-10);
+
+    // Ears peek from sides of head (head 20x18 at Y=-10, top=-19, sides=±10)
+    const earL = scene.add.circle(-11, -14, 4, orange);
+    const earR = scene.add.circle( 11, -14, 4, orange);
+    const earLi = scene.add.circle(-11, -14, 2.5, dark, 0.5);
+    const earRi = scene.add.circle( 11, -14, 2.5, dark, 0.5);
+
+    const eyeL = scene.add.circle(-6, -12, 3, 0xddbb22);
+    const eyeR = scene.add.circle( 6, -12, 3, 0xddbb22);
+    const pupL = scene.add.circle(-6, -12, 1.8, 0x111111);
+    const pupR = scene.add.circle( 6, -12, 1.8, 0x111111);
+
+    const pawFL = scene.add.circle(-9, 0, 4.5, dark, 0.6);
+    const pawFR = scene.add.circle( 9, 0, 4.5, dark, 0.6);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tStripe,
+        body, belly, s1, s2, s3, s4, pawBL, pawBR,
+        earL, earR, earLi, earRi,
+        head, snout, nose, fs1, fs2,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]).setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -5 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [tail, tStripe], angle: { from: -10, to: 10 }, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
+
+    return outer;
+}
+
+function createCoyote(scene: Phaser.Scene, x: number, y: number, depth: number): Phaser.GameObjects.Container {
+    const fur   = 0x998866;
+    const dark  = 0x665544;
+    const cream = 0xccbb99;
+
+    const danger = scene.add.circle(0, 0, 32, 0xcc2200, 0);
+
+    const tail    = scene.add.ellipse(10, 20, 7, 18, fur, 0.85);
+    const tailTip = scene.add.circle(12, 28, 4, dark, 0.8);
+    const body    = scene.add.ellipse(0, 5, 18, 20, fur);
+    const belly   = scene.add.ellipse(0, 8, 11, 13, cream, 0.4);
+    const pawBL   = scene.add.circle(-7, 15, 3.5, dark, 0.7);
+    const pawBR   = scene.add.circle( 7, 15, 3.5, dark, 0.7);
+
+    const head  = scene.add.ellipse(0, -9, 15, 13, fur);
+    const snout = scene.add.ellipse(0, -18, 8, 10, cream);
+    const nose  = scene.add.circle(0, -22, 2.5, 0x222222);
+
+    // Ears peek from sides of head (head 15x13 at Y=-9, top=-15.5, sides=±7.5)
+    const earL = scene.add.triangle(-8, -11, 0, -6, -4, 0, 4, 0, fur);
+    const earR = scene.add.triangle( 8, -11, 0, -6, -4, 0, 4, 0, fur);
+    const earLi = scene.add.triangle(-8, -10, 0, -4, -2, 0, 2, 0, 0xbb9977, 0.5);
+    const earRi = scene.add.triangle( 8, -10, 0, -4, -2, 0, 2, 0, 0xbb9977, 0.5);
+
+    const eyeL = scene.add.circle(-5, -11, 2.5, 0xbb8822);
+    const eyeR = scene.add.circle( 5, -11, 2.5, 0xbb8822);
+    const pupL = scene.add.circle(-5, -11, 1.5, 0x111111);
+    const pupR = scene.add.circle( 5, -11, 1.5, 0x111111);
+
+    const pawFL = scene.add.circle(-6, 0, 3, dark, 0.6);
+    const pawFR = scene.add.circle( 6, 0, 3, dark, 0.6);
+
+    const visual = scene.add.container(0, 0, [
+        danger, tail, tailTip,
+        body, belly, pawBL, pawBR,
+        earL, earR, earLi, earRi,
+        head, snout, nose,
+        eyeL, eyeR, pupL, pupR,
+        pawFL, pawFR,
+    ]);
+    const outer = scene.add.container(x, y, [visual]).setDepth(depth);
+
+    scene.tweens.add({ targets: visual, y: { from: 0, to: -4 }, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut' });
+    scene.tweens.add({ targets: [tail, tailTip], angle: { from: -10, to: 10 }, yoyo: true, repeat: -1, duration: 1500, ease: 'Sine.easeInOut' });
 
     return outer;
 }

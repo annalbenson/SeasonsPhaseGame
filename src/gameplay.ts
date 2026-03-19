@@ -13,6 +13,18 @@ export const HAZARD_WANDER_RAND = 600;   // ms random extra added to wander dela
 export const HAZARD_HUNT_ANIM   = 820;   // ms hunting move animation
 export const HAZARD_WANDER_ANIM = 1_400; // ms wandering move animation
 
+// ── Y2 Predator behaviour ──────────────────────────────────────────────────
+export const PREDATOR_HUNT_DISTANCE   = 5;      // Manhattan distance to start hunting
+export const PREDATOR_PATROL_DELAY    = 3_500;   // ms between patrol moves
+export const PREDATOR_HUNT_DELAY      = 1_800;   // ms between hunt moves
+export const PREDATOR_PATROL_ANIM     = 1_200;   // ms patrol move animation
+export const PREDATOR_HUNT_ANIM       = 900;     // ms hunt move animation
+export const PREDATOR_CATCH_COOLDOWN  = 3_000;   // ms invulnerability after catch
+export const PREDATOR_ENERGY_MIN      = 20;      // min energy drain on catch
+export const PREDATOR_ENERGY_MAX      = 30;      // max energy drain on catch
+export const PREDATOR_KNOCKBACK       = 2;       // tiles knocked back on catch
+export const PREDATOR_MIN_SPAWN_DIST  = 10;      // min rows from player start
+
 // ── Player movement ─────────────────────────────────────────────────────────
 export const PLAYER_MOVE_DURATION = 120; // ms per step animation
 

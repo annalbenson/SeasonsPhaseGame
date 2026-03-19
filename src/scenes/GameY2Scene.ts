@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { TILE, MAX_COLS, MAX_ROWS, HEADER, PANEL } from '../constants';
 import { DEPTH } from '../gameplay';
 import { MONTHS_Y2, SeasonTheme } from '../seasons';
-import { generateMountainMap, drawTerrain, Terrain, isWalkable, isCliff, bfsReachable, TerrainMap, ZoneInfo } from '../terrain';
+import { generateMountainMap, drawTerrain, Terrain, isWalkable, isCliff, bfsReachable, TerrainMap } from '../terrain';
 import { FogOfWar } from '../fog';
 import { statsEvents, STAT } from '../statsEmitter';
 import { addWeather } from '../weather';
@@ -10,11 +10,14 @@ import { WALLS } from '../maze';
 import { createY2PlayerSprite, buildY2ObjectiveSprite, ensureSparkleTexture } from '../sprites';
 import { log } from '../logger';
 import { WeatherHazard, createWeatherHazard, getIntensity } from '../weatherHazard';
+import { Predator, spawnPredators } from '../predator';
+import { DayNightCycle, TimeOfDay } from '../dayNight';
+import {
+    PREDATOR_CATCH_COOLDOWN, PREDATOR_ENERGY_MIN, PREDATOR_ENERGY_MAX,
+    PREDATOR_KNOCKBACK,
+} from '../gameplay';
 
 function spaced(t: string): string { return t.toUpperCase().split('').join(' '); }
-
-/** Time-of-day phases for Phase 9: Night Falls. */
-const enum TimeOfDay { DAWN, MIDDAY, DUSK, NIGHT }
 
 const CANVAS_W = MAX_COLS * TILE + PANEL;
 const CANVAS_H = MAX_ROWS * TILE + HEADER;
@@ -42,6 +45,7 @@ export default class GameY2Scene extends Phaser.Scene {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
     private moving = false;
+    private slideDir: { dx: number; dy: number } | null = null;
 
     private terrain!: TerrainMap;
     private cells!: number[][];
@@ -70,20 +74,8 @@ export default class GameY2Scene extends Phaser.Scene {
     private visitedCells = new Set<string>();
     private totalReachable = 0;
 
-    // Night Falls (Phase 9) — step-based day/night cycle
-    private stepCount = 0;
-    private nightThreshold = 80;  // steps before night falls (recalculated per level)
-    private timeOfDay: TimeOfDay = TimeOfDay.DAWN;
-    private baseFogRadius = 2;
-    private tintOverlay: Phaser.GameObjects.Rectangle | null = null;
-    private tintTween: Phaser.Tweens.Tween | null = null;
-    private dayBar: Phaser.GameObjects.Rectangle | null = null;
-    private dayBarBg: Phaser.GameObjects.Rectangle | null = null;
-    private dayIcon: Phaser.GameObjects.Text | null = null;
-
-    // Ridge lookout — expanded fog while on ridge zone
-    private onRidge = false;
-    private readonly ridgeFogBonus = 2;
+    // Night Falls + Ridge lookout — managed by DayNightCycle
+    private dayNight!: DayNightCycle;
 
     private fog!: FogOfWar;
 
@@ -95,6 +87,8 @@ export default class GameY2Scene extends Phaser.Scene {
     private sceneryBlocked = new Set<string>();
     private weatherHazard: WeatherHazard | null = null;
     private weatherText: Phaser.GameObjects.Text | null = null;
+    private predators: Predator[] = [];
+    private predatorCatchCooldown = false;
 
     // Snow caves (Winter) — ROCK tiles that give double rest recovery
     private snowCaves = new Set<string>();
@@ -130,16 +124,12 @@ export default class GameY2Scene extends Phaser.Scene {
         this.totalReachable = 0;
         this.energy         = 100;
         this.moving         = false;
+        this.slideDir       = null;
         this.sceneryBlocked = new Set();
         this.snowCaves      = new Set();
-        this.stepCount      = 0;
-        this.timeOfDay      = TimeOfDay.DAWN;
-        this.onRidge        = false;
-        this.tintOverlay    = null;
-        this.tintTween      = null;
-        this.dayBar         = null;
-        this.dayBarBg       = null;
-        this.dayIcon        = null;
+        this.predators      = [];
+        this.predatorCatchCooldown = false;
+        // dayNight is recreated in create()
     }
 
     create() {
@@ -207,6 +197,14 @@ export default class GameY2Scene extends Phaser.Scene {
         // Winter: snow caves — pick reachable ROCK tiles adjacent to OPEN
         if (season.name === 'WinterY2') this.spawnSnowCaves();
 
+        // Roaming predators
+        this.predators = spawnPredators(
+            this, this.terrain, season.name, this.monthIndex, this.mazeLayer,
+            (pred) => {
+                if (pred.isAt(this.gridX, this.gridY)) this.onPredatorCatch(pred);
+            },
+        );
+
         // Sparkle texture
         ensureSparkleTexture(this);
 
@@ -250,23 +248,21 @@ export default class GameY2Scene extends Phaser.Scene {
         this.visitedCells.add(`${this.startCol},${this.startRow}`);
 
         // ── Night Falls — step threshold ──────────────────────────────────────────
-        // Generous enough to complete normally, but exploring for bonus/3★ risks nightfall
         const objCount = Math.min(2 + Math.floor(this.monthIndex / 3), 5);
         const baseSteps = this.totalReachable * 0.6 + objCount * 8;
         const intensityPenalty = getIntensity(this.monthIndex) * 8;
-        this.nightThreshold = Math.round(baseSteps - intensityPenalty);
-        this.baseFogRadius = fogRadius;
+        const nightThreshold = Math.round(baseSteps - intensityPenalty);
+
+        this.dayNight = new DayNightCycle(this, this.fog, this.terrain.zones, nightThreshold, fogRadius);
 
         // Tint overlay — covers entire screen, fades in with day progression.
-        // fillAlpha=1 always; gameObject alpha (controlled by tweens) drives visibility.
-        // Both must start at 0 or the first setFillStyle call exposes alpha=1 as a black flash.
-        this.tintOverlay = this.add.rectangle(
+        const tintOverlay = this.add.rectangle(
             CANVAS_W / 2, CANVAS_H / 2, CANVAS_W * 2, CANVAS_H * 2, 0x000000, 1,
         ).setDepth(DEPTH.FOG - 0.1).setScrollFactor(0).setAlpha(0);
 
         // ── UI (fixed on screen via scrollFactor 0) ─────────────────────────────
         this.buildHeader(season, cfg);
-        this.buildSidePanel(season);
+        this.buildSidePanel(season, tintOverlay);
 
         // ── Input ───────────────────────────────────────────────────────────────
         this.cursors = this.input.keyboard!.createCursorKeys();
@@ -307,6 +303,7 @@ export default class GameY2Scene extends Phaser.Scene {
         if (this.moving) return;
         this.fog.updateDecay(this.time.now);
         this.weatherHazard?.update(this.time.now, this.gridX, this.gridY);
+        for (const p of this.predators) p.setTarget(this.gridX, this.gridY);
         this.updateWeatherText();
 
         // SPACE = voluntary rest (recover partial energy, costs a turn)
@@ -316,31 +313,33 @@ export default class GameY2Scene extends Phaser.Scene {
         }
 
         let dx = 0, dy = 0;
-        if (Phaser.Input.Keyboard.JustDown(this.cursors.left)  || Phaser.Input.Keyboard.JustDown(this.wasd.left))  dx = -1;
-        if (Phaser.Input.Keyboard.JustDown(this.cursors.right) || Phaser.Input.Keyboard.JustDown(this.wasd.right)) dx =  1;
-        if (Phaser.Input.Keyboard.JustDown(this.cursors.up)    || Phaser.Input.Keyboard.JustDown(this.wasd.up))    dy = -1;
-        if (Phaser.Input.Keyboard.JustDown(this.cursors.down)  || Phaser.Input.Keyboard.JustDown(this.wasd.down))  dy =  1;
+        const K = Phaser.Input.Keyboard;
+        if      (K.JustDown(this.cursors.left)  || K.JustDown(this.wasd.left))  dx = -1;
+        else if (K.JustDown(this.cursors.right) || K.JustDown(this.wasd.right)) dx =  1;
+        else if (K.JustDown(this.cursors.up)    || K.JustDown(this.wasd.up))    dy = -1;
+        else if (K.JustDown(this.cursors.down)  || K.JustDown(this.wasd.down))  dy =  1;
         if (dx === 0 && dy === 0) return;
-        if (dx !== 0 && dy !== 0) dy = 0;
 
+        this.slideDir = { dx, dy };
         this.tryStep(dx, dy);
     }
 
     private tryStep(dx: number, dy: number) {
         const nx = this.gridX + dx, ny = this.gridY + dy;
-        if (nx < 0 || nx >= this.cols || ny < 0 || ny >= this.totalRows) return;
+        if (nx < 0 || nx >= this.cols || ny < 0 || ny >= this.totalRows) { this.slideDir = null; return; }
 
         // Cliff fall — stepping onto cliff edge costs a life
         if (isCliff(this.terrain.grid, nx, ny, this.cols, this.totalRows)) {
+            this.slideDir = null;
             this.onCliffFall();
             return;
         }
 
         // Allow walking on OPEN and WATER (swimming)
-        if (!isWalkable(this.terrain.grid, nx, ny, this.cols, this.totalRows, true)) return;
+        if (!isWalkable(this.terrain.grid, nx, ny, this.cols, this.totalRows, true)) { this.slideDir = null; return; }
 
         // Spring flooding — blocked tile
-        if (this.weatherHazard?.isBlocked(nx, ny)) return;
+        if (this.weatherHazard?.isBlocked(nx, ny)) { this.slideDir = null; return; }
 
         const onWater = this.terrain.grid[ny][nx] === Terrain.WATER;
         const duration = onWater ? 320 : 180;
@@ -357,8 +356,8 @@ export default class GameY2Scene extends Phaser.Scene {
             onComplete: () => {
                 this.emitter.setPosition(this.player.x, this.player.y);
                 this.fog.revealAround(this.gridX, this.gridY, this.time.now);
-                this.updateRidgeLookout();
-                this.advanceDayClock();
+                this.dayNight.updateRidgeLookout(this.gridY, this.gridX, this.time.now);
+                this.dayNight.advance();
                 this.drainEnergy(onWater ? 2 : 1);
 
                 // Weather: extra move cost (snowdrifts, heat)
@@ -386,10 +385,25 @@ export default class GameY2Scene extends Phaser.Scene {
                 }
 
                 this.moving = false;
+                if (this.checkPredatorCollision()) return;
                 this.tryCollectObjective();
                 this.checkGoal();
+                this.continueSlide();
             },
         });
+    }
+
+    /** Keep sliding if the arrow key is still held (hold-to-move). */
+    private continueSlide() {
+        if (!this.slideDir) return;
+        const { dx, dy } = this.slideDir;
+        const stillHeld =
+            (dx === -1 && (this.cursors.left.isDown  || this.wasd.left.isDown))  ||
+            (dx ===  1 && (this.cursors.right.isDown || this.wasd.right.isDown)) ||
+            (dy === -1 && (this.cursors.up.isDown    || this.wasd.up.isDown))    ||
+            (dy ===  1 && (this.cursors.down.isDown  || this.wasd.down.isDown));
+        if (!stillHeld) { this.slideDir = null; return; }
+        this.tryStep(dx, dy);
     }
 
     // ── Cliff fall ──────────────────────────────────────────────────────────────
@@ -419,10 +433,9 @@ export default class GameY2Scene extends Phaser.Scene {
 
         this.gridX = resetCol;
         this.gridY = resetRow;
-        this.onRidge = false;
         this.player.setPosition(this.worldX(resetCol), this.worldY(resetRow));
         this.emitter.setPosition(this.player.x, this.player.y);
-        this.updateFogForTimeAndRidge();
+        this.dayNight.updateRidgeLookout(resetRow, resetCol, this.time.now);
         this.fog.revealAround(resetCol, resetRow, this.time.now);
 
         // Drain energy after repositioning — may trigger forced rest
@@ -432,7 +445,7 @@ export default class GameY2Scene extends Phaser.Scene {
 
     // ── Energy system ─────────────────────────────────────────────────────────
     private drainEnergy(amount: number) {
-        const drain = this.timeOfDay === TimeOfDay.NIGHT ? amount * 2 : amount;
+        const drain = this.dayNight.getPhase() === TimeOfDay.NIGHT ? amount * 2 : amount;
         this.energy = Math.max(0, this.energy - drain);
         this.updateEnergyBar();
         if (this.energy <= 0) {
@@ -537,116 +550,6 @@ export default class GameY2Scene extends Phaser.Scene {
             onComplete: () => berry.destroy(),
         });
         this.tweens.add({ targets: this.player, scaleY: 1.15, yoyo: true, duration: 120 });
-    }
-
-    // ── Night Falls ─────────────────────────────────────────────────────────────
-    private advanceDayClock() {
-        this.stepCount++;
-        const frac = this.stepCount / this.nightThreshold;
-
-        let newPhase: TimeOfDay;
-        if      (frac < 0.4)  newPhase = TimeOfDay.DAWN;
-        else if (frac < 0.8)  newPhase = TimeOfDay.MIDDAY;
-        else if (frac < 1.0)  newPhase = TimeOfDay.DUSK;
-        else                  newPhase = TimeOfDay.NIGHT;
-
-        if (newPhase !== this.timeOfDay) {
-            this.timeOfDay = newPhase;
-            this.applyTimeOfDay();
-        }
-
-        this.updateDayBar();
-    }
-
-    private applyTimeOfDay() {
-        // Tint overlay
-        if (this.tintOverlay) {
-            let color: number, alpha: number;
-            switch (this.timeOfDay) {
-                case TimeOfDay.DAWN:   color = 0x000000; alpha = 0;    break;
-                case TimeOfDay.MIDDAY: color = 0x000000; alpha = 0;    break;
-                case TimeOfDay.DUSK:   color = 0x331800; alpha = 0.15; break;
-                case TimeOfDay.NIGHT:  color = 0x000822; alpha = 0.35; break;
-            }
-            // Kill any in-flight tint tween to prevent competing animations
-            // that cause dark flashes when multiple applyTimeOfDay calls overlap
-            if (this.tintTween) {
-                this.tintTween.stop();
-                this.tintTween = null;
-            }
-            this.tintOverlay.setFillStyle(color, 1);
-            this.tintTween = this.tweens.add({
-                targets: this.tintOverlay,
-                alpha,
-                duration: 1200,
-                ease: 'Sine.easeInOut',
-                onComplete: () => { this.tintTween = null; },
-            });
-        }
-
-        this.updateFogForTimeAndRidge();
-
-        // Day icon update
-        if (this.dayIcon) {
-            switch (this.timeOfDay) {
-                case TimeOfDay.DAWN:   this.dayIcon.setText('☀').setColor('#ffdd44'); break;
-                case TimeOfDay.MIDDAY: this.dayIcon.setText('☀').setColor('#ffcc22'); break;
-                case TimeOfDay.DUSK:   this.dayIcon.setText('☀').setColor('#ff8833'); break;
-                case TimeOfDay.NIGHT:  this.dayIcon.setText('☽').setColor('#8899cc'); break;
-            }
-        }
-    }
-
-    /** Update fog radius based on time-of-day and ridge bonus — no tint changes. */
-    private updateFogForTimeAndRidge() {
-        let fogR: number;
-        switch (this.timeOfDay) {
-            case TimeOfDay.DAWN:   fogR = this.baseFogRadius;     break;
-            case TimeOfDay.MIDDAY: fogR = this.baseFogRadius;     break;
-            case TimeOfDay.DUSK:   fogR = Math.max(1, this.baseFogRadius - 1); break;
-            case TimeOfDay.NIGHT:  fogR = 1;                       break;
-        }
-        if (this.onRidge) fogR += this.ridgeFogBonus;
-        this.fog.setRevealRadius(fogR);
-    }
-
-    private getZoneAt(row: number): ZoneInfo | undefined {
-        return this.terrain.zones.find(z => row >= z.startRow && row < z.startRow + z.height);
-    }
-
-    private updateRidgeLookout() {
-        const zone = this.getZoneAt(this.gridY);
-        const wasOnRidge = this.onRidge;
-        this.onRidge = zone?.type === 'ridge';
-        if (this.onRidge !== wasOnRidge) {
-            // Only update fog radius — don't touch the tint overlay
-            this.updateFogForTimeAndRidge();
-            if (this.onRidge) {
-                this.fog.revealAround(this.gridX, this.gridY, this.time.now);
-            }
-        }
-    }
-
-    private updateDayBar() {
-        if (!this.dayBar || !this.dayBarBg) return;
-        const frac = Math.min(1, this.stepCount / this.nightThreshold);
-        const fullW = this.dayBarBg.width;
-        this.dayBar.width = fullW * (1 - frac);  // shrinks as night approaches
-
-        // Color shifts: yellow → orange → blue
-        if (frac < 0.8) {
-            const t = frac / 0.8;  // 0→1 over dawn to dusk
-            const r = Math.round(255 - t * 80);
-            const g = Math.round(220 - t * 120);
-            const b = Math.round(60  + t * 40);
-            this.dayBar.setFillStyle(Phaser.Display.Color.GetColor(r, g, b));
-        } else {
-            const t = (frac - 0.8) / 0.2;
-            const r = Math.round(175 - t * 100);
-            const g = Math.round(100 - t * 50);
-            const b = Math.round(100 + t * 100);
-            this.dayBar.setFillStyle(Phaser.Display.Color.GetColor(r, g, b));
-        }
     }
 
     /** Close the bear's eyes (replace eye circles with thin closed-eye lines). */
@@ -782,6 +685,108 @@ export default class GameY2Scene extends Phaser.Scene {
                 this.checkGoal();
             },
         });
+    }
+
+    // ── Predator collision ────────────────────────────────────────────────────
+
+    /** Returns true if a predator catch was triggered (interrupts normal flow). */
+    private checkPredatorCollision(): boolean {
+        if (this.predatorCatchCooldown) return false;
+        for (const p of this.predators) {
+            if (p.isAt(this.gridX, this.gridY)) {
+                this.onPredatorCatch(p);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Called when a predator occupies the same tile as the player.
+     * Drains energy and knocks the bear back 1-2 tiles away from the predator.
+     */
+    private onPredatorCatch(pred: Predator) {
+        if (this.predatorCatchCooldown || pred.catchCooldown) return;
+
+        // Scene-wide cooldown prevents chain catches
+        this.predatorCatchCooldown = true;
+        this.time.delayedCall(PREDATOR_CATCH_COOLDOWN, () => {
+            this.predatorCatchCooldown = false;
+        });
+        pred.startCatchCooldown(PREDATOR_CATCH_COOLDOWN);
+
+        // Energy drain
+        const drain = PREDATOR_ENERGY_MIN
+            + Math.floor(Math.random() * (PREDATOR_ENERGY_MAX - PREDATOR_ENERGY_MIN + 1));
+
+        // Knockback direction — away from predator
+        const ddx = this.gridX - pred.gridX;
+        const ddy = this.gridY - pred.gridY;
+        // Normalise to cardinal direction; prefer horizontal if diagonal
+        let kx = ddx === 0 ? 0 : (ddx > 0 ? 1 : -1);
+        let ky = ddy === 0 ? 0 : (ddy > 0 ? 1 : -1);
+        if (kx !== 0 && ky !== 0) ky = 0; // pick one axis
+        if (kx === 0 && ky === 0) kx = 1; // fallback if standing on each other
+
+        // Find furthest walkable tile in knockback direction (up to PREDATOR_KNOCKBACK)
+        let destCol = this.gridX, destRow = this.gridY;
+        for (let i = 1; i <= PREDATOR_KNOCKBACK; i++) {
+            const nc = this.gridX + kx * i, nr = this.gridY + ky * i;
+            if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.totalRows) break;
+            if (!isWalkable(this.terrain.grid, nc, nr, this.cols, this.totalRows, true)) break;
+            if (isCliff(this.terrain.grid, nc, nr, this.cols, this.totalRows)) break;
+            if (this.weatherHazard?.isBlocked(nc, nr)) break;
+            destCol = nc;
+            destRow = nr;
+        }
+
+        this.gridX = destCol;
+        this.gridY = destRow;
+        this.slideDir = null;
+        this.moving = true;
+
+        // Red flash on player
+        this.tweens.add({
+            targets: this.player,
+            alpha: 0.3, yoyo: true, duration: 120, repeat: 2,
+            onComplete: () => this.player.setAlpha(1),
+        });
+
+        this.tweens.add({
+            targets: this.player,
+            x: this.worldX(destCol), y: this.worldY(destRow),
+            duration: 200, ease: 'Back.easeOut',
+            onComplete: () => {
+                this.moving = false;
+                this.emitter.setPosition(this.player.x, this.player.y);
+                this.fog.revealAround(this.gridX, this.gridY, this.time.now);
+                this.drainEnergy(drain);
+                this.tryCollectObjective();
+                this.checkGoal();
+            },
+        });
+
+        statsEvents.emit(STAT.CAUGHT);
+    }
+
+    private predatorName(seasonName: string): string {
+        switch (seasonName) {
+            case 'WinterY2': return 'wolf';
+            case 'SpringY2': return 'cougar';
+            case 'SummerY2': return 'tiger';
+            case 'FallY2':   return 'coyote';
+            default:         return 'predator';
+        }
+    }
+
+    private predatorLegendColor(seasonName: string): number {
+        switch (seasonName) {
+            case 'WinterY2': return 0x808898;
+            case 'SpringY2': return 0xc8944a;
+            case 'SummerY2': return 0xdd6600;
+            case 'FallY2':   return 0x998866;
+            default:         return 0x888888;
+        }
     }
 
     private updateWeatherText() {
@@ -1006,6 +1011,8 @@ export default class GameY2Scene extends Phaser.Scene {
         for (const s of this.objSprites) s.destroy();
         for (const s of this.bonusSprites) s.destroy();
         this.weatherHazard?.destroy();
+        for (const p of this.predators) p.destroy();
+        this.predators = [];
     }
 
     /** Count all OPEN + WATER cells reachable from start via BFS. */
@@ -1062,7 +1069,7 @@ export default class GameY2Scene extends Phaser.Scene {
     }
 
     // ── Side panel (fixed on screen) ───────────────────────────────────────────
-    private buildSidePanel(season: SeasonTheme) {
+    private buildSidePanel(season: SeasonTheme, tintOverlay?: Phaser.GameObjects.Rectangle) {
         const px    = CANVAS_W - PANEL;
         const pw    = PANEL;
         const cx    = px + pw / 2;
@@ -1117,12 +1124,13 @@ export default class GameY2Scene extends Phaser.Scene {
         y += 22;
         sf0(this.add.text(cx, y, 'DAYLIGHT', { fontSize: '14px', color: dim, letterSpacing: 4 }).setOrigin(0.5).setDepth(depth));
         y += 20;
-        this.dayBarBg = this.add.rectangle(cx, y, barW, 12, 0x222222, 0.6).setDepth(depth);
-        this.dayBarBg.setScrollFactor(0);
-        this.dayBar = this.add.rectangle(cx, y, barW, 12, 0xffdd44).setDepth(depth);
-        this.dayBar.setScrollFactor(0);
-        this.dayIcon = this.add.text(px + 18, y - 1, '☀', { fontSize: '14px', color: '#ffdd44' }).setOrigin(0.5).setDepth(depth);
-        this.dayIcon.setScrollFactor(0);
+        const dayBarBg = this.add.rectangle(cx, y, barW, 12, 0x222222, 0.6).setDepth(depth);
+        dayBarBg.setScrollFactor(0);
+        const dayBar = this.add.rectangle(cx, y, barW, 12, 0xffdd44).setDepth(depth);
+        dayBar.setScrollFactor(0);
+        const dayIcon = this.add.text(px + 18, y - 1, '☀', { fontSize: '14px', color: '#ffdd44' }).setOrigin(0.5).setDepth(depth);
+        dayIcon.setScrollFactor(0);
+        if (tintOverlay) this.dayNight.setUI(tintOverlay, dayBar, dayBarBg, dayIcon);
 
         // Legend
         y += 40;
@@ -1138,6 +1146,11 @@ export default class GameY2Scene extends Phaser.Scene {
         const items: { label: string; draw: (g: Phaser.GameObjects.Graphics, ly: number) => void }[] = [
             { label: `${info.bear} (you)`,        draw: (g, ly) => { g.fillStyle(info.bearColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
             { label: `${info.objLabel.toLowerCase()} — collect`, draw: (g, ly) => { g.fillStyle(info.objColor, 0.9); g.fillCircle(lx + 7, ly, 6); } },
+            { label: `${this.predatorName(season.name)} — avoid!`, draw: (g, ly) => {
+                const c = this.predatorLegendColor(season.name);
+                g.fillStyle(c, 0.9); g.fillCircle(lx + 7, ly, 6);
+                g.fillStyle(0xff2200, 0.5); g.fillCircle(lx + 7, ly, 3);
+            }},
         ];
 
         // Season-specific tree/bamboo
